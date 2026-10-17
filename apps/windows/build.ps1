@@ -1,12 +1,14 @@
 ﻿# Nekro Qantrip Windows 构建脚本：Rust 核心（C ABI）+ WinUI 3 外壳 → 自包含目录。
 #
 # 用法（在仓库根目录或任意位置）：
-#   powershell -ExecutionPolicy Bypass -File apps\windows\build.ps1 [-Configuration Release|Debug] [-Out <目录>] [-SkipTests]
-# 产物：默认 dist\windows\Qantrip\Qantrip.exe（整个目录可直接拷走运行，无需安装 .NET 或 Windows App SDK）。
+#   powershell -ExecutionPolicy Bypass -File apps\windows\build.ps1 [-Configuration Release|Debug] [-Out <目录>] [-SkipTests] [-NoZip]
+# 产物：默认 dist\windows\Qantrip\Qantrip.exe（整个目录可直接拷走运行，无需安装 .NET 或 Windows App SDK），
+#       以及该目录的压缩包 dist\windows\Qantrip-Windows-x64.zip（解压后得到 Qantrip\ 文件夹）。
 param(
     [ValidateSet("Release", "Debug")] [string]$Configuration = "Release",
     [string]$Out = "",
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$NoZip
 )
 $ErrorActionPreference = "Continue"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -37,3 +39,14 @@ Step "发布 WinUI 外壳（自包含 win-x64）" {
 }
 $size = (Get-ChildItem $Out -Recurse | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("完成：{0}\Qantrip.exe（目录 {1:N1} MB）" -f $Out, $size)
+
+if (-not $NoZip) {
+    $zip = Join-Path (Split-Path -Parent $Out) "Qantrip-Windows-x64.zip"
+    Step "打包 Qantrip-Windows-x64.zip" {
+        if (Test-Path $zip) { Remove-Item $zip -Force }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        # 包含顶层 Qantrip\ 文件夹：解压后即可运行其中的 Qantrip.exe
+        [IO.Compression.ZipFile]::CreateFromDirectory($Out, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
+    }
+    Write-Host ("压缩包：{0}（{1:N1} MB）" -f $zip, ((Get-Item $zip).Length / 1MB))
+}

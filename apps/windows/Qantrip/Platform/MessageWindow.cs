@@ -11,6 +11,7 @@ internal sealed class MessageWindow : IDisposable
 {
     public const string ClassName = "NekroQantrip.MessageWindow";
     public static readonly uint ShowPanelMessage = RegisterWindowMessage("NekroQantrip.ShowPanel");
+    public static readonly uint ShowSettingsMessage = RegisterWindowMessage("NekroQantrip.ShowSettings");
     private static readonly uint TaskbarCreated = RegisterWindowMessage("TaskbarCreated");
     public const uint TrayMessage = WM_APP + 1;
 
@@ -20,6 +21,7 @@ internal sealed class MessageWindow : IDisposable
     public event Action<int>? Tray;
     public event Action? TaskbarRestarted;
     public event Action? ShowRequested;
+    public event Action? SettingsRequested;
 
     private readonly WndProc proc; // 防止委托被回收
 
@@ -46,6 +48,7 @@ internal sealed class MessageWindow : IDisposable
             if (msg == TrayMessage) { Tray?.Invoke((int)(lParam.ToInt64() & 0xFFFF)); return IntPtr.Zero; }
             if (msg == TaskbarCreated) { TaskbarRestarted?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowPanelMessage) { ShowRequested?.Invoke(); return IntPtr.Zero; }
+            if (msg == ShowSettingsMessage) { SettingsRequested?.Invoke(); return IntPtr.Zero; }
         }
         catch (Exception e) { Log.Error("wndproc", e); }
         return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -86,21 +89,12 @@ internal sealed class HotKey : IDisposable
         IsRegistered = false;
     }
 
-    public string Describe()
-    {
-        var parts = new List<string>();
-        if ((Modifiers & MOD_CONTROL) != 0) parts.Add("Ctrl");
-        if ((Modifiers & MOD_ALT) != 0) parts.Add("Alt");
-        if ((Modifiers & MOD_SHIFT) != 0) parts.Add("Shift");
-        if ((Modifiers & MOD_WIN) != 0) parts.Add("Win");
-        parts.Add(((char)Key).ToString());
-        return string.Join("+", parts);
-    }
+    public string Describe() => HotKeySpec.Format(Modifiers, Key);
 
     public void Dispose() => Unregister();
 }
 
-/// 通知区域图标：左键打开面板，右键菜单（打开面板 / 退出）。气泡提示代替 macOS 的 HUD。
+/// 通知区域图标：左键打开面板，右键菜单（打开面板 / 设置 / 退出）。气泡提示用于插入降级等需要停留的消息。
 internal sealed class TrayIcon : IDisposable
 {
     private readonly MessageWindow window;
@@ -108,8 +102,9 @@ internal sealed class TrayIcon : IDisposable
     private string tip;
     public bool Added { get; private set; }
     public event Action? Open;
+    public event Action? OpenSettings;
     public event Action? Quit;
-    public Func<string>? OpenLabel, QuitLabel;
+    public Func<string>? OpenLabel, SettingsLabel, QuitLabel;
 
     public TrayIcon(MessageWindow window, string iconPath, string tip)
     {
@@ -157,6 +152,7 @@ internal sealed class TrayIcon : IDisposable
         if (msg != WM_RBUTTONUP && msg != WM_CONTEXTMENU) return;
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, (UIntPtr)1, OpenLabel?.Invoke() ?? "Open");
+        AppendMenu(menu, MF_STRING, (UIntPtr)3, SettingsLabel?.Invoke() ?? "Settings…");
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING, (UIntPtr)2, QuitLabel?.Invoke() ?? "Quit");
         GetCursorPos(out var p);
@@ -167,6 +163,7 @@ internal sealed class TrayIcon : IDisposable
         DestroyMenu(menu);
         if (cmd == 1) Open?.Invoke();
         if (cmd == 2) Quit?.Invoke();
+        if (cmd == 3) OpenSettings?.Invoke();
     }
 
     public void Dispose()

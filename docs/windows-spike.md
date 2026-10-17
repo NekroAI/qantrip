@@ -45,10 +45,27 @@ D9 的目标在微软拼音下达成。模拟 Shift 依赖输入法的中英切�
 
 - 默认快捷键 Alt+Q 与 Microsoft 365（Word / Excel / Outlook 的"告诉我 / 搜索"）、JetBrains IDE 的 Alt+Q 冲突：程序运行期间这些应用收不到 Alt+Q。只验证了注册成功，未做常用软件的冲突普查（D5 待办）。
 - Windows PowerShell 5.1 / cmd 不支持 bracketed paste，多行 Prompt 粘贴后由 WT 警告兜底；若用户关闭了 WT 的多行警告，除最后一行外会逐行执行。PowerShell 7（PSReadLine 2.2+）未测。Claude Code / Codex 在 Windows 上未实测，只用开启 bracketed paste 的探针验证了 WT 的行为；Ctrl+↩ 展开粘贴未实测。
-- 用户模板文件带 UTF-8 BOM 时核心不识别（PowerShell 5.1 的 `Set-Content -Encoding UTF8`、部分编辑器会写 BOM）。建议核心加载模板时去掉 BOM（核心改动，本次未做）。
+- 用户模板文件带 UTF-8 BOM 时核心不识别（PowerShell 5.1 的 `Set-Content -Encoding UTF8`、部分编辑器会写 BOM）。建议核心加载模板时去掉 BOM（已在核心修复）。
 - 内存占用约为 macOS 的 4 倍（WinUI + .NET 运行时）；发布目录 168MB。只引用 WinUI / DWrite 组件包（不用元包）已去掉 AI / ML 组件约 47MB；进一步可评估 .NET 裁剪或 Native AOT。
-- 尚未实现：设置界面（暂用 `settings.json`）、模板库与编辑器、同步、开机启动、动效（D15）、内置字体（D17，暂用 Cascadia Mono / Segoe UI Variable）、安装包与签名、输入框撤销。
+- 尚未实现：模板库与编辑器、同步、引导、安装包与签名、输入框撤销（设置、开机启动、动效、内置字体已在第二轮完成）。
 - 未实测：管理员目标的降级、多显示器不同缩放、Ditto 等第三方剪贴板管理器、深浅色切换。
+
+## 第二轮（2026-10-18）：.NET 10、指令模式、设置、视觉
+
+| 项 | 结果 | 依据 |
+|---|---|---|
+| 运行时升级 | 完成 | .NET 10（SDK 10.0.402）+ Windows App SDK 2.5（WinUI 2.3.9、DWrite 2.1.0、InteractiveExperiences 2.1.9 组件包），仍为非打包自包含；代码无需改动即可编译运行 |
+| 体积 / 内存 | 略增 | 发布目录 168 → 181MB（主要是 Windows SDK 投影 26100 版 25MB），zip 70MB。仅升级时：工作集 168MB、私有 120MB（原 176 / 125）；加上本轮全部功能后 183 / 133MB（20 次唤起后）。唤起到首帧中位数 24ms、p95 49ms，前台 20/20 |
+| 指令模式（D31） | 通过 | `qantrip-ffi` 新增 `qt_set_clipboard`、`qt_run_command`（`{"ok","outcome"\|"error"}`）、`qt_clear_usage`；`/` 显示"指令"帮助，`/new qttest` 用剪贴板正文生成带 `{level:简单\|专业}`、`{topic}` 参数的模板并立即可用，`/rm` 第一次回车只提示"再按一次 ↩ 确认"、第二次移到回收站（`SHFileOperation` + `FOF_ALLOWUNDO`，在回收站中按原位置找到），`/edit` 只提示（无模板库窗口）。完成提示用自绘浮层（不抢焦点，勿扰模式下也可见） |
+| 设置窗口 | 通过 | Mica + Fluent 设置卡片；UI 自动化驱动：插入方式 / 展开粘贴 / 间隔 / 记录使用写入 `settings.json` 并保留未知键；录制 Alt+W 后立即生效；测试进程占用 Alt+F9 时启动报 1409 并在设置中显示冲突，重录后恢复；登录时启动写入 / 删除 `HKCU\…\Run\NekroQantrip`；界面语言切到 English 后设置窗口与面板即时切换；重启后读回 |
+| 字体与动效 | 完成 | Monaspace Neon、Fraunces（静态实例）以 `ms-appx:///Assets/Fonts/…` 在非打包应用中正常加载；入场缩放淡入、候选错落 / 淡入、模板标题滑入、锁定弹跳、抖动、预览闪光均为 Composition 动画；`SPI_GETCLIENTAREAANIMATION` 关闭时不播放 |
+| 回归 | 通过 | 记事本插入逐字一致、多格式剪贴板恢复哈希一致、剪贴板历史无 Prompt；只复制模式；输入法第二次唤起 `native -> shift` 后输入为英文 |
+
+注意：
+
+- 核心的指令文字沿用 macOS 的"废纸篓 / Trash"，外壳在不带位置信息的文字（提示、候选说明、诊断、帮助）中替换为"回收站 / Recycle Bin"。更彻底的做法是核心按平台给出用词（核心改动，本轮未做）。
+- 托盘气泡在 Windows 11 上以系统通知显示，会留在通知中心；测试中快捷键冲突与只复制模式各留下一条。当前前台为系统通知弹窗（ShellExperienceHost）时，一次唤起未能取得前台（`foreground_ok=false`，按键落到原窗口），尚未复现，待观察。
+- 抽帧截图每张约 130ms，无法完整记录 200ms 级动效，动效只做了目视与"回车被阻止确实触发"的确认。
 
 ## 测试方法
 

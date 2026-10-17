@@ -47,6 +47,18 @@ public sealed class Engine : IDisposable
         return json is null ? null : JsonSerializer.Deserialize<EditResult>(json, Json);
     }
 
+    public void ClearUsage() => Native.qt_clear_usage(handle);
+
+    /// 指令模式 `/new 名称` 不写正文时使用的剪贴板文字。
+    public void SetClipboard(string? text) => Native.qt_set_clipboard(handle, U8(text));
+
+    /// 执行指令（输入以 / 开头）。成功后核心会重新加载模板库。
+    public CommandResult RunCommand(string input)
+    {
+        var json = Take(Native.qt_run_command(handle, U8(input)));
+        return (json is null ? null : JsonSerializer.Deserialize<CommandResult>(json, Json)) ?? new CommandResult { Ok = false, Error = "qt_run_command failed" };
+    }
+
     public List<TemplateInfo> Templates()
     {
         var json = Take(Native.qt_templates(handle));
@@ -89,6 +101,9 @@ public sealed class Engine : IDisposable
         [DllImport(Dll)] public static extern void qt_record_use(IntPtr e, byte[]? input, byte[]? selected, byte[]? app);
         [DllImport(Dll)] public static extern IntPtr qt_edit_param(IntPtr e, byte[]? input, byte[]? selected, byte[]? name, byte[]? edit);
         [DllImport(Dll)] public static extern IntPtr qt_templates(IntPtr e);
+        [DllImport(Dll)] public static extern void qt_clear_usage(IntPtr e);
+        [DllImport(Dll)] public static extern void qt_set_clipboard(IntPtr e, byte[]? text);
+        [DllImport(Dll)] public static extern IntPtr qt_run_command(IntPtr e, byte[]? input);
         [DllImport(Dll)] public static extern IntPtr qt_problems(IntPtr e);
     }
 }

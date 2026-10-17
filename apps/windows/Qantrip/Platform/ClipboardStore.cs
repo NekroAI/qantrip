@@ -33,6 +33,22 @@ internal static class ClipboardStore
         return false;
     }
 
+    /// 读取剪贴板中的纯文本（CF_UNICODETEXT）；没有文本或剪贴板被占用时返回 null。
+    public static string? ReadText(IntPtr owner)
+    {
+        if (!Open(owner)) return null;
+        try
+        {
+            var h = GetClipboardData(CF_UNICODETEXT);
+            if (h == IntPtr.Zero) return null;
+            var p = GlobalLock(h);
+            if (p == IntPtr.Zero) return null;
+            try { return Marshal.PtrToStringUni(p)?.Replace("\r\n", "\n"); }
+            finally { GlobalUnlock(h); }
+        }
+        finally { CloseClipboard(); }
+    }
+
     public static List<Item>? Snapshot(IntPtr owner)
     {
         if (!Open(owner)) return null;
