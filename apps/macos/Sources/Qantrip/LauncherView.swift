@@ -223,8 +223,8 @@ struct LauncherView: View {
         HStack(spacing: 14) {
             status
             Spacer()
-            KeyButton("↩", L("插入", "Insert")) { model.confirm(expand: false) }
-            if Inserter.expandPasteEnabled { KeyButton("⌘↩", L("展开粘贴", "Expand paste")) { model.confirm(expand: true) } }
+            KeyButton("↩", model.isCommandMode ? L("执行", "Run") : L("插入", "Insert")) { model.confirm(expand: false) }
+            if Inserter.expandPasteEnabled && !model.isCommandMode { KeyButton("⌘↩", L("展开粘贴", "Expand paste")) { model.confirm(expand: true) } }
             Keycap("⇥", L("补全", "Complete"))
             Keycap("↑↓", L("选择", "Select"))
             KeyButton("esc", L("关闭", "Close")) { model.onCancel?() }
@@ -233,7 +233,10 @@ struct LauncherView: View {
     }
 
     @ViewBuilder private var status: some View {
-        if let e = model.firstError {
+        if model.armedCommand != nil {
+            Label(L("再按一次 ↩ 确认", "Press ↩ again to confirm"), systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange).lineLimit(1)
+        } else if let e = model.firstError {
             Label(e.message, systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(e.atCursor ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
                 .lineLimit(1)

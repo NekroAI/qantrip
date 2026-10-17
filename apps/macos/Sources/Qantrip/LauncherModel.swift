@@ -17,12 +17,17 @@ final class LauncherModel {
     /// 预览中新出现的高亮片段及其闪光强度（1 → 0）
     private(set) var flashRanges: [NSRange] = []
     private(set) var flashLevel: Double = 0
+    /// 需要再按一次回车确认的指令（如 /rm）；输入改变后失效
+    private(set) var armedCommand: String?
 
     @ObservationIgnored let engine: Engine
     @ObservationIgnored let field = CommandField()
     /// 提交回调：(最终文本, 是否展开粘贴)
     @ObservationIgnored var onSubmit: ((String, Bool) -> Void)?
     @ObservationIgnored var onCancel: (() -> Void)?
+    /// 指令执行完成（docs/decisions.md D31）
+    @ObservationIgnored var onCommand: ((CommandOutcome) -> Void)?
+    @ObservationIgnored private var clipboardLoaded = false
     /// 界面高亮的模板名或首屏调用；命令词改变时清空
     @ObservationIgnored private var selectedKey: String?
     @ObservationIgnored private var commandWord = ""
@@ -56,12 +61,20 @@ final class LauncherModel {
         engine.beginSession(app: target?.bundleIdentifier)
         selectedKey = nil
         commandWord = ""
+        clipboardLoaded = false
+        engine.setClipboard(text: nil)
         field.setText("")
         textDidChange("")
     }
 
     func textDidChange(_ text: String) {
         query = text
+        armedCommand = nil
+        // `/new 名称` 不写正文时用剪贴板文字：只在输入 /new 时读取剪贴板，且每次唤起只读一次
+        if !clipboardLoaded, text.trimmingCharacters(in: .whitespaces).hasPrefix("/new ") {
+            clipboardLoaded = true
+            engine.setClipboard(text: NSPasteboard.general.string(forType: .string))
+        }
         let cmd = text.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
         if cmd != commandWord {
             commandWord = cmd
@@ -121,7 +134,24 @@ final class LauncherModel {
             apply(edit)
         case .blocked:
             reject()
+        case .run(let confirm):
+            if confirm && armedCommand != query {
+                armedCommand = query
+                return
+            }
+            armedCommand = nil
+            do {
+                onCommand?(try engine.runCommand(input: query))
+            } catch {
+                reject()
+            }
         }
+    }
+
+    /// 是否处于指令模式（输入以 / 开头）
+    var isCommandMode: Bool {
+        let t = query.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("/") || t.hasPrefix("／")
     }
 
     /// 回车被阻止：只做视觉反馈（抖动 + 图标），不发提示音。

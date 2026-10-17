@@ -166,6 +166,8 @@ pub enum EnterAction {
     /// 先修改输入（模糊匹配补全命令词 / 补上缺失的必填参数），不插入
     Complete { edit: Edit },
     Blocked,
+    /// 执行指令（docs/decisions.md D31）；`confirm` 为真时需要再按一次回车
+    Run { confirm: bool },
 }
 
 /// 鼠标对参数的操作（docs/decisions.md D16）
@@ -810,7 +812,7 @@ fn display(p: &ParamSpec, v: &Value, loc: Locale) -> String {
     }
 }
 
-fn param_states(t: &Template, values: &BTreeMap<String, Value>, loc: Locale) -> Vec<ParamState> {
+pub(crate) fn param_states(t: &Template, values: &BTreeMap<String, Value>, loc: Locale) -> Vec<ParamState> {
     t.params
         .iter()
         .map(|p| {

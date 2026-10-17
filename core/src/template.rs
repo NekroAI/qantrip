@@ -162,7 +162,7 @@ enum RawChoice {
     },
 }
 
-fn valid_name(s: &str) -> bool {
+pub(crate) fn valid_name(s: &str) -> bool {
     let mut cs = s.chars();
     matches!(cs.next(), Some(c) if c.is_ascii_alphabetic())
         && cs.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')

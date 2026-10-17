@@ -31,6 +31,10 @@ pub fn set_locale(code: &str) {
 /// 解析面板输入，返回 `Analysis` 的 JSON。
 #[wasm_bindgen]
 pub fn analyze(input: &str, selected: Option<String>) -> String {
+    // 指令模式（/new 等）在浏览器里只预览，不写文件
+    if qantrip_core::command::is_command(input) {
+        return with(|lib, _| serde_json::to_string(&qantrip_core::command::analyze(lib, None, input, None)).unwrap_or_default());
+    }
     with(|lib, usage| serde_json::to_string(&grammar::analyze(lib, usage, input, selected.as_deref())).unwrap_or_default())
 }
 

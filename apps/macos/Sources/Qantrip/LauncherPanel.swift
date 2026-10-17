@@ -45,6 +45,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
         panel.delegate = self
         model.onSubmit = { [weak self] text, expand in self?.submit(text, expand: expand) }
         model.onCancel = { [weak self] in self?.hide() }
+        model.onCommand = { [weak self] outcome in self?.finishCommand(outcome) }
         observeRejects()
         // 启动后离屏完整走一遍显示流程，避免首次唤起时的冷启动开销（实测约 250ms）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in prewarm() }
@@ -135,6 +136,20 @@ final class LauncherController: NSObject, NSWindowDelegate {
         castEffect()
         hide()
         insert(text, expand: expand)
+    }
+
+    /// 指令完成：关闭面板，删除的文件移到废纸篓，需要时打开模板库，最后提示。
+    private func finishCommand(_ outcome: CommandOutcome) {
+        hide()
+        if let path = outcome.trashPath {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            AppServices.shared.engine.reload()
+        }
+        LibraryWindow.model.reload()
+        if let name = outcome.openEditor {
+            LibraryWindow.show(select: name)
+        }
+        if !outcome.message.isEmpty { hud.show(outcome.message) }
     }
 
     func insert(_ text: String, target override: NSRunningApplication? = nil, expand: Bool = false) {

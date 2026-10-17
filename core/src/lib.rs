@@ -2,6 +2,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod command;
 pub mod doc;
 pub mod grammar;
 pub mod i18n;
@@ -72,6 +73,8 @@ pub struct Engine {
     user_dir: Option<PathBuf>,
     /// (界面语言, 内置模板语言)
     langs: RwLock<(Locale, Locale)>,
+    /// 指令模式 `/new 名称` 不写正文时使用的剪贴板文字
+    clipboard: RwLock<Option<String>>,
     lib: RwLock<library::Library>,
     usage: RwLock<usage::Usage>,
 }
@@ -85,7 +88,7 @@ impl Engine {
         let user_dir = user_dir.map(PathBuf::from);
         let lib = library::Library::load(user_dir.as_deref());
         let usage = usage::Usage::load(usage_path.map(PathBuf::from));
-        Arc::new(Engine { user_dir, langs: RwLock::new((Locale::Zh, Locale::Zh)), lib: RwLock::new(lib), usage: RwLock::new(usage) })
+        Arc::new(Engine { user_dir, langs: RwLock::new((Locale::Zh, Locale::Zh)), clipboard: RwLock::new(None), lib: RwLock::new(lib), usage: RwLock::new(usage) })
     }
 
     /// 设置界面语言与内置模板语言，并重新加载模板库。
@@ -182,8 +185,29 @@ impl Engine {
         SourceCheck { name, problems, doc, analysis }
     }
 
+    /// 指令模式使用的剪贴板文字（外壳在输入 `/new` 时读取并传入）。
+    pub fn set_clipboard(&self, text: Option<String>) {
+        *self.clipboard.write().unwrap() = text;
+    }
+
+    /// 执行指令（输入以 `/` 开头）。成功后重新加载模板库。
+    pub fn run_command(&self, input: String) -> Result<command::CommandOutcome, DocError> {
+        let out = {
+            let lib = self.lib.read().unwrap();
+            let clip = self.clipboard.read().unwrap();
+            command::run(&lib, self.user_dir.as_deref(), &input, clip.as_deref())
+        };
+        let out = out.map_err(|message| DocError::Invalid { message })?;
+        self.reload();
+        Ok(out)
+    }
+
     /// 解析面板输入。`selected`：界面当前高亮的模板名。
     pub fn analyze(&self, input: String, selected: Option<String>) -> Analysis {
+        if command::is_command(&input) {
+            let lib = self.lib.read().unwrap();
+            return command::analyze(&lib, self.user_dir.as_deref(), &input, self.clipboard.read().unwrap().as_deref());
+        }
         grammar::analyze(&self.lib.read().unwrap(), &self.usage.read().unwrap(), &input, selected.as_deref())
     }
 
