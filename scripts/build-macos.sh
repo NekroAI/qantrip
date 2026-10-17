@@ -34,7 +34,7 @@ echo "==> UniFFI 绑定"
 GEN="$(mktemp -d)"; trap 'rm -rf "$GEN"' EXIT
 (cd "$CORE" && cargo run -q --release --features cli --bin uniffi-bindgen -- \
   generate --library "$LIBDIR/libqantrip_core.dylib" --language swift --out-dir "$GEN")
-mkdir -p "$MAC/Sources/qantrip_coreFFI/include" "$MAC/Generated/lib"
+mkdir -p "$MAC/Sources/qantrip_coreFFI/include" "$MAC/Sources/QantripCore" "$MAC/Generated/lib"
 cp "$GEN/qantrip_coreFFI.h" "$MAC/Sources/qantrip_coreFFI/include/"
 cp "$GEN/qantrip_coreFFI.modulemap" "$MAC/Sources/qantrip_coreFFI/include/module.modulemap"
 cp "$GEN/qantrip_core.swift" "$MAC/Sources/QantripCore/"
