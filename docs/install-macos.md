@@ -27,7 +27,7 @@ Qantrip 目前使用项目自己的证书签名，没有经过 Apple 公证，�
 用 GitHub CLI 下载的安装包不会被标记为来自网络，可以跳过这一步：
 
 ```sh
-gh release download <版本标签> --repo NekroAI/nekro-qantrip --pattern '*arm64.dmg'
+gh release download <版本标签> --repo NekroAI/qantrip --pattern '*arm64.dmg'
 ```
 
 ## 4. 引导与权限

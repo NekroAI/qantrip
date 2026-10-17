@@ -1,7 +1,7 @@
 # Nekro Qantrip — 产品需求文档（PRD）
 
 **产品名：** Nekro Qantrip（简称 Qantrip，读作 /ˈkæntrɪp/，同 cantrip）
-**仓库：** `NekroAI/nekro-qantrip`
+**仓库：** `NekroAI/qantrip`
 **版本：** v0.3
 **项目类型：** 开源、跨平台桌面效率工具
 **目标平台：** macOS / Windows / Linux
@@ -93,7 +93,7 @@ Nekro Qantrip（下称 Qantrip）是一款面向 AI 编程及日常 AI 使用场
 
 - 中文称呼：戏法。模板在面向用户的文案中可称为"戏法"，模板库可称为"魔导书"。
 - 读音与 cantrip 相同。README 首行应点明这个拼写来源，避免被当作拼写错误。
-- 归属 NekroAI 组织，沿用 `nekro-<名词>` 的仓库命名惯例。
+- 归属 NekroAI 组织。仓库名为 `qantrip`，不带 `nekro-` 前缀，避免冗长（docs/decisions.md D25）；产品全名仍为 Nekro Qantrip。
 - 命名时的检索结果（2026-10）：GitHub 无同名仓库，Homebrew cask / formula 未被占用。
 
 ---

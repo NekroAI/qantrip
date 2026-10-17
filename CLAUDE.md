@@ -1,6 +1,6 @@
 # Nekro Qantrip
 
-跨平台（macOS / Windows / Linux）Prompt 快捷输入与管理工具：全局快捷键唤起命令面板，搜索并参数化生成 Prompt，插入到当前应用；支持 AI 辅助编辑模板和 Cloudflare 端到端加密同步。开源，计划发布到 `NekroAI/nekro-qantrip`。
+跨平台（macOS / Windows / Linux）Prompt 快捷输入与管理工具：全局快捷键唤起命令面板，搜索并参数化生成 Prompt，插入到当前应用；支持 AI 辅助编辑模板和 Cloudflare 端到端加密同步。开源，计划发布到 `NekroAI/qantrip`。
 
 ## 当前阶段
 

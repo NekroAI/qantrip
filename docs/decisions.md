@@ -55,7 +55,7 @@
 
 ### D4 产品定名 Nekro Qantrip（2026-10-17）
 
-- **仓库：** `NekroAI/nekro-qantrip`
+- **仓库：** `NekroAI/qantrip`
 - **由来：** Q + cantrip（D&D 中不耗资源、可随手施放的"戏法"）。Q 呼应唤起快捷键，Prompt 在中文圈常被称为"咒语"。
 - **考虑过的其他名字：**
   - Cantrip / Incant / Quickcast（不加 Nekro 前缀）
@@ -202,6 +202,12 @@
 - **负责人决定：** 负责人离开期间，授权 Claude 按对抗性审查意见修订 `docs/sync-design.md` 后自行定稿，并实现、部署同步服务端（C1）。定稿理由与审查处理记录在设计文档中，供负责人事后复核。
 - **成本约束：** Worker 使用 Workers Paid（5 美元 / 月）套餐。设计必须保证一定规模用户下成本不会失控：轻量的版本检查接口、有变化才拉取；D1 查询全部走索引、分页、限量（D1 按扫描行数计费）；按用户与按保险库的配额和限流；清理任务有上限。具体估算写入设计文档。
 - **需要负责人提供：** GitHub OAuth 应用（正式与 staging 各一个），密钥放在 Mini 的 `~/.config/qantrip/cloud.env`，由 `wrangler secret` 写入，不进入仓库。在此之前登录入口显示"即将开放"。
+
+### D25 仓库更名为 NekroAI/qantrip（2026-10-17）
+
+- **负责人决定：** 仓库名去掉 `nekro-` 前缀，避免冗长。产品全名仍为 Nekro Qantrip，bundle id 仍为 `ai.nekro.qantrip`。
+- **做法：** 使用 GitHub 重命名而非新建仓库，保留提交历史、v0.1.0 Release 与 Actions Secrets（发布证书）；旧地址自动跳转。文档中的仓库地址已全部更新（D4 等早期记录中的地址一并改为新名称）。
+- Cloudflare 资源（Worker、D1、R2 的 `nekro-qantrip…` 名称）是账号内部名称，保持不变；本机工作目录名也保持不变。
 
 ---
 
