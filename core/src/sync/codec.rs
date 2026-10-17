@@ -120,8 +120,9 @@ impl Fields {
         let mut out = BTreeMap::new();
         for (k, v) in entries {
             let Value::Text(k) = k else { return Err("CBOR 映射的键应为文本".into()) };
+            // 不回显字段名：它可能来自服务端（错误信息不得包含服务端可控的文本）
             if !keys.contains(&k.as_str()) {
-                return Err(format!("未知字段 `{k}`"));
+                return Err("包含未知字段".into());
             }
             out.insert(k, v);
         }

@@ -37,6 +37,7 @@ hkdf = "0.13"
 hpke = { version = "0.14.1", default-features = false, features = ["alloc", "x25519", "chacha"] }
 rand_core = "0.10"
 sha2 = "0.11"
+unicode-normalization = "0.1"
 ureq = "3.4"
 x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1.9", features = ["derive"] }

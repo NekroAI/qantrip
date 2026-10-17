@@ -719,6 +719,7 @@ dependencies = [
  "serde_norway",
  "sha2",
  "similar",
+ "unicode-normalization",
  "uniffi",
  "ureq",
  "x25519-dalek",

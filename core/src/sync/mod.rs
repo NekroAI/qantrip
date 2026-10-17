@@ -1,4 +1,4 @@
-//! 端到端加密同步客户端（docs/sync-design.md v0.2，项目内称 C2）。
+//! 端到端加密同步客户端（docs/sync-design.md v0.3，项目内称 C2）。
 //!
 //! - `crypto`：密码学原语与域分离字符串；`codec`：确定性 CBOR 等编码
 //! - `roster`：签名花名册；`record`：记录明文；`state`：本地同步状态（JSON，不含任何私钥）
@@ -35,13 +35,13 @@ pub enum SyncError {
     /// 未登录或登录已失效
     NotSignedIn { message: String },
     Network { message: String },
-    /// 服务端返回的错误（`code` 为机器可读的错误码）
+    /// 服务端返回的错误（`code` 为机器可读的错误码；`message` 为本地固定文本，不含服务端返回的文字）
     Server { status: u16, code: String, message: String },
     NoVault { message: String },
     NotEnrolled { message: String },
     /// 安全校验失败（签名、承诺、密文、花名册等）；同时会记录告警
     Security { message: String },
-    /// 校验码不符；`remaining` 为冷却前剩余的尝试次数
+    /// 校验码（E 上输入的 SAS，或 N 上输入的确认码）不符；`remaining` 为冷却前剩余的尝试次数
     SasMismatch { remaining: u32 },
     /// 校验码错误次数过多，冷却中
     Cooldown { seconds: u64 },
@@ -172,6 +172,8 @@ pub enum JoinStage {
     WaitingForApprover,
     /// 显示校验码，请用户在已登录的设备上输入（新设备上没有任何确认按钮）
     EnterCodeOnOtherDevice,
+    /// 已登录的设备已批准：请用户在本机输入该设备显示的确认码（调用 `confirm_join`）
+    EnterCodeHere,
     Completed,
     Expired,
 }
@@ -327,6 +329,9 @@ impl SyncClient {
             for key in [engine::SECRET_DEVICE_KEYS, engine::SECRET_KEYRING] {
                 c.secrets.delete(key.into())?;
             }
+            for key in [join::SECRET_JOIN_N, join::SECRET_JOIN_E] {
+                c.secrets.delete(key.into())?;
+            }
             c.state.reset_vault();
             c.state.account = None;
             c.roster = None;
@@ -346,9 +351,16 @@ impl SyncClient {
         self.run(join::start_join)
     }
 
-    /// 新设备：轮询加入进度。阶段为 `EnterCodeOnOtherDevice` 时显示 `sas`；`Completed` 后调用 `sync_now`。
+    /// 新设备：轮询加入进度。阶段为 `EnterCodeOnOtherDevice` 时显示 `sas`；`EnterCodeHere` 时请用户输入
+    /// 已登录设备显示的确认码并调用 `confirm_join`。
     pub fn poll_join(&self) -> Result<JoinProgress, SyncError> {
         self.run(join::poll_join)
+    }
+
+    /// 新设备：输入已登录设备批准后显示的确认码。成功后阶段为 `Completed`，随后调用 `sync_now`。
+    /// 不符时返回 `SasMismatch`，连续 3 次后返回 `Cooldown` 并取消本次加入。
+    pub fn confirm_join(&self, code: String) -> Result<(), SyncError> {
+        self.run(|c| join::confirm_join(c, &code))
     }
 
     pub fn cancel_join(&self) {
@@ -363,8 +375,8 @@ impl SyncClient {
         self.run(join::list_join_requests)
     }
 
-    /// 已登录设备：输入新设备上显示的校验码以批准加入。
-    pub fn approve_join(&self, join_id: String, sas: String) -> Result<(), SyncError> {
+    /// 已登录设备：输入新设备上显示的校验码以批准加入。返回确认码：在本机显示，由用户在新设备上输入。
+    pub fn approve_join(&self, join_id: String, sas: String) -> Result<String, SyncError> {
         self.run(|c| join::approve_join(c, &join_id, &sas))
     }
 
@@ -380,6 +392,14 @@ impl SyncClient {
     /// 立即同步：拉取、应用到模板目录、推送本地变化、更新本机状态记录。
     pub fn sync_now(&self) -> Result<SyncReport, SyncError> {
         self.run(|c| c.sync())
+    }
+
+    /// 重新校验：重新拉取完整花名册与全部记录并逐条校验。全部通过时才解除"停止写入"，返回最新状态。
+    pub fn reverify(&self) -> Result<SyncStatus, SyncError> {
+        self.run(|c| {
+            c.reverify()?;
+            Ok(self.compute_status(c))
+        })
     }
 
     /// 在册设备。

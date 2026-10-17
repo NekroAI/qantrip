@@ -1,6 +1,9 @@
 //! 服务端接口（apps/cloud/server/api.ts）。所有二进制字段为 base64url（无填充）。
 //!
 //! HTTP 由 [`Transport`] 抽象：正式环境用 `ureq`（rustls、阻塞式，调用方在后台线程调用），测试用进程内的假服务端。
+//!
+//! 错误信息一律由本地固定文本组成，不包含服务端返回的任何文本（服务端不可信，其文本可能用于诱导用户）；
+//! 服务端的错误码经过字符集与长度检查后保留在 `SyncError::Server.code` 中供程序判断。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +17,13 @@ use super::{SecretStore, SyncError};
 pub const SECRET_ACCESS: &str = "access_token";
 pub const SECRET_REFRESH: &str = "refresh_token";
 pub const CLIENT_ID: &str = "qantrip-desktop";
+
+/// 花名册分页上限（L3）：单次响应的条目数、单个条目的字节数、总条目数
+const ROSTER_PAGE_MAX: usize = 1000;
+const ROSTER_ENTRY_MAX_BYTES: usize = 16 * 1024;
+pub const ROSTER_MAX_ENTRIES: u32 = 10_000;
+/// 单页记录数上限（请求的 limit 为 200）
+const CHANGES_PAGE_MAX: usize = 200;
 
 pub struct Response {
     pub status: u16,
@@ -67,11 +77,24 @@ impl Transport for UreqTransport {
                 req.header("content-type", "application/json").send(body.as_bytes())
             }
         };
-        let mut resp = result.map_err(|e| format!("网络请求失败：{e}"))?;
+        let mut resp = result.map_err(network_message)?;
         let status = resp.status().as_u16();
-        let body = resp.body_mut().with_config().limit(64 * 1024 * 1024).read_to_vec().map_err(|e| format!("读取响应失败：{e}"))?;
+        let body = resp.body_mut().with_config().limit(64 * 1024 * 1024).read_to_vec().map_err(network_message)?;
         Ok(Response { status, body })
     }
+}
+
+/// 网络错误转为固定的本地文本（不回显库或服务端给出的细节）。
+fn network_message(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Timeout(_) => "网络请求超时",
+        ureq::Error::HostNotFound => "无法解析服务器地址",
+        ureq::Error::ConnectionFailed => "无法连接服务器",
+        ureq::Error::BodyExceedsLimit(_) => "服务端响应过大",
+        ureq::Error::Io(_) => "网络连接中断",
+        _ => "网络请求失败",
+    }
+    .to_string()
 }
 
 // MARK: - 接口数据
@@ -162,11 +185,28 @@ pub struct TokenUser {
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(v: Json) -> Result<T, SyncError> {
-    serde_json::from_value(v).map_err(|e| SyncError::Security { message: format!("服务端响应格式不正确：{e}") })
+    // serde 的错误信息会引用响应内容，不回显
+    serde_json::from_value(v).map_err(|_| SyncError::Security { message: "服务端响应格式不正确".into() })
 }
 
 pub fn decode_b64(s: &str) -> Result<Vec<u8>, SyncError> {
     super::codec::from_b64u(s).map_err(|message| SyncError::Security { message })
+}
+
+/// 服务端分配的 ID（保险库、加入请求）只能是 `[A-Za-z0-9_-]{1,64}`：它们会出现在请求路径与界面中。
+pub fn valid_server_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn checked_id(id: Option<String>) -> Result<Option<String>, SyncError> {
+    match id {
+        Some(id) if !valid_server_id(&id) => Err(SyncError::Security { message: "服务端返回的 ID 格式不正确".into() }),
+        other => Ok(other),
+    }
+}
+
+fn too_large() -> SyncError {
+    SyncError::Security { message: "服务端返回的数据超出上限".into() }
 }
 
 // MARK: - 客户端
@@ -176,13 +216,32 @@ pub struct Api {
     secrets: Arc<dyn SecretStore>,
 }
 
-fn server_error(status: u16, body: &[u8]) -> SyncError {
+/// 服务端错误：错误码只保留 `[a-z0-9_]{1,64}`，说明文字取本地固定文本（不使用服务端的 `message`）。
+pub fn server_error(status: u16, body: &[u8]) -> SyncError {
     let v: Json = serde_json::from_slice(body).unwrap_or(Json::Null);
-    SyncError::Server {
-        status,
-        code: v["error"].as_str().unwrap_or("unknown").to_string(),
-        message: v["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("服务端返回 {status}")),
-    }
+    let code = v["error"]
+        .as_str()
+        .filter(|c| !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+        .unwrap_or("unknown")
+        .to_string();
+    let message = match code.as_str() {
+        "unauthorized" | "token_expired" | "invalid_grant" => "登录已失效，请重新登录",
+        "rate_limited" => "请求过于频繁，请稍后再试",
+        "vault_not_found" => "保险库不存在",
+        "join_in_progress" => "已有一个进行中的加入请求，请完成或等待其过期（10 分钟）",
+        "join_not_found" => "加入请求不存在或已过期",
+        "join_step_conflict" => "加入流程的状态不符，请重新开始",
+        "roster_conflict" => "花名册已被其他设备更新",
+        "too_many_devices" => "在册设备数量已达上限",
+        "roster_full" | "too_many_envelopes" => "保险库的条目数量已达上限",
+        "too_many_vaults" => "今天创建的保险库过多，请明天再试",
+        "message_too_large" | "entry_too_large" | "envelope_too_large" | "batch_too_large" => "数据超过服务端的大小限制",
+        "login_unavailable" | "github_error" => "登录服务暂时不可用",
+        "internal" => "服务端内部错误",
+        _ => "",
+    };
+    let message = if message.is_empty() { format!("服务端返回错误（HTTP {status}）") } else { message.to_string() };
+    SyncError::Server { status, code, message }
 }
 
 impl Api {
@@ -283,12 +342,12 @@ impl Api {
     // MARK: 保险库与记录
 
     pub fn vault(&self) -> Result<Option<String>, SyncError> {
-        Ok(parse::<VaultInfo>(self.get("/api/v1/vault")?)?.vault_id)
+        checked_id(parse::<VaultInfo>(self.get("/api/v1/vault")?)?.vault_id)
     }
 
     pub fn create_vault(&self) -> Result<String, SyncError> {
         let (_, v) = self.call("POST", "/api/v1/vault", Some(&json!({})))?;
-        parse::<VaultInfo>(v)?.vault_id.ok_or_else(|| SyncError::Security { message: "服务端未返回保险库 ID".into() })
+        checked_id(parse::<VaultInfo>(v)?.vault_id)?.ok_or_else(|| SyncError::Security { message: "服务端未返回保险库 ID".into() })
     }
 
     pub fn head(&self, vault: &str) -> Result<Head, SyncError> {
@@ -296,7 +355,11 @@ impl Api {
     }
 
     pub fn changes(&self, vault: &str, since: u64) -> Result<ChangesPage, SyncError> {
-        parse(self.get(&format!("/api/v1/vaults/{vault}/changes?since={since}&limit=200"))?)
+        let page: ChangesPage = parse(self.get(&format!("/api/v1/vaults/{vault}/changes?since={since}&limit=200"))?)?;
+        if page.records.len() > CHANGES_PAGE_MAX {
+            return Err(too_large());
+        }
+        Ok(page)
     }
 
     pub fn push(&self, vault: &str, writes: &[WriteReq]) -> Result<Vec<WriteResult>, SyncError> {
@@ -315,19 +378,27 @@ impl Api {
     // MARK: 花名册
 
     /// 拉取 `since` 之后的全部条目（服务端每次最多返回 1000 条）。返回条目与服务端声称的长度。
+    /// 单次响应、单个条目与总条目数都有上限（L3），超出视为服务端异常。
     pub fn roster(&self, vault: &str, since: u32) -> Result<(Vec<Vec<u8>>, u32), SyncError> {
         let mut out = Vec::new();
         loop {
             let from = since + out.len() as u32;
             let v = self.get(&format!("/api/v1/vaults/{vault}/roster?since={from}"))?;
             let rows: Vec<RosterRow> = parse(v["entries"].clone())?;
-            let length = v["length"].as_u64().unwrap_or(0) as u32;
+            let length = v["length"].as_u64().unwrap_or(0);
+            if length > ROSTER_MAX_ENTRIES as u64 || rows.len() > ROSTER_PAGE_MAX || from as usize + rows.len() > ROSTER_MAX_ENTRIES as usize {
+                return Err(too_large());
+            }
+            let length = length as u32;
             if rows.is_empty() {
                 return Ok((out, length));
             }
             for (i, row) in rows.iter().enumerate() {
                 if row.index != from + i as u32 {
                     return Err(SyncError::Security { message: "服务端返回的花名册序号不连续".into() });
+                }
+                if row.entry.len() > ROSTER_ENTRY_MAX_BYTES * 4 / 3 + 4 {
+                    return Err(too_large());
                 }
                 out.push(decode_b64(&row.entry)?);
             }
@@ -362,7 +433,7 @@ impl Api {
 
     pub fn create_join(&self, vault: &str, data: &[u8]) -> Result<String, SyncError> {
         let (_, v) = self.call("POST", &format!("/api/v1/vaults/{vault}/joins"), Some(&json!({ "data": super::codec::b64u(data) })))?;
-        v["join_id"].as_str().map(str::to_string).ok_or_else(|| SyncError::Security { message: "服务端未返回加入请求 ID".into() })
+        checked_id(v["join_id"].as_str().map(str::to_string))?.ok_or_else(|| SyncError::Security { message: "服务端未返回加入请求 ID".into() })
     }
 
     pub fn joins(&self, vault: &str) -> Result<Vec<JoinView>, SyncError> {

@@ -84,7 +84,8 @@ fn compute() -> Vec<(&'static str, String)> {
     out.push(("roster.head", format!("{head_idx}:{}", hex(&head))));
 
     // 记录明文与密文
-    let pt = Plaintext {
+    let rid = "AAAAAAAAAAAAAAAAAAAAAA";
+    let mut pt = Plaintext {
         kind: Kind::Template,
         counter: 1,
         deleted: false,
@@ -93,11 +94,16 @@ fn compute() -> Vec<(&'static str, String)> {
         roster_head: head,
         time: 1_792_281_600,
         body: Body::Template { file_name: "zh.md".into(), source: "---\nname: zh\n---\n用中文回答".into() },
+        sig: [0; 64],
     };
+    out.push(("record.signing_message", hex(&pt.signing_message(VAULT, rid, 1))));
+    pt.sign(VAULT, rid, 1, |m| a.roster_sign(m));
+    assert!(pt.verify(VAULT, rid, 1, &pa.roster).is_ok());
+    assert!(pt.verify(VAULT, rid, 2, &pa.roster).is_err(), "签名绑定 epoch");
+    assert!(pt.verify(VAULT, "BAAAAAAAAAAAAAAAAAAAAA", 1, &pa.roster).is_err(), "签名绑定 record_id");
     let plain = pt.encode();
     out.push(("record.plaintext", hex(&plain)));
     out.push(("record.content_hash", hex(&pt.content_hash())));
-    let rid = "AAAAAAAAAAAAAAAAAAAAAA";
     let ct = crypto::seal_record(&vk, &[5; 24], VAULT, rid, 1, &plain);
     out.push(("record.ciphertext.sha256", hex(&crypto::sha256(&[&ct]))));
     out.push(("record.ciphertext.len", ct.len().to_string()));
@@ -107,9 +113,11 @@ fn compute() -> Vec<(&'static str, String)> {
 
     let mut entries = std::collections::BTreeMap::new();
     entries.insert(rid.to_string(), StateEntry { counter: 1, hash: pt.content_hash(), deleted: false });
-    let state = Plaintext { kind: Kind::DeviceState, counter: 1, body: Body::DeviceState { entries }, ..pt.clone() };
+    let mut state = Plaintext { kind: Kind::DeviceState, counter: 1, body: Body::DeviceState { entries }, ..pt.clone() };
+    state.sign(VAULT, &crypto::state_record_id(VAULT, &pa.device_id()), 1, |m| a.roster_sign(m));
     out.push(("record.device_state", hex(&state.encode())));
-    let tomb = Plaintext { counter: 2, deleted: true, body: Body::Empty, ..pt.clone() };
+    let mut tomb = Plaintext { counter: 2, deleted: true, body: Body::Empty, ..pt.clone() };
+    tomb.sign(VAULT, rid, 1, |m| a.roster_sign(m));
     out.push(("record.tombstone", hex(&tomb.encode())));
 
     // HPKE Auth 信封：A → B，钥匙环 {1: VK}
@@ -130,6 +138,7 @@ fn compute() -> Vec<(&'static str, String)> {
     let commit = crypto::join_commit(VAULT, &pb.concat(), &[0x0a; 32]);
     out.push(("join.commit", hex(&commit)));
     out.push(("join.sas", crypto::sas(VAULT, &head, &pb.concat(), &pa.concat(), &[0x0a; 32], &[0x0b; 32])));
+    out.push(("join.confirm", crypto::join_confirm_code(VAULT, [b"commit", b"reply", b"reveal", b"result"], head_idx, &head)));
     out.push(("cbor.keyring", codec::b64u(&ring.encode())));
     out
 }
@@ -153,17 +162,19 @@ const EXPECTED: &[(&str, &str)] = &[
     ("roster.set_recovery", "a6626f706c7365745f7265636f7665727963736967584094df685a8dcfa465551373ba70c4e8592fc124c71c021081d66fc1696818b5c041b3bc815ecf09a967c653d2f44a9e46f12b80bfd11f8326e96195c502af6403647072657658208cf662210c5d26415b1590a19e620a85404aacb3389d16cedbcd911b655aa5b465696e64657801667369676e6572781a5845343250554a364d4e4c494f5252365a335935335634534e41677375626a656374a36462696e645840b992b54f6f2f294511f21d7f2d87a4c4e3ebe5c4569f50ecb49436cf90dcd0cb9da3ba3747f901196b9a6210b98a8dfeb63ecbcf77c7e5d9e0fe3f6c073b240e667832353531395820bdd7158819574467da2893dd623321a1786e18cc1298ee1867ba2bab1d4f074a67656432353531395820e1af167e350ffa7cd63f3784e944c472f5b18c75872b5990d32b8016c7e79f87"),
     ("roster.add_device", "a6626f706a6164645f6465766963656373696758402f532b1a6c3f275dd77b167575b25ed58371368a01835f1081ac86f1eaee28d9610214d8906986b9d08cd8d6e0e832f9d1c403f046cb9ad9a6ee393c285be408647072657658204d8cbb468ab6e4fce7e9cb7bce8b41b7f543b9b68d5bfbf1d2d4ffc5cc6f695065696e64657802667369676e6572781a5845343250554a364d4e4c494f5252365a335935335634534e41677375626a656374a36461757468582066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf763366726f737465725820204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c216678323535313958207b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13"),
     ("roster.head", "2:0f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc1"),
-    ("record.plaintext", "a764626f6479a266736f7572636578202d2d2d0a6e616d653a207a680a2d2d2d0ae794a8e4b8ade69687e59b9ee7ad946966696c655f6e616d65657a682e6d646474696d651a6ad40c0064747970656874656d706c61746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572016764656c65746564f4"),
+    ("record.signing_message", "71616e747269702f76312f7265636f72642d736967a764686173685820c4f112e485a970ea118761ee2b2d2fc116b72359cbc7a28b1a6722916331a8786565706f63680166777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e74657201687661756c745f696469765f766563746f7273697265636f72645f696476414141414141414141414141414141414141414141416c726f737465725f696e64657802"),
+    ("record.plaintext", "a863736967584045242a4377e4a3baa7de04d6c44ce745f80cf54dd68939fefa0c02ba0cd18e0153cc353231e81586ec8da374189179b364efa0ffc27ebf47d92346dbb4148c0a64626f6479a266736f7572636578202d2d2d0a6e616d653a207a680a2d2d2d0ae794a8e4b8ade69687e59b9ee7ad946966696c655f6e616d65657a682e6d646474696d651a6ad40c0064747970656874656d706c61746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572016764656c65746564f4"),
     ("record.content_hash", "c4f112e485a970ea118761ee2b2d2fc116b72359cbc7a28b1a6722916331a878"),
-    ("record.ciphertext.sha256", "6718b06fd188d4e18db36d54729cf1b72657f872ff23e452d3b0195850b86f22"),
-    ("record.ciphertext.len", "297"),
-    ("record.device_state", "a764626f6479a167656e7472696573a1764141414141414141414141414141414141414141414183015820c4f112e485a970ea118761ee2b2d2fc116b72359cbc7a28b1a6722916331a878f46474696d651a6ad40c0064747970656c6465766963655f737461746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572016764656c65746564f4"),
-    ("record.tombstone", "a764626f6479a06474696d651a6ad40c0064747970656874656d706c61746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572026764656c65746564f5"),
+    ("record.ciphertext.sha256", "1af20cbaf565af160be90cf3ef1fa9b51bf6cfefd272db8b232e9891f4486ab0"),
+    ("record.ciphertext.len", "553"),
+    ("record.device_state", "a86373696758406d0f3eb46bd61b497677c612f2467ccfbd75a8fe56a47a50e8a17e2334ec87770ff5ff21b29e2764cdc7c896783648e4682306a1cd95a3a2e869357f18655f0364626f6479a167656e7472696573a1764141414141414141414141414141414141414141414183015820c4f112e485a970ea118761ee2b2d2fc116b72359cbc7a28b1a6722916331a878f46474696d651a6ad40c0064747970656c6465766963655f737461746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572016764656c65746564f4"),
+    ("record.tombstone", "a8637369675840199f2ba9e213c397c2f2a55d8d4e7cc79dc5a55a574a98692f07007d1ef1f8a8d3a23441796a3917a5241dd5688edbdb7611f330f651695924206047d3d69d0864626f6479a06474696d651a6ad40c0064747970656874656d706c61746566726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e6465780266777269746572781a5845343250554a364d4e4c494f5252365a335935335634534e4167636f756e746572026764656c65746564f5"),
     ("envelope.plaintext", "a2646b657973a10158202a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a66726f73746572a2646865616458200f4d8317cf409e50855bc8d3af48df1e95f1ae4352591b50e140f4a462046bc165696e64657802"),
     ("envelope.enc", "a304558f4702ec0e7d5bf3a0dfde691466a92fe08d2483e6922ed673c96d5e69"),
     ("envelope.ct", "3081151fb23e989671586a3aff206620c85b0307fb01edd599ff5d5e74e653ac9bbcfe25362a13b0ef51ecc371dca29bcd1380e37128627742d3da756e818c49c87bf2395211670d1f6165aef1d6fda9d1c51d99270041fba850249a5277b8cc3743b432af4b3f9007e2411bc561dda9"),
     ("join.commit", "8828557875f71542eaac583c9d13c0aab04802ac5a1335406a3079df9f9b11f3"),
     ("join.sas", "ZJYS-FGMM"),
+    ("join.confirm", "GXA4-VC4X"),
     ("cbor.keyring", "oQFYICoqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioq"),
 ];
 
@@ -190,6 +201,7 @@ fn record_layer_round_trip_and_padding() {
             roster_head: [0; 32],
             time: 0,
             body: Body::Template { file_name: "a.md".into(), source: "x".repeat(size) },
+            sig: [7; 64],
         };
         let plain = pt.encode();
         let ct = crypto::seal_record(&vk, &[1; 24], VAULT, "rid_rid_rid_rid_", 1, &plain);
@@ -214,6 +226,7 @@ fn record_layer_round_trip_and_padding() {
         roster_head: [0; 32],
         time: 0,
         body: Body::Template { file_name: "a.md".into(), source: "leak".into() },
+        sig: [0; 64],
     };
     let mut padded = tomb.encode();
     padded.resize(crypto::padded_len(padded.len()), 0);

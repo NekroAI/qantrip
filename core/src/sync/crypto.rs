@@ -26,10 +26,14 @@ pub const D_RECOVERY_BIND: &[u8] = b"qantrip/v1/recovery-bind";
 pub const D_VK_COMMIT: &[u8] = b"qantrip/v1/vk-commit";
 pub const D_ENVELOPE: &[u8] = b"qantrip/v1/envelope";
 pub const D_RECORD: &[u8] = b"qantrip/v1/record";
+/// 记录明文中的写入者签名（v0.3）
+pub const D_RECORD_SIG: &[u8] = b"qantrip/v1/record-sig";
 pub const D_STATE: &[u8] = b"qantrip/v1/state";
 pub const D_ROSTER: &[u8] = b"qantrip/v1/roster";
 pub const D_COMMIT: &[u8] = b"qantrip/v1/commit";
 pub const D_SAS: &[u8] = b"qantrip/v1/sas";
+/// 加入协议的反向确认码（v0.3）
+pub const D_JOIN_CONFIRM: &[u8] = b"qantrip/v1/join-confirm";
 
 /// 记录密文格式版本
 pub const RECORD_VERSION: u8 = 0x01;
@@ -366,9 +370,33 @@ pub fn join_commit(vault_id: &str, pk_n: &[u8; 96], n_n: &[u8; 32]) -> [u8; 32] 
 /// `SAS = 截取 40 位(SHA-256("qantrip/v1/sas" || vault_id || head || pk_N || pk_E || n_N || n_E))`，
 /// 显示为 8 个 Base32 字符，中间加连字符（如 `K7QM-2XRA`）。
 pub fn sas(vault_id: &str, head: &[u8; 32], pk_n: &[u8; 96], pk_e: &[u8; 96], n_n: &[u8; 32], n_e: &[u8; 32]) -> String {
-    let h = sha256(&[D_SAS, vault_id.as_bytes(), head, pk_n, pk_e, n_n, n_e]);
+    short_code(&sha256(&[D_SAS, vault_id.as_bytes(), head, pk_n, pk_e, n_n, n_e]))
+}
+
+/// 截取哈希的前 40 位，显示为 `XXXX-XXXX`（Base32）。
+fn short_code(h: &[u8; 32]) -> String {
     let s = codec::base32(&h[..5]);
     format!("{}-{}", &s[..4], &s[4..])
+}
+
+/// 加入协议的反向确认码（v0.3）：E 在用户输入 SAS、追加 add_device 并发出结果之后显示，用户在 N 上输入。
+///
+/// `confirm = 截取 40 位(SHA-256("qantrip/v1/join-confirm" || vault_id || SHA-256(commit) || SHA-256(reply)
+///             || SHA-256(reveal) || SHA-256(result) || u32_be(新头部 index) || 新头部哈希))`
+///
+/// 四段消息取各自的完整字节（N 收到的与 E 发出的必须逐字节一致），格式与字母表同 SAS。
+pub fn join_confirm_code(vault_id: &str, transcript: [&[u8]; 4], new_index: u32, new_head: &[u8; 32]) -> String {
+    let [commit, reply, reveal, result] = transcript;
+    short_code(&sha256(&[
+        D_JOIN_CONFIRM,
+        vault_id.as_bytes(),
+        &sha256(&[commit]),
+        &sha256(&[reply]),
+        &sha256(&[reveal]),
+        &sha256(&[result]),
+        &new_index.to_be_bytes(),
+        new_head,
+    ]))
 }
 
 /// 规范化用户输入的校验码：去掉空白与连字符、转大写，并纠正 Base32 中不存在的易混字符（0→O、1→I、8→B）。

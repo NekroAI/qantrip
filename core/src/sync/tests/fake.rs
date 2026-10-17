@@ -38,6 +38,8 @@ pub struct Vault {
     pub joins: Vec<Join>,
     pub idem: HashMap<String, Json>,
     pub purged_seq: u64,
+    /// 测试辅助：下一次花名册追加成功后立即插入这条记录（模拟服务端在轮换窗口内注入）
+    pub inject_after_roster: Option<(String, Rec)>,
 }
 
 impl Vault {
@@ -263,6 +265,11 @@ impl World {
                     return err(409, "roster_conflict", "花名册已被其他设备更新");
                 }
                 v.roster.push(b64("entry"));
+                if let Some((id, mut r)) = v.inject_after_roster.take() {
+                    v.seq += 1;
+                    r.seq = v.seq;
+                    v.records.insert(id, r);
+                }
                 status(201, json!({ "index": expected }))
             }
             ("PUT", ["envelopes", recipient, epoch]) => {

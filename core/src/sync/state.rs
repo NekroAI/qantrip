@@ -34,6 +34,20 @@ pub struct RecordMeta {
     /// 需要重新推送（被回滚、或服务端丢失）
     #[serde(default)]
     pub dirty: bool,
+    /// 接受该版本时本地花名册的长度：轮换只重新加密在轮换开始（rotate 条目）之前接受的版本（§7）
+    #[serde(default)]
+    pub accepted_len: u32,
+}
+
+/// 加入时批准设备在认证结果中给出的本机状态记录锚点（§6.2，v0.3）：新设备首次同步必须看到
+/// 该设备的状态记录，且不早于此版本，否则视为服务端隐藏。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JoinAnchor {
+    pub device: String,
+    pub seq: u64,
+    pub counter: u64,
+    /// 内容哈希（base64url）
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -89,6 +103,9 @@ pub struct LocalState {
     /// 他人发起、尚未完成的轮换：(epoch, 本机首次看到的时间)，用于 24 小时接管
     #[serde(default)]
     pub pending_rotation_seen: Option<(u32, i64)>,
+    /// 加入时得到的批准设备状态记录锚点，对账满足后清除
+    #[serde(default)]
+    pub join_anchor: Option<JoinAnchor>,
 }
 
 impl LocalState {

@@ -105,7 +105,7 @@ impl Op {
                 Op::Rotate { epoch: f.u32("epoch")?, vk_commit: f.array("vk_commit")? }
             }
             "rotate_done" => Op::RotateDone { epoch: Fields::exact(subject, &["epoch"])?.u32("epoch")? },
-            other => return Err(format!("未知的花名册操作 `{other}`")),
+            _ => return Err("未知的花名册操作".into()),
         })
     }
 }
@@ -294,6 +294,11 @@ impl Roster {
         self.members.iter().filter(|(_, m)| m.removed.is_none()).map(|(k, m)| (k.clone(), m.clone())).collect()
     }
 
+    /// 创建保险库的设备（genesis 的签名者）。
+    pub fn genesis_device(&self) -> Option<&str> {
+        self.epochs.get(&1).map(|e| e.signer.as_str())
+    }
+
     pub fn recovery(&self) -> Option<&RecoveryInfo> {
         self.recovery.last()
     }
@@ -323,7 +328,7 @@ impl Roster {
                 .get(id)
                 .filter(|m| m.removed.is_none())
                 .map(|m| m.keys.roster)
-                .ok_or_else(|| format!("签名者 {id} 不在册")),
+                .ok_or_else(|| "签名者不在册".to_string()),
             Signer::Recovery => self.recovery().map(|r| r.ed25519).ok_or_else(|| "尚未设置恢复密钥".to_string()),
         }
     }
@@ -380,14 +385,14 @@ impl Roster {
                 crypto::verify(&self.signer_key(&e.signer)?, &msg, &e.sig)?;
                 let id = device.device_id();
                 if self.members.contains_key(&id) {
-                    return Err(format!("设备 {id} 已在花名册中出现过"));
+                    return Err("该设备已在花名册中出现过".into());
                 }
                 self.members.insert(id, Member { keys: device.clone(), added: index, removed: None });
             }
             Op::RemoveDevice { device_id } => {
                 crypto::verify(&self.signer_key(&e.signer)?, &msg, &e.sig)?;
                 if !self.is_enrolled(device_id) {
-                    return Err(format!("设备 {device_id} 不在册，无法移除"));
+                    return Err("被移除的设备不在册".into());
                 }
                 if let Signer::Device(signer) = &e.signer {
                     let remaining: Vec<_> = self.current_devices().into_iter().map(|(id, _)| id).filter(|id| id != device_id).collect();
