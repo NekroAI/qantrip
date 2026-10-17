@@ -4,7 +4,9 @@
 
 ## 当前阶段
 
-**设计阶段，尚无代码。** 下一步是完成 PRD 第 18 章列出的设计交付物，并对高风险能力（热键、浮窗、跨应用插入、macOS 签名授权）做原型验证。
+**Demo 阶段 2（macOS）。** 阶段 1 可行性 Spike 已通过（`docs/spike-report.md`），技术路线为 Rust 核心 + UniFFI + 各平台原生外壳（D6）。当前目标是 P0 纵向切片：输入语法解析、MiniJinja 渲染、内置模板、面板体验改版（D7 / D9 / D10）。
+
+构建：`scripts/build-macos.sh`（产物在 `dist/`）。插入链路回归测试：`tests/spike/run_insert_tests.py`。
 
 ## 文档
 
@@ -13,6 +15,7 @@
 | `docs/PRD.md` | 产品需求文档 v0.3。各章节的修订标记说明了改动来源 |
 | `docs/input-grammar.md` | 面板 / CLI 共用的输入语法规范草案 |
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
+| `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。
 
@@ -23,4 +26,4 @@
 - 插入用剪贴板 + 粘贴，默认不自动提交；必须有不需要任何系统权限的"只复制"模式。
 - macOS 暂无 Developer ID：用固定自签名证书签名。
 - 模板渲染具有确定性，不依赖 AI。
-- 技术选型（Tauri 2 等）尚未确定，须原型验证后决定。
+- 技术选型：Rust 核心 + 原生外壳，不以 Tauri 为主框架（D6）。
