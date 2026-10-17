@@ -1,0 +1,20 @@
+[package]
+name = "qantrip-ffi"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "Qantrip 核心的 C ABI（JSON 传参），供 Windows 外壳（C# P/Invoke）使用"
+
+[lib]
+crate-type = ["cdylib"]
+name = "qantrip_ffi"
+
+[dependencies]
+qantrip-core = { path = "../../../core" }
+serde = "1"
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1

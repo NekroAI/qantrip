@@ -11,6 +11,7 @@
 - 开发构建：`scripts/build-macos.sh`（产物在 `dist/`，本机开发证书签名）
 - 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布
 - 云服务：`cd apps/cloud && pnpm test`（契约测试）、`pnpm deploy:staging` / `pnpm deploy:production`（从 Mac mini 部署，wrangler 已登录）
+- Windows 构建（在 Windows 上）：`apps\windows\build.ps1`，说明见 `apps/windows/README.md`；回归脚本在 `tests/windows/`
 - 测试：`cargo test --manifest-path core/Cargo.toml`；插入链路回归：以 `QANTRIP_DEBUG_HOOKS=1` 构建后运行 `tests/spike/run_insert_tests.py`
 
 ## 文档
@@ -21,6 +22,7 @@
 | `docs/input-grammar.md` | 面板 / CLI 共用的输入语法规范草案 |
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
+| `docs/windows-spike.md` | Windows（WinUI 3）可行性报告：热键、面板、插入、输入法与绑定方式 |
 | `docs/install-macos.md` | macOS 安装说明（同时用作 Release 说明） |
 | `docs/sync-design.md` | 同步与端到端加密安全设计 v0.3（含成本模型、两轮审查记录） |
 

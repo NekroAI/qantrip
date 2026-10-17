@@ -18,4 +18,12 @@
 /apps/macos/Sources/qantrip_coreFFI/include/
 /apps/macos/Sources/QantripCore/qantrip_core.swift
 /core/wasm/target/
+/apps/windows/native/target/
+/apps/windows/Qantrip/bin/
+/apps/windows/Qantrip/obj/
+/tests/windows/*.png
+/tests/windows/irun.log
+/tests/windows/irun.done
+/tests/windows/irun.vbs
+/tests/windows/irun-wrap.ps1
 .claude/
