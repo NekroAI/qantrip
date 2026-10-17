@@ -140,8 +140,15 @@ def main():
     # 面板输入经 Rust 核心渲染后插入
     probe_reset()
     debug("insert", "zh 你好")
-    got = wait_probe("帮我翻译成中文。\n\n补充要求：你好")
-    check("insert[zh 你好] 经核心渲染后插入", got == "帮我翻译成中文。\n\n补充要求：你好", repr(got[:60]))
+    # 内置模板语言跟随系统语言（D29），按两种语言的渲染结果检查
+    expected = {"帮我翻译成中文。\n\n补充要求：你好", "Translate the following into Simplified Chinese.\n\nAdditional instructions: 你好"}
+    got = ""
+    for _ in range(30):
+        got = open(PROBE, encoding="utf-8").read() if os.path.exists(PROBE) else ""
+        if got in expected:
+            break
+        time.sleep(0.1)
+    check("insert[zh 你好] 经核心渲染后插入", got in expected, repr(got[:60]))
 
     # 展开粘贴（D13）：两次 ⌘V，探针应收到两份相同内容
     probe_reset()
