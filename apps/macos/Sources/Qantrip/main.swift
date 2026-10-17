@@ -5,10 +5,20 @@ import QantripCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: HotKey!
     private var launcher: LauncherController!
+    private var engine: Engine!
     private var statusItem: NSStatusItem!
 
+    /// 用户模板目录（docs/decisions.md D11）
+    static let templatesDir: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Qantrip/templates", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        launcher = LauncherController()
+        engine = Engine(userDir: Self.templatesDir.path)
+        launcher = LauncherController(engine: engine)
 
         // 默认 ⌃Q（docs/decisions.md D5，待冲突实测定稿）
         hotKey = HotKey(keyCode: UInt32(kVK_ANSI_Q), modifiers: UInt32(controlKey))
@@ -21,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "core_version": coreVersion(),
             "hotkey_status": Int(hotKey.status),
             "ax_trusted": Inserter.isTrusted,
-            "paste_keycode": Int(Inserter.keyCode(for: "v") ?? 9999),
+            "templates": engine.templates().count,
+            "template_problems": engine.problems(),
         ])
     }
 
@@ -33,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    /// 仅用于 Spike 自动化测试：`defaults write ai.nekro.qantrip debugHooks -bool true` 后生效。
+    /// 仅用于自动化测试：`defaults write ai.nekro.qantrip debugHooks -bool true` 后生效。
     /// 正式版本必须移除——它允许本机其他进程借用本应用的辅助功能权限插入任意文本。
     private func setupDebugHooks() {
         guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
@@ -54,13 +65,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launcher.toggle(eventTime: t, source: "debug")
     }
 
+    /// userInfo: text（直接插入的文本）或 input（按面板输入渲染）；expand 为 "1" 时展开粘贴
     @objc private func debugInsert(_ note: Notification) {
-        let input = (note.userInfo?["input"] as? String) ?? ""
-        guard let id = note.userInfo?["id"] as? String, let text = render(templateId: id, input: input) else {
-            SpikeLog.event("debug_insert_error", ["reason": "unknown template"])
+        let info = note.userInfo ?? [:]
+        let text = (info["text"] as? String) ?? (info["input"] as? String).flatMap { engine.render(input: $0, selected: nil) }
+        guard let text else {
+            SpikeLog.event("debug_insert_error", ["reason": "render failed"])
             return
         }
-        launcher.insert(text, target: NSWorkspace.shared.frontmostApplication)
+        launcher.insert(text, target: NSWorkspace.shared.frontmostApplication, expand: info["expand"] as? String == "1")
     }
 
     @objc private func debugStatus(_ note: Notification) {
@@ -88,6 +101,24 @@ extension AppDelegate: NSMenuDelegate {
         menu.removeAllItems()
         menu.addItem(withTitle: "打开面板（⌃Q）", action: #selector(openPanel), keyEquivalent: "").target = self
         menu.addItem(.separator())
+
+        let ascii = menu.addItem(withTitle: "唤起时切换到英文输入法", action: #selector(toggleASCII), keyEquivalent: "")
+        ascii.target = self
+        ascii.state = InputSourceGuard.enabled ? .on : .off
+        let expand = menu.addItem(withTitle: "⌘↩ 展开粘贴（Claude Code）", action: #selector(toggleExpand), keyEquivalent: "")
+        expand.target = self
+        expand.state = Inserter.expandPasteEnabled ? .on : .off
+        menu.addItem(.separator())
+
+        let count = engine.templates().count
+        menu.addItem(withTitle: "模板：\(count) 个", action: nil, keyEquivalent: "")
+        for p in engine.problems().prefix(5) {
+            menu.addItem(withTitle: "⚠︎ \(p)", action: nil, keyEquivalent: "")
+        }
+        menu.addItem(withTitle: "打开模板目录", action: #selector(openTemplates), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "重新加载模板", action: #selector(reloadTemplates), keyEquivalent: "r").target = self
+        menu.addItem(.separator())
+
         let hk = hotKey.isRegistered ? "全局快捷键：⌃Q 已注册" : "全局快捷键注册失败（\(hotKey.status)）"
         menu.addItem(withTitle: hk, action: nil, keyEquivalent: "")
         if Inserter.isTrusted {
@@ -96,13 +127,29 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(withTitle: "辅助功能权限：未授予（只复制模式）", action: nil, keyEquivalent: "")
             menu.addItem(withTitle: "授予辅助功能权限…", action: #selector(requestTrust), keyEquivalent: "").target = self
         }
-        menu.addItem(withTitle: "Qantrip Spike · core \(coreVersion())", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Nekro Qantrip Demo · core \(coreVersion())", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc private func openPanel() {
         launcher.show(eventTime: ProcessInfo.processInfo.systemUptime, source: "menu")
+    }
+
+    @objc private func toggleASCII() {
+        UserDefaults.standard.set(!InputSourceGuard.enabled, forKey: "forceASCIIInput")
+    }
+
+    @objc private func toggleExpand() {
+        Inserter.expandPasteEnabled.toggle()
+    }
+
+    @objc private func openTemplates() {
+        NSWorkspace.shared.open(Self.templatesDir)
+    }
+
+    @objc private func reloadTemplates() {
+        engine.reload()
     }
 
     @objc private func requestTrust() {

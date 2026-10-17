@@ -13,7 +13,6 @@ PROBE = os.path.join(LOGS, "probe.txt")
 SPIKE = os.path.join(LOGS, "spike.jsonl")
 MACCY = os.path.expanduser(
     "~/Library/Containers/org.p0deje.Maccy/Data/Library/Application Support/Maccy/Storage.sqlite")
-RENDER = os.path.join(ROOT, "core/target/release/examples/render")
 PBTOOL = os.path.join(ROOT, "target/spike-helpers/pbtool")
 
 results = []
@@ -76,18 +75,27 @@ def defaults(key, ms):
         sh("defaults", "write", "ai.nekro.qantrip", key, "-float", str(ms))
 
 
-def case_paste(tid, inp, rich):
-    expected = sh(RENDER, tid, inp)
+TEXTS = {
+    "zh": "帮我翻译成中文。",
+    "multiline": "请审查当前改动：\n\n1. 先理解意图\n2. 再找问题\n\n不要直接修改代码。",
+    "unicode": "中文、日本語、한국어、Ελληνικά、עברית\nEmoji: 🧙‍♂️✨🪄 👩🏽‍💻 🇨🇳\n符号: `code` $HOME %s {{x}} \\n \"quote\" 'single' <tag> & | ;\n全角：，。！？「」——＝",
+    "long": "\n".join(f"{i:03} 长文本测试行：The quick brown fox jumps over the lazy dog. 敏捷的棕色狐狸。" for i in range(1, 201)),
+}
+
+
+def case_paste(tid, rich):
+    expected = TEXTS[tid]
     if rich:
         sh(PBTOOL, "set-rich", f"rich-sentinel-{tid}")
     else:
         subprocess.run(["pbcopy"], input=f"sentinel-{tid}", text=True)
     before = pb_dump()
+    maccy_before = set(maccy_texts())
     probe_reset()
     if frontmost() != "ai.nekro.qantrip.pasteprobe":
         check(f"paste[{tid}] 前置：PasteProbe 在前台", False, frontmost())
         return
-    debug("insert", tid, inp)
+    debug("paste", expected)
     got = wait_probe(expected)
     check(f"paste[{tid}] 内容逐字一致（{len(expected)} 字符）", got == expected,
           "" if got == expected else f"收到 {len(got)} 字符")
@@ -95,15 +103,13 @@ def case_paste(tid, inp, rich):
     after = pb_dump()
     check(f"paste[{tid}] 剪贴板恢复（{'多格式' if rich else '纯文本'}）", before == after,
           "" if before == after else f"before={before!r} after={after!r}")
-    leaked = [t for t in maccy_texts() if expected[:40] in t]
+    leaked = [t for t in set(maccy_texts()) - maccy_before if expected[:40] in t]
     check(f"paste[{tid}] 未进入 Maccy 历史", not leaked)
 
 
 def build_helpers():
     os.makedirs(os.path.dirname(PBTOOL), exist_ok=True)
     subprocess.run(["swiftc", "-O", os.path.join(ROOT, "tests/spike/pbtool.swift"), "-o", PBTOOL], check=True)
-    subprocess.run([os.path.expanduser("~/.cargo/bin/cargo"), "build", "-q", "--release", "--example", "render"],
-                   cwd=os.path.join(ROOT, "core"), check=True)
 
 
 def main():
@@ -115,19 +121,28 @@ def main():
     check("对照：普通复制被 Maccy 记录", any(marker in t for t in maccy_texts()))
 
     open(SPIKE, "w").close()
-    for tid, inp, rich in [
-        ("zh", "zh 保留术语 API、SDK", False),
-        ("review", "r security 重点检查认证和权限模块", True),
-        ("unicode", "uni", False),
-        ("long", "long", False),
-    ]:
-        case_paste(tid, inp, rich)
+    for tid, rich in [("zh", False), ("multiline", True), ("unicode", False), ("long", False)]:
+        case_paste(tid, rich)
+
+    # 面板输入经 Rust 核心渲染后插入
+    probe_reset()
+    debug("insert", "zh 你好")
+    got = wait_probe("帮我翻译成中文。\n\n补充要求：你好")
+    check("insert[zh 你好] 经核心渲染后插入", got == "帮我翻译成中文。\n\n补充要求：你好", repr(got[:60]))
+
+    # 展开粘贴（D13）：两次 ⌘V，探针应收到两份相同内容
+    probe_reset()
+    text = TEXTS["multiline"]
+    debug("paste", text, "expand")
+    got = wait_probe(text + text, timeout=4)
+    check("展开粘贴：连续粘贴两次", got == text + text, f"收到 {len(got)} 字符，期望 {2 * len(text)}")
+    time.sleep(0.8)
 
     # 剪贴板在恢复窗口内被用户修改 → 不覆盖
     defaults("restoreDelayMs", 1500)
     probe_reset()
     subprocess.run(["pbcopy"], input="before-race", text=True)
-    debug("insert", "zh", "zh")
+    debug("paste", TEXTS["zh"])
     time.sleep(0.4)
     subprocess.run(["pbcopy"], input="user-copied-during-window", text=True)
     time.sleep(1.6)
@@ -138,12 +153,8 @@ def main():
     # 目标应用在插入前切换 → 降级为只复制，不粘贴到错误应用
     defaults("pasteDelayMs", 800)
     probe_reset()
-    # 模拟：用 Qantrip 自身的"目标"= PasteProbe，然后在粘贴前切到 Finder
-    debug("toggle")  # 唤起面板，记录目标为 PasteProbe
-    time.sleep(0.3)
-    debug("toggle")
-    # debug insert 以当前前台为目标，因此改为：先触发插入，再迅速切走
-    debug("insert", "zh", "zh")
+    # 以当前前台（PasteProbe）为目标触发插入，在发送 ⌘V 前切到 Finder
+    debug("paste", TEXTS["zh"])
     time.sleep(0.1)
     sh("open", "-a", "Finder")
     time.sleep(1.3)
@@ -152,7 +163,7 @@ def main():
     last = [e for e in ev if e["event"] == "insert"][-1]
     check("插入前目标应用切换 → 降级只复制", got == "" and last.get("reason") == "target_changed",
           f"probe={got[:20]!r} last={last.get('mode')}/{last.get('reason')}")
-    check("降级后 Prompt 留在剪贴板", sh("pbpaste") == sh(RENDER, "zh", "zh"))
+    check("降级后 Prompt 留在剪贴板", sh("pbpaste") == TEXTS["zh"])
     defaults("pasteDelayMs", None)
 
     ev = [json.loads(l) for l in open(SPIKE)]

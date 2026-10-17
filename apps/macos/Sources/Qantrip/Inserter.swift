@@ -25,6 +25,14 @@ final class Inserter {
     /// 面板隐藏后到发送 ⌘V 的等待，以及发送后到恢复剪贴板的等待（可用 defaults 调整）。
     private var pasteDelay: TimeInterval { Self.setting("pasteDelayMs", 30) / 1000 }
     private var restoreDelay: TimeInterval { Self.setting("restoreDelayMs", 500) / 1000 }
+    /// 展开粘贴（D13）两次 ⌘V 之间的间隔：Claude Code 异步处理粘贴，第二次需等第一次完成。
+    private var expandInterval: TimeInterval { Self.setting("expandPasteIntervalMs", 250) / 1000 }
+
+    /// ⌘↩ 展开粘贴开关（菜单栏可切换）
+    static var expandPasteEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "expandPasteEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "expandPasteEnabled") }
+    }
 
     private static func setting(_ key: String, _ fallback: Double) -> Double {
         let v = UserDefaults.standard.double(forKey: key)
@@ -39,7 +47,10 @@ final class Inserter {
     }
 
     /// - Parameter target: 唤起面板时的前台应用；插入前确认它仍在前台。
-    func insert(_ text: String, target: NSRunningApplication?, completion: @escaping (Outcome) -> Void) {
+    /// - Parameter expand: 连续粘贴两次，让 Claude Code 展开折叠的长粘贴（D13）。
+    func insert(_ text: String, target: NSRunningApplication?, expand: Bool = false,
+                completion: @escaping (Outcome) -> Void) {
+        let expand = expand && Self.expandPasteEnabled
         let started = ProcessInfo.processInfo.systemUptime
 
         guard Self.isTrusted else {
@@ -72,8 +83,14 @@ final class Inserter {
 
             postPaste()
             let pastedAt = ProcessInfo.processInfo.systemUptime
+            if expand {
+                DispatchQueue.main.asyncAfter(deadline: .now() + expandInterval) { [self] in
+                    // 期间剪贴板被改动则不再粘贴第二次，避免插入别的内容
+                    if pb.changeCount == ourChange { postPaste() }
+                }
+            }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) { [self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay + (expand ? expandInterval : 0)) { [self] in
                 let untouched = pb.changeCount == ourChange
                 if untouched { restore(snapshot) }
                 log(.pasted, text: text, started: started, extra: [
@@ -82,6 +99,7 @@ final class Inserter {
                     "snapshot_ms": snapshotMs,
                     "paste_ms": SpikeLog.ms(pastedAt - started),
                     "restored": untouched,
+                    "expand": expand,
                 ])
             }
             completion(.pasted)
