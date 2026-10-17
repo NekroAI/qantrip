@@ -56,9 +56,17 @@ impl Cmd {
             Cmd::Edit => tr!(loc, "在模板库中编辑", "Edit in the template library"),
             Cmd::Dup => tr!(loc, "复制一个模板（可改写内置模板）", "Copy a template (e.g. to change a built-in one)"),
             Cmd::Alias => tr!(loc, "给模板添加别名", "Add an alias to a template"),
-            Cmd::Rm => tr!(loc, "删除模板（移到废纸篓）", "Delete a template (moves it to the Trash)"),
+            Cmd::Rm => {
+                let (zh, en) = trash_word();
+                tr!(loc, "删除模板（移到{zh}）", "Delete a template (moves it to the {en})")
+            }
         }
     }
+}
+
+/// 系统回收站的叫法（中文, 英文）
+fn trash_word() -> (&'static str, &'static str) {
+    if cfg!(target_os = "windows") { ("回收站", "Recycle Bin") } else { ("废纸篓", "Trash") }
 }
 
 /// 输入是否为指令（允许全角斜杠）。
@@ -576,7 +584,8 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                     let n = t.name.clone();
                     a.template = Some(template_info(t));
                     a.preview = Some(plain_preview(&t.source));
-                    a.hint = tr!(loc, "↩ 删除 {n}（移到废纸篓）", "↩ delete {n} (moves it to the Trash)");
+                    let (zh, en) = trash_word();
+                    a.hint = tr!(loc, "↩ 删除 {n}（移到{zh}）", "↩ delete {n} (moves it to the {en})");
                     t.path.clone().map(|path| Plan::Trash { path, name: n })
                 }
             }
@@ -626,7 +635,10 @@ pub fn run(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Optio
         }
         Plan::Open { name } => Ok(CommandOutcome { message: String::new(), open_editor: Some(name), trash_path: None }),
         Plan::Trash { path, name } => Ok(CommandOutcome {
-            message: tr!(loc, "已删除 {name}，可在废纸篓中找回", "Deleted {name}. You can restore it from the Trash"),
+            message: {
+                let (zh, en) = trash_word();
+                tr!(loc, "已删除 {name}，可在{zh}中找回", "Deleted {name}. You can restore it from the {en}")
+            },
             open_editor: None,
             trash_path: Some(path.to_string_lossy().to_string()),
         }),
