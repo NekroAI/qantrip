@@ -59,6 +59,8 @@ function Shot([string]$name, [int]$x = 0, [int]$y = 0, [int]$w = 0, [int]$h = 0,
 function EnsureApp([switch]$Restart, [hashtable]$Env = @{}) {
   if ($Restart) { Get-Process Qantrip -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 500 }
   if (-not (Get-Process Qantrip -ErrorAction SilentlyContinue)) {
+    # 首次启动引导会抢占前台：除非测试显式指定，否则跳过（t-onboarding.ps1 传入 0）
+    [Environment]::SetEnvironmentVariable("QANTRIP_SKIP_ONBOARDING", "1")
     foreach ($k in $Env.Keys) { [Environment]::SetEnvironmentVariable($k, $Env[$k]) }
     Start-Process $App
     Start-Sleep -Seconds 3

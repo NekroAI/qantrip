@@ -94,25 +94,12 @@ internal sealed class LauncherModel
         Engine.SetClipboard(ReadClipboard?.Invoke());
     }
 
-    /// 核心的指令说明沿用 macOS 的"废纸篓 / Trash"，在 Windows 上改称"回收站 / Recycle Bin"。
-    /// 只替换不带位置信息的文字（提示、候选说明、诊断信息、指令帮助）。
-    private static void UseWindowsTerms(Analysis a)
-    {
-        static string All(string s) => s.Replace("废纸篓", "回收站").Replace("Trash", "Recycle Bin");
-        a.Hint = All(a.Hint);
-        foreach (var c in a.Candidates) { c.Subtitle = All(c.Subtitle); c.Detail = All(c.Detail); }
-        foreach (var d in a.Diagnostics) d.Message = All(d.Message);
-        // 预览只在显示指令帮助（还没有模板）时替换，不改动模板源码的展示
-        if (a.Template is null && a.Preview is Preview p && p.Highlights.Count == 0) p.Text = All(p.Text);
-    }
-
     /// 重新解析当前输入（语言或模板库变化后）。
     public void Refresh() => Reanalyze(resetSelection: false);
 
     private void Reanalyze(bool resetSelection)
     {
         Analysis = Engine.Analyze(Query, selectedKey);
-        if (IsCommandMode) UseWindowsTerms(Analysis);
         if (resetSelection) SelectedIndex = 0;
         SelectedIndex = Math.Min(SelectedIndex, Math.Max(Candidates.Count - 1, 0));
         Changed?.Invoke();

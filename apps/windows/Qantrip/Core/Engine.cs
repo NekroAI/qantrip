@@ -71,6 +71,50 @@ public sealed class Engine : IDisposable
         return json is null ? new() : JsonSerializer.Deserialize<List<string>>(json, Json) ?? new();
     }
 
+    // MARK: 模板库与编辑器
+
+    /// 模板库全部条目（内置、用户模板、公共片段，按模板库顺序）。
+    public List<TemplateEntry> Entries()
+    {
+        var json = Take(Native.qt_entries(handle));
+        return json is null ? new() : JsonSerializer.Deserialize<List<TemplateEntry>>(json, Json) ?? new();
+    }
+
+    /// 内置模板的原始源码（恢复默认）。
+    public string? BuiltinSource(string name) => Take(Native.qt_builtin_source(handle, U8(name)));
+
+    /// 校验编辑中的源码，并以 tryInput（为空时用模板名）试用。
+    public SourceCheck CheckSource(string source, string tryInput)
+    {
+        var json = Take(Native.qt_check_source(handle, U8(source), U8(tryInput)));
+        return (json is null ? null : JsonSerializer.Deserialize<SourceCheck>(json, Json)) ?? new SourceCheck { Problems = { "qt_check_source failed" } };
+    }
+
+    /// 源码 → 结构化文档；无法解析时返回 null 并给出错误。
+    public static TemplateDoc? ParseDoc(string source, out string? error)
+    {
+        error = null;
+        var json = Take(Native.qt_parse_doc(U8(source)));
+        if (json is null) { error = "qt_parse_doc failed"; return null; }
+        using var d = JsonDocument.Parse(json);
+        if (d.RootElement.GetProperty("ok").GetBoolean()) return d.RootElement.GetProperty("doc").Deserialize<TemplateDoc>(Json);
+        error = d.RootElement.GetProperty("error").GetString();
+        return null;
+    }
+
+    public static TemplateDoc? ParseDoc(string source) => ParseDoc(source, out _);
+
+    /// 结构化文档 → 模板源码。
+    public static string SerializeDoc(TemplateDoc doc) =>
+        Take(Native.qt_serialize_doc(U8(JsonSerializer.Serialize(doc, Json)))) ?? throw new InvalidOperationException("qt_serialize_doc failed");
+
+    /// 新模板的初始文档。
+    public static TemplateDoc NewDoc(string name, string locale)
+    {
+        var json = Take(Native.qt_new_doc(U8(name), U8(locale)));
+        return (json is null ? null : JsonSerializer.Deserialize<TemplateDoc>(json, Json)) ?? new TemplateDoc { Name = name };
+    }
+
     public void Dispose()
     {
         if (handle != IntPtr.Zero) Native.qt_engine_free(handle);
@@ -105,5 +149,11 @@ public sealed class Engine : IDisposable
         [DllImport(Dll)] public static extern void qt_set_clipboard(IntPtr e, byte[]? text);
         [DllImport(Dll)] public static extern IntPtr qt_run_command(IntPtr e, byte[]? input);
         [DllImport(Dll)] public static extern IntPtr qt_problems(IntPtr e);
+        [DllImport(Dll)] public static extern IntPtr qt_entries(IntPtr e);
+        [DllImport(Dll)] public static extern IntPtr qt_builtin_source(IntPtr e, byte[]? name);
+        [DllImport(Dll)] public static extern IntPtr qt_check_source(IntPtr e, byte[]? source, byte[]? tryInput);
+        [DllImport(Dll)] public static extern IntPtr qt_parse_doc(byte[]? source);
+        [DllImport(Dll)] public static extern IntPtr qt_serialize_doc(byte[]? doc);
+        [DllImport(Dll)] public static extern IntPtr qt_new_doc(byte[]? name, byte[]? locale);
     }
 }

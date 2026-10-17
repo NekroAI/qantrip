@@ -1,4 +1,4 @@
-﻿# 指令模式（D31）：/ 帮助、/new 从剪贴板创建模板、使用新模板、/rm 两次回车后移到回收站，最后清理。
+﻿# 指令模式（D31）：/ 帮助、/new 从剪贴板创建模板、使用新模板、/rm 两次回车后移到回收站、/edit 打开模板库，最后清理。
 . "$PSScriptRoot\drv.ps1"
 Add-Type -AssemblyName System.Windows.Forms
 $tpl = "$Dev\data\templates"
@@ -53,12 +53,16 @@ Start-Sleep -Milliseconds 500
 Shot "cmd-rm-hud" 0 0 0 0 0.4
 "after second Enter: file exists=" + (Test-Path "$tpl\qttest.md")
 
-# 5) /edit：Windows 暂无模板库窗口，只提示
+# 5) /edit：在模板库窗口中打开该模板（随后关闭窗口）
 Start-Sleep -Milliseconds 1800
 Panel "/edit review"
 [Drv]::Combo($VK.ENTER) | Out-Null
 Start-Sleep -Milliseconds 500
-Shot "cmd-edit-hud" 0 0 0 0 0.4
+Shot "cmd-edit-library" 0 0 0 0 0.4
+. "$PSScriptRoot\uia.ps1"
+$lib = Win "模板库"
+"library opened by /edit: " + [bool]$lib + " title=" + $(if ($lib) { (El $lib "lib_title").Current.Name })
+CloseWin $lib
 NewEvents '"debug_command"|"command"|command_failed'
 
 # 6) 回收站中能找到，然后只删除这一项（不动其他回收站内容）
@@ -80,3 +84,6 @@ $r = Await ([Windows.ApplicationModel.DataTransfer.Clipboard]::GetHistoryItemsAs
 $n = 0
 foreach ($it in @($r.Items)) { try { if ($it.Content.Contains("Text")) { $t = Await ($it.Content.GetTextAsync()) ([string]); if ($t -like "QANTRIP-CMD*") { [Windows.ApplicationModel.DataTransfer.Clipboard]::DeleteItemFromHistory($it) | Out-Null; $n++ } } } catch {} }
 "removed $n test items from clipboard history"
+
+# 退出应用
+Get-Process Qantrip -ErrorAction SilentlyContinue | Stop-Process -Force

@@ -156,3 +156,67 @@ public sealed class ParamEdit
     public static ParamEdit Clear() => new() { Kind = "clear" };
     public static ParamEdit Begin() => new() { Kind = "begin" };
 }
+
+// MARK: 模板库与编辑器（lib.rs TemplateEntry / SourceCheck，doc.rs TemplateDoc，经 qantrip-ffi 的 JSON 镜像）
+
+/// 模板库中的一项。
+public sealed class TemplateEntry
+{
+    public string Name { get; set; } = "";
+    public List<string> Aliases { get; set; } = new();
+    public string Description { get; set; } = "";
+    public string Category { get; set; } = "";
+    public bool Builtin { get; set; }
+    /// 用户模板覆盖了同名内置模板
+    public bool OverridesBuiltin { get; set; }
+    public bool Partial { get; set; }
+    public string? Path { get; set; }
+    public string Source { get; set; } = "";
+}
+
+public sealed class ChoiceDoc
+{
+    public string Value { get; set; } = "";
+    public string Label { get; set; } = "";
+    public List<string> Aliases { get; set; } = new();
+}
+
+/// 参数的结构化表示（core doc.rs ParamDoc）。
+public sealed class ParamDoc
+{
+    public string Name { get; set; } = "";
+    /// bool / enum / multi / string / number / text
+    public string Kind { get; set; } = "bool";
+    public string Description { get; set; } = "";
+    public List<ChoiceDoc> Choices { get; set; } = new();
+    /// 默认值的文本形式：开关为 true / false，多选用逗号分隔，未设置为 null
+    public string? DefaultValue { get; set; }
+    public bool Positional { get; set; }
+    public string? Short { get; set; }
+    public bool Required { get; set; }
+    public List<string> Requires { get; set; } = new();
+    public List<string> Conflicts { get; set; } = new();
+    public double? Min { get; set; }
+    public double? Max { get; set; }
+}
+
+/// 模板的结构化表示（图形化编辑器，core doc.rs TemplateDoc）。
+public sealed class TemplateDoc
+{
+    public string Name { get; set; } = "";
+    public List<string> Aliases { get; set; } = new();
+    public string Description { get; set; } = "";
+    public string Category { get; set; } = "";
+    public List<ParamDoc> Params { get; set; } = new();
+    public string Body { get; set; } = "";
+}
+
+/// 编辑器的实时校验与试用结果。
+public sealed class SourceCheck
+{
+    public string? Name { get; set; }
+    public List<string> Problems { get; set; } = new();
+    public TemplateDoc? Doc { get; set; }
+    /// 以试用输入解析的结果（预览、参数状态等）
+    public Analysis? Analysis { get; set; }
+}

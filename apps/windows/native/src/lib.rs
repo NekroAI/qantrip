@@ -14,9 +14,13 @@ use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use qantrip_core::{Engine, Locale, ParamEdit};
+use qantrip_core::{Choice, Engine, Locale, ParamDoc, ParamEdit, ParamKind, TemplateDoc};
+use serde::{Deserialize, Serialize};
 
-fn opt_str(p: *const c_char) -> Option<String> {
+mod secrets;
+mod sync;
+
+pub(crate) fn opt_str(p: *const c_char) -> Option<String> {
     if p.is_null() {
         return None;
     }
@@ -24,11 +28,11 @@ fn opt_str(p: *const c_char) -> Option<String> {
     Some(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
 }
 
-fn str_or_empty(p: *const c_char) -> String {
+pub(crate) fn str_or_empty(p: *const c_char) -> String {
     opt_str(p).unwrap_or_default()
 }
 
-fn out(s: Option<String>) -> *mut c_char {
+pub(crate) fn out(s: Option<String>) -> *mut c_char {
     match s {
         // 字符串中不应出现 NUL；万一出现则去掉
         Some(s) => CString::new(s.replace('\0', "")).map(CString::into_raw).unwrap_or(std::ptr::null_mut()),
@@ -41,7 +45,7 @@ fn engine<'a>(e: *const Engine) -> Option<&'a Engine> {
     unsafe { e.as_ref() }
 }
 
-fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
+pub(crate) fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
 }
 
@@ -182,6 +186,173 @@ pub extern "C" fn qt_run_command(e: *const Engine, input: *const c_char) -> *mut
     })
 }
 
+// MARK: - 模板库与编辑器（docs/decisions.md D19）
+
+/// `ParamDoc` 的 JSON 形式（核心类型只有 UniFFI 派生，这里做一层可序列化的镜像）。
+#[derive(Serialize, Deserialize)]
+struct ParamJson {
+    name: String,
+    kind: ParamKind,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    choices: Vec<Choice>,
+    #[serde(default)]
+    default_value: Option<String>,
+    #[serde(default)]
+    positional: bool,
+    #[serde(default)]
+    short: Option<String>,
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    requires: Vec<String>,
+    #[serde(default)]
+    conflicts: Vec<String>,
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+}
+
+/// `TemplateDoc` 的 JSON 形式。
+#[derive(Serialize, Deserialize)]
+struct DocJson {
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    params: Vec<ParamJson>,
+    #[serde(default)]
+    body: String,
+}
+
+impl From<TemplateDoc> for DocJson {
+    fn from(d: TemplateDoc) -> Self {
+        let params = d
+            .params
+            .into_iter()
+            .map(|p| ParamJson {
+                name: p.name,
+                kind: p.kind,
+                description: p.description,
+                choices: p.choices,
+                default_value: p.default_value,
+                positional: p.positional,
+                short: p.short,
+                required: p.required,
+                requires: p.requires,
+                conflicts: p.conflicts,
+                min: p.min,
+                max: p.max,
+            })
+            .collect();
+        DocJson { name: d.name, aliases: d.aliases, description: d.description, category: d.category, params, body: d.body }
+    }
+}
+
+impl From<DocJson> for TemplateDoc {
+    fn from(d: DocJson) -> Self {
+        let params = d
+            .params
+            .into_iter()
+            .map(|p| ParamDoc {
+                name: p.name,
+                kind: p.kind,
+                description: p.description,
+                choices: p.choices,
+                default_value: p.default_value,
+                positional: p.positional,
+                short: p.short,
+                required: p.required,
+                requires: p.requires,
+                conflicts: p.conflicts,
+                min: p.min,
+                max: p.max,
+            })
+            .collect();
+        TemplateDoc { name: d.name, aliases: d.aliases, description: d.description, category: d.category, params, body: d.body }
+    }
+}
+
+/// 模板库全部条目（`TemplateEntry` 数组：内置、用户模板与公共片段，按模板库顺序）的 JSON。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_entries(e: *const Engine) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || {
+        let v: Vec<serde_json::Value> = e
+            .entries()
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name, "aliases": t.aliases, "description": t.description, "category": t.category,
+                    "builtin": t.builtin, "overrides_builtin": t.overrides_builtin, "partial": t.partial,
+                    "path": t.path, "source": t.source,
+                })
+            })
+            .collect();
+        out(json(&v))
+    })
+}
+
+/// 内置模板的原始源码（"恢复默认"）；不是内置模板时返回空指针。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_builtin_source(e: *const Engine, name: *const c_char) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || out(e.builtin_source(str_or_empty(name))))
+}
+
+/// 校验编辑中的源码并以 `try_input` 试用。返回 `{"name","problems","doc","analysis"}` 的 JSON。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_check_source(e: *const Engine, source: *const c_char, try_input: *const c_char) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || {
+        let c = e.check_source(str_or_empty(source), str_or_empty(try_input));
+        let v = serde_json::json!({
+            "name": c.name,
+            "problems": c.problems,
+            "doc": c.doc.map(DocJson::from),
+            "analysis": c.analysis,
+        });
+        out(Some(v.to_string()))
+    })
+}
+
+/// 源码 → 结构化文档。返回 `{"ok":true,"doc":…}` 或 `{"ok":false,"error":"…"}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_parse_doc(source: *const c_char) -> *mut c_char {
+    guard(std::ptr::null_mut(), || {
+        let v = match qantrip_core::parse_template_doc(str_or_empty(source)) {
+            Ok(d) => serde_json::json!({ "ok": true, "doc": DocJson::from(d) }),
+            Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
+        };
+        out(Some(v.to_string()))
+    })
+}
+
+/// 结构化文档（JSON）→ 源码；JSON 无效时返回空指针。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_serialize_doc(doc: *const c_char) -> *mut c_char {
+    guard(None, || {
+        let d: DocJson = serde_json::from_str(&str_or_empty(doc)).ok()?;
+        Some(qantrip_core::serialize_template_doc(d.into()))
+    })
+    .map_or(std::ptr::null_mut(), |s| out(Some(s)))
+}
+
+/// 新模板的初始文档（JSON）。`locale`：`zh` / `en`。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_new_doc(name: *const c_char, locale: *const c_char) -> *mut c_char {
+    guard(std::ptr::null_mut(), || {
+        let d = qantrip_core::new_template_doc(str_or_empty(name), Locale::from_code(&str_or_empty(locale)));
+        out(json(&DocJson::from(d)))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +415,89 @@ mod tests {
         assert!(r["error"].as_str().is_some());
         qt_clear_usage(e);
         qt_engine_free(e);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn parse(p: *mut c_char) -> serde_json::Value {
+        serde_json::from_str(&take(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn library() {
+        let dir = std::env::temp_dir().join(format!("qantrip-ffi-lib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = s(dir.to_str().unwrap());
+        let e = qt_engine_new(d.as_ptr(), std::ptr::null());
+        qt_set_locale(e, s("en").as_ptr(), s("en").as_ptr());
+        let entries = parse(qt_entries(e));
+        let list = entries.as_array().unwrap();
+        let review = list.iter().find(|t| t["name"] == "review").unwrap();
+        assert_eq!(review["builtin"], true);
+        assert!(list.iter().any(|t| t["partial"] == true));
+        let src = take(qt_builtin_source(e, s("review").as_ptr())).unwrap();
+        assert_eq!(review["source"].as_str().unwrap(), src);
+        assert!(take(qt_builtin_source(e, s("nope").as_ptr())).is_none());
+        // 源码 → 文档 → 源码
+        let p = parse(qt_parse_doc(s(&src).as_ptr()));
+        assert_eq!(p["ok"], true);
+        let mut doc = p["doc"].clone();
+        assert_eq!(doc["name"], "review");
+        doc["name"] = "my-review".into();
+        doc["aliases"] = serde_json::json!([]); // 否则与内置 review 的别名 r 冲突
+        let src2 = take(qt_serialize_doc(s(&doc.to_string()).as_ptr())).unwrap();
+        assert!(src2.contains("name: my-review"));
+        let back = parse(qt_parse_doc(s(&src2).as_ptr()));
+        assert_eq!(back["doc"], doc);
+        assert!(take(qt_serialize_doc(s("{").as_ptr())).is_none());
+        assert_eq!(parse(qt_parse_doc(s("no frontmatter").as_ptr()))["ok"], false);
+        // 校验与试用
+        let c = parse(qt_check_source(e, s(&src2).as_ptr(), s("my-review --strict").as_ptr()));
+        assert_eq!(c["name"], "my-review");
+        assert_eq!(c["problems"].as_array().unwrap().len(), 0, "{c}");
+        assert!(c["analysis"]["preview"]["text"].as_str().unwrap().len() > 10);
+        let c = parse(qt_check_source(e, s("---\nname: bad\n---\n{% if %}").as_ptr(), s("").as_ptr()));
+        assert!(!c["problems"].as_array().unwrap().is_empty());
+        assert!(c["analysis"].is_null());
+        // 新模板
+        let n = parse(qt_new_doc(s("my-template").as_ptr(), s("zh").as_ptr()));
+        assert_eq!(n["name"], "my-template");
+        assert!(n["body"].as_str().unwrap().contains("在这里编写"));
+        qt_engine_free(e);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sync_client_signed_out() {
+        let dir = std::env::temp_dir().join(format!("qantrip-ffi-sync-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("templates")).unwrap();
+        let data = s(dir.join("sync").to_str().unwrap());
+        let tpl = s(dir.join("templates").to_str().unwrap());
+        let secrets = s(dir.join("sync").join("secrets.bin").to_str().unwrap());
+        // 不可达的地址：构造与读取状态都不发网络请求
+        let c = sync::qt_sync_new(s("http://127.0.0.1:9").as_ptr(), data.as_ptr(), tpl.as_ptr(), secrets.as_ptr());
+        assert!(!c.is_null());
+        let call = |op: &str, args: &str| parse(sync::qt_sync_call(c, s(op).as_ptr(), s(args).as_ptr()));
+        let st = call("status", "{}");
+        assert_eq!(st["ok"], true, "{st}");
+        assert_eq!(st["value"]["signed_in"], false);
+        assert_eq!(st["value"]["has_vault"], false);
+        assert_eq!(st["value"]["enrolled"], false);
+        assert!(st["value"]["alerts"].as_array().unwrap().is_empty());
+        // 需要登录的操作返回结构化错误
+        let r = call("sync_now", "{}");
+        assert_eq!(r["ok"], false);
+        assert!(r["error"]["kind"].as_str().is_some(), "{r}");
+        assert_eq!(call("bogus", "{}")["error"]["kind"], "invalid_input");
+        assert_eq!(call("approve_join", "{}")["error"]["kind"], "invalid_input");
+        // 登录第一步只生成授权地址（PKCE），不联网
+        let r = call("begin_sign_in", r#"{"redirect_uri":"http://127.0.0.1:5555/callback"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        let url = r["value"].as_str().unwrap();
+        assert!(url.starts_with("http://127.0.0.1:9/"), "{url}");
+        assert!(url.contains("code_challenge"), "{url}");
+        sync::qt_sync_free(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
