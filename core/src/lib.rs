@@ -1,10 +1,13 @@
-//! Qantrip 核心：模板库、输入语法解析与渲染。通过 UniFFI 暴露给各平台外壳。
+//! Qantrip 核心：模板库、输入语法解析与渲染、端到端加密同步。通过 UniFFI 暴露给各平台外壳。
 
 uniffi::setup_scaffolding!();
 
 pub mod doc;
 pub mod grammar;
 pub mod library;
+/// 端到端加密同步（wasm 构建不包含）
+#[cfg(not(target_arch = "wasm32"))]
+pub mod sync;
 pub mod template;
 pub mod usage;
 
