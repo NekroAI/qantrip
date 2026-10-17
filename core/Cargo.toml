@@ -17,6 +17,10 @@ required-features = ["cli"]
 cli = ["uniffi/cli"]
 
 [dependencies]
+minijinja = { version = "3", features = ["fuel"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_norway = "0.9.42"
+similar = "3.2.0"
 uniffi = "0.32"
 
 [profile.release]

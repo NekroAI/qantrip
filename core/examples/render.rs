@@ -1,6 +1,13 @@
-//! 测试辅助：打印模板渲染结果，供 Spike 测试比对。用法：render <id> <input>
+//! 调试辅助：打印输入的解析结果与最终文本。用法：render "<面板输入>"
 fn main() {
-    let a: Vec<String> = std::env::args().collect();
-    let out = qantrip_core::render(a[1].clone(), a.get(2).cloned().unwrap_or_else(|| a[1].clone()));
-    print!("{}", out.expect("unknown template"));
+    let input = std::env::args().nth(1).unwrap_or_default();
+    let engine = qantrip_core::Engine::new(None);
+    let a = engine.analyze(input.clone(), None);
+    eprintln!("enter={:?} canonical={:?} hint={:?}", a.enter, a.canonical, a.hint);
+    for d in &a.diagnostics {
+        eprintln!("{:?}: {}", d.severity, d.message);
+    }
+    if let Some(text) = engine.render(input, None) {
+        print!("{text}");
+    }
 }
