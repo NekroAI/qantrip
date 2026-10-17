@@ -4,6 +4,7 @@ import Foundation
 //   qantrip-debug toggle
 //   qantrip-debug insert <面板输入>          按面板输入渲染后插入
 //   qantrip-debug paste <文本> [expand]      直接插入文本；expand 时展开粘贴
+//   qantrip-debug type <文本> [下移次数]     打开面板并填入输入（截图检查用）
 //   qantrip-debug status
 
 let args = CommandLine.arguments.dropFirst()
@@ -22,6 +23,11 @@ case "paste":
     guard let text = rest.first else { fputs("用法: qantrip-debug paste <文本> [expand]\n", stderr); exit(2) }
     center.postNotificationName(.init("ai.nekro.qantrip.debug.insert"), object: nil,
                                 userInfo: ["text": text, "expand": rest.dropFirst().first == "expand" ? "1" : "0"],
+                                deliverImmediately: true)
+case "type":
+    let rest = Array(args.dropFirst())
+    center.postNotificationName(.init("ai.nekro.qantrip.debug.type"), object: nil,
+                                userInfo: ["text": rest.first ?? "", "down": rest.dropFirst().first ?? "0"],
                                 deliverImmediately: true)
 case "status":
     center.postNotificationName(.init("ai.nekro.qantrip.debug.status"), object: nil, userInfo: nil,

@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ai.nekro.qantrip.debug.toggle", #selector(debugToggle(_:))),
             ("ai.nekro.qantrip.debug.insert", #selector(debugInsert(_:))),
             ("ai.nekro.qantrip.debug.status", #selector(debugStatus(_:))),
+            ("ai.nekro.qantrip.debug.type", #selector(debugType(_:))),
         ]
         for (name, sel) in hooks {
             center.addObserver(self, selector: sel, name: .init(name), object: nil,
@@ -74,6 +75,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         launcher.insert(text, target: NSWorkspace.shared.frontmostApplication, expand: info["expand"] as? String == "1")
+    }
+
+    /// 打开面板并把输入框设置为指定文本（用于截图检查各种输入状态）
+    @objc private func debugType(_ note: Notification) {
+        let text = (note.userInfo?["text"] as? String) ?? ""
+        if !launcher.isVisible { launcher.show(eventTime: ProcessInfo.processInfo.systemUptime, source: "debug") }
+        launcher.model.field.setText(text)
+        launcher.model.textDidChange(text)
+        if let n = Int((note.userInfo?["down"] as? String) ?? "0"), n > 0 {
+            for _ in 0..<n { launcher.model.move(1) }
+        }
     }
 
     @objc private func debugStatus(_ note: Notification) {
