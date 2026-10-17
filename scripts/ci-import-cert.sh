@@ -13,6 +13,8 @@ security set-keychain-settings "$KC"
 security unlock-keychain -p "$KC_PASS" "$KC"
 security import "$P12" -f pkcs12 -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KC" >/dev/null
+# 加入钥匙串搜索列表，codesign 才能找到其中的签名身份
+security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
 IDENTITY="Nekro Qantrip Release"
 security find-identity -p codesigning "$KC" | grep -q "$IDENTITY"
 if [ -n "${GITHUB_ENV:-}" ]; then

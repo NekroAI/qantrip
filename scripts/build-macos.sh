@@ -4,7 +4,7 @@
 # 环境变量：
 #   ARCH                 arm64（默认，与本机一致）或 x86_64
 #   QANTRIP_DEBUG_HOOKS  1 时编译调试钩子（自动化测试用），正式构建不要设置
-#   SIGN_IDENTITY        签名证书名；默认使用本机开发证书 "Qantrip Dev"（scripts/dev-cert.sh）
+#   SIGN_IDENTITY        签名证书名；默认使用本机开发证书 "Qantrip Dev"（scripts/dev-cert.sh），CI 中默认 ad-hoc
 #   SIGN_KEYCHAIN        签名证书所在钥匙串；与 SIGN_IDENTITY 一起设置
 #   DIST                 输出目录，默认 dist/
 # 产物：$DIST/Qantrip.app、$DIST/PasteProbe.app、$DIST/qantrip-debug
@@ -65,7 +65,10 @@ bundle PasteProbe "$MAC/Resources/PasteProbe-Info.plist"
 cp "$BIN/QantripDebug" "$DIST/qantrip-debug"
 
 echo "==> 签名"
-if [ -z "${SIGN_IDENTITY:-}" ]; then
+if [ -z "${SIGN_IDENTITY:-}" ] && [ -n "${CI:-}" ]; then
+  # CI 的开发构建只验证能否构建，不涉及辅助功能授权，使用 ad-hoc 签名
+  SIGN_IDENTITY="-"
+elif [ -z "${SIGN_IDENTITY:-}" ]; then
   SIGN_IDENTITY="Qantrip Dev"
   SIGN_KEYCHAIN="$HOME/Library/Keychains/qantrip-dev.keychain-db"
   "$ROOT/scripts/dev-cert.sh" >/dev/null
