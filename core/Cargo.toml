@@ -25,6 +25,22 @@ serde_norway = "0.9.42"
 similar = "3.2.0"
 uniffi = "0.32"
 
+# 端到端加密同步（docs/sync-design.md 第 12 节）。wasm 构建不包含同步模块。
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bip39 = { version = "3", default-features = false, features = ["std", "chinese-simplified"] }
+chacha20poly1305 = "0.11"
+ciborium = "0.2"
+data-encoding = "2.11"
+ed25519-dalek = { version = "3", features = ["zeroize"] }
+getrandom = { version = "0.4", features = ["sys_rng"] }
+hkdf = "0.13"
+hpke = { version = "0.14.1", default-features = false, features = ["alloc", "x25519", "chacha"] }
+rand_core = "0.10"
+sha2 = "0.11"
+ureq = "3.4"
+x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
+zeroize = { version = "1.9", features = ["derive"] }
+
 [profile.release]
 lto = true
 codegen-units = 1
