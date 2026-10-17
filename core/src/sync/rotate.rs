@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 
 use super::crypto::{self, RecoveryKeys};
 use super::engine::{Core, Verdict};
-use super::record::Kind;
+use super::record::{Kind, MAX_COUNTER};
 use super::roster::{Entry, Op, Signer};
 use super::{SyncError, SyncReport};
 
@@ -95,7 +95,7 @@ pub fn handle_pending(core: &mut Core, report: &mut SyncReport) -> Result<(), Sy
     match core.state.pending_rotation_seen {
         Some((e, t)) if e == epoch => {
             if now - t >= TAKEOVER_SECS {
-                core.alert("rotation_takeover", format!("设备 {} 发起的密钥轮换超过 24 小时未完成，本机已接管", &info.signer[..6]));
+                core.alert("rotation_takeover", format!("设备 {} 发起的密钥轮换超过 24 小时未完成，本机已接管", &info.signer[..info.signer.len().min(6)]));
                 rotate(core, report)?;
             }
         }
@@ -129,7 +129,7 @@ fn rotate(core: &mut Core, report: &mut SyncReport) -> Result<(), SyncError> {
             |m| keys.roster_sign(m),
         );
         let raw = entry.encode();
-        let next = roster.extended(std::slice::from_ref(&raw)).map_err(|e| security(format!("本机构造的花名册条目无效：{e}")))?;
+        let next = roster.extended(std::slice::from_ref(&raw)).map_err(|_| security("本机构造的花名册条目无效"))?;
         if core.api.append_roster(&vault, roster.len(), &raw)? {
             core.set_roster(next);
             core.save()?;
@@ -185,9 +185,14 @@ fn finish_rotation(core: &mut Core, epoch: u32, report: &mut SyncReport) -> Resu
 }
 
 /// 把旧 epoch 的记录用新 VK 重新加密，counter + 1（§7 第 4 步）。其他设备的状态记录由它们自己重写。
+///
+/// 只重新加密在轮换开始（本地花名册出现 rotate 条目）之前就已接受的版本：轮换窗口内才出现的旧 epoch 版本
+/// 可能来自与服务端勾结的被撤销设备，只按常规规则校验与接受，不"洗白"到新 epoch。
+/// 这类版本若来自仍在册的设备，由写入者在发现自己的版本停留在作废 epoch 时重新推送。
 fn reencrypt_all(core: &mut Core, epoch: u32, report: &mut SyncReport) -> Result<(), SyncError> {
     let me = core.me()?;
     let key = (epoch, *core.keyring()?.get(epoch).ok_or_else(|| security("本机缺少新密钥"))?);
+    let rotate_index = core.roster()?.epoch(epoch).map(|e| e.index).ok_or_else(|| security("花名册中没有该轮换"))?;
     let mut skipped = BTreeSet::new();
     for _ in 0..5 {
         let targets: Vec<_> = core.list_all()?.into_iter().filter(|w| w.epoch < epoch && !skipped.contains(&w.record_id)).collect();
@@ -198,8 +203,10 @@ fn reencrypt_all(core: &mut Core, epoch: u32, report: &mut SyncReport) -> Result
         for w in targets {
             let acc = match core.verify_record(&w)? {
                 Verdict::Accept(acc) => {
+                    // 轮换开始后才第一次见到的版本：接受，但不重新加密
                     core.apply(&acc, report)?;
-                    acc
+                    skipped.insert(w.record_id.clone());
+                    continue;
                 }
                 Verdict::Same(acc) => acc,
                 Verdict::Reject | Verdict::Retry => {
@@ -212,6 +219,16 @@ fn reencrypt_all(core: &mut Core, epoch: u32, report: &mut SyncReport) -> Result
                 continue;
             }
             let meta = core.state.records.get(&w.record_id).cloned();
+            if meta.as_ref().is_none_or(|m| m.accepted_len > rotate_index) {
+                skipped.insert(w.record_id.clone());
+                continue;
+            }
+            // 版本号已达上限的记录无法重新加密：留在旧 epoch（rotate_done 之后作废），不阻塞轮换
+            if meta.as_ref().is_some_and(|m| m.counter >= MAX_COUNTER) {
+                core.alert("counter_exhausted", "有记录的版本号已达上限，轮换时未能重新加密");
+                skipped.insert(w.record_id.clone());
+                continue;
+            }
             let mut p = core.build_write(&w.record_id, acc.pt.kind, acc.pt.deleted, acc.pt.body.clone(), meta.as_ref(), &key)?;
             p.req.base_seq = Some(w.seq);
             // 模板文件映射保持不变（内容未变）

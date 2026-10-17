@@ -31,8 +31,8 @@ fn vault_mut<R>(server: &Arc<FakeServer>, f: impl FnOnce(&mut fake::Vault) -> R)
     f(server.world.lock().unwrap().vault.as_mut().unwrap())
 }
 
-/// 以设备 `dev` 的身份和钥匙环构造一条记录密文（模拟拿到 VK 的攻击者或被撤销的设备）。
-fn craft(dev: &Dev, rid: &str, epoch: u32, mutate: impl FnOnce(&mut Plaintext)) -> Vec<u8> {
+/// 以设备 `dev` 的身份、签名密钥和钥匙环构造一条记录密文（模拟拿到 VK 的攻击者或被撤销的设备）。
+pub fn craft(dev: &Dev, rid: &str, epoch: u32, mutate: impl FnOnce(&mut Plaintext)) -> Vec<u8> {
     let core = dev.core();
     let vault = core.vault().unwrap();
     let (index, head) = core.roster().unwrap().head().unwrap();
@@ -45,8 +45,11 @@ fn craft(dev: &Dev, rid: &str, epoch: u32, mutate: impl FnOnce(&mut Plaintext)) 
         roster_head: head,
         time: 0,
         body: Body::Template { file_name: "evil.md".into(), source: "evil".into() },
+        sig: [0; 64],
     };
     mutate(&mut pt);
+    let keys = core.keys().unwrap();
+    pt.sign(&vault, rid, epoch, |m| keys.roster_sign(m));
     let vk = *core.keyring().unwrap().get(epoch).unwrap();
     crypto::seal_record(&vk, &[3; 24], &vault, rid, epoch, &pt.encode())
 }
@@ -463,8 +466,9 @@ fn replaced_new_device_key_fails_commitment() {
     assert_eq!(a.core().roster().unwrap().len(), 2, "没有追加 add_device");
 }
 
+/// 服务端在 E 回复之后整体替换承诺与公开值（自洽，承诺校验能通过）：E 发现承诺与回复时锁定的不同，拒绝（C1）。
 #[test]
-fn replaced_commit_and_reveal_make_sas_mismatch() {
+fn replaced_commit_and_reveal_are_rejected() {
     let server = server();
     let (a, _) = first_device(&server);
     let n = Dev::signed_in(&server);
@@ -481,7 +485,8 @@ fn replaced_commit_and_reveal_make_sas_mismatch() {
         v.joins[0].commit = commit_msg;
         v.joins[0].reveal = Some(reveal);
     });
-    assert!(matches!(a.client.approve_join(p.join_id, shown), Err(SyncError::SasMismatch { .. })));
+    assert!(matches!(a.client.approve_join(p.join_id, shown), Err(SyncError::Security { .. })));
+    assert!(a.has_alert("join_failed"));
     assert!(!a.core().roster().unwrap().members().any(|(id, _)| *id == attacker.device_id()));
 }
 
@@ -499,6 +504,7 @@ fn forged_join_result_is_rejected() {
         ("envelope", codec::bytes(&[1, 2, 3])),
         ("epoch", codec::uint(1)),
         ("roster_index", codec::uint(1)),
+        ("anchor", ciborium::Value::Null),
     ]));
     vault_mut(&server, |v| v.joins[0].result = Some(result));
     assert!(matches!(n.client.poll_join(), Err(SyncError::Security { .. })));

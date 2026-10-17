@@ -3,6 +3,7 @@
 mod fake;
 mod flow;
 mod malicious;
+mod review;
 mod roster_rules;
 mod vectors;
 
@@ -42,6 +43,8 @@ pub struct Dev {
     pub root: PathBuf,
     pub templates: PathBuf,
     pub clock: Arc<AtomicI64>,
+    pub store: Arc<MemStore>,
+    pub server: Arc<FakeServer>,
 }
 
 impl Dev {
@@ -53,9 +56,18 @@ impl Dev {
         std::fs::create_dir_all(&templates).unwrap();
         let store = Arc::new(MemStore::default());
         let clock = Arc::new(AtomicI64::new(1_792_281_600));
+        let client = Dev::make_client(server, &root, &templates, &store, &clock);
+        Dev { client, root, templates, clock, store, server: server.clone() }
+    }
+
+    fn make_client(server: &Arc<FakeServer>, root: &std::path::Path, templates: &std::path::Path, store: &Arc<MemStore>, clock: &Arc<AtomicI64>) -> SyncClient {
         let c = clock.clone();
-        let client = SyncClient::with_transport(SERVER, root.join("data"), templates.clone(), store, server.clone(), Arc::new(move || c.load(Ordering::SeqCst)));
-        Dev { client, root, templates, clock }
+        SyncClient::with_transport(SERVER, root.join("data"), templates.to_path_buf(), store.clone(), server.clone(), Arc::new(move || c.load(Ordering::SeqCst)))
+    }
+
+    /// 模拟应用重启：用同一份数据目录与安全存储重新创建 SyncClient（内存状态全部丢弃）。
+    pub fn restart(&mut self) {
+        self.client = Dev::make_client(&self.server, &self.root, &self.templates, &self.store, &self.clock);
     }
 
     /// 完整的 PKCE 登录：拼授权地址 → 假官网批准 → 换令牌。
@@ -123,7 +135,7 @@ pub fn first_device(server: &Arc<FakeServer>) -> (Dev, String) {
     (a, phrase)
 }
 
-/// 按 §6.2 走完加入流程（用户在 E 上输入正确的校验码）。
+/// 按 §6.2 走完加入流程（用户在 E 上输入 N 显示的校验码，再在 N 上输入 E 显示的确认码）。
 pub fn join(e: &Dev, n: &Dev) {
     let p = n.client.start_join().unwrap();
     assert_eq!(p.stage, JoinStage::WaitingForApprover);
@@ -133,6 +145,10 @@ pub fn join(e: &Dev, n: &Dev) {
     assert_eq!(p.stage, JoinStage::EnterCodeOnOtherDevice);
     let sas = p.sas.unwrap();
     e.client.list_join_requests().unwrap();
-    e.client.approve_join(p.join_id, sas).unwrap();
+    let code = e.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    assert!(!n.client.status().enrolled, "确认码输入之前不加入");
+    n.client.confirm_join(code).unwrap();
     assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    assert!(n.client.status().enrolled);
 }

@@ -1,6 +1,9 @@
 //! 同步引擎（docs/sync-design.md 第 4、5 节）：花名册刷新、钥匙环、记录校验、拉取、推送、冲突与对账。
 //!
 //! 加入、恢复见 `join.rs`，撤销与轮换见 `rotate.rs`。
+//!
+//! 告警与错误信息只由本地固定文本和本机已验证花名册中的设备简称组成，不包含服务端可控的内容
+//! （记录 ID、epoch 标签、解析错误细节等），也让服务端无法用大量不同的告警挤掉真正的告警。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -13,7 +16,7 @@ use super::codec::{self, Fields};
 use super::crypto::{self, DeviceKeys};
 use super::files;
 use super::net::{Api, WireEnvelope, WireRecord, WriteReq, WriteResult};
-use super::record::{Body, Kind, Plaintext, StateEntry};
+use super::record::{Body, Kind, MAX_COUNTER, Plaintext, StateEntry};
 use super::roster::Roster;
 use super::state::{LocalState, PeerEntry, RecordMeta, StoredAlert};
 use super::{SecretStore, SyncError, SyncReport};
@@ -22,6 +25,8 @@ pub const SECRET_DEVICE_KEYS: &str = "device_keys";
 pub const SECRET_KEYRING: &str = "vault_keyring";
 const BATCH: usize = 50;
 const MAX_ALERTS: usize = 100;
+/// 一次拉取处理的记录总数上限（服务端每个保险库最多 5,000 条记录，L3）
+const MAX_PULL_RECORDS: usize = 20_000;
 
 pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -191,6 +196,8 @@ impl Core {
             let raws: Option<Vec<Vec<u8>>> = state.roster.iter().map(|r| codec::from_b64u(r).ok()).collect();
             Roster::from_entries(v, &raws?).ok()
         });
+        let join_n = super::join::load_join_n(&*secrets);
+        let join_e = super::join::load_join_e(&*secrets);
         Core {
             api,
             secrets,
@@ -202,8 +209,8 @@ impl Core {
             clock,
             new_alerts: 0,
             login: None,
-            join_n: None,
-            join_e: BTreeMap::new(),
+            join_n,
+            join_e,
         }
     }
 
@@ -328,11 +335,11 @@ impl Core {
                 self.save()?;
                 Ok(true)
             }
-            Err(e) => {
-                self.alert("roster_invalid", format!("花名册校验失败（{e}），已停止写入"));
+            Err(_) => {
+                self.alert("roster_invalid", "服务端返回的花名册未通过校验，已停止写入");
                 self.state.writes_blocked = Some(u32::MAX);
                 self.save()?;
-                Err(security(format!("花名册校验失败：{e}")))
+                Err(security("花名册校验失败"))
             }
         }
     }
@@ -361,7 +368,7 @@ impl Core {
                         }
                         break;
                     }
-                    Err(e) => self.alert("envelope_invalid", format!("本机的密钥信封（epoch {}）未通过校验：{e}", env.epoch)),
+                    Err(_) => self.alert("envelope_invalid", "本机的密钥信封未通过校验，已忽略"),
                 }
             }
         }
@@ -400,7 +407,7 @@ impl Core {
         for _ in 0..5 {
             let roster = self.roster()?.clone();
             let Some(raw) = build(&roster)? else { return Ok(false) };
-            let next = roster.extended(std::slice::from_ref(&raw)).map_err(|e| security(format!("本机构造的花名册条目无效：{e}")))?;
+            let next = roster.extended(std::slice::from_ref(&raw)).map_err(|_| security("本机构造的花名册条目无效"))?;
             if self.api.append_roster(&vault, roster.len(), &raw)? {
                 self.set_roster(next);
                 self.save()?;
@@ -419,20 +426,32 @@ impl Core {
         roster.members().map(|(id, _)| id).find(|id| crypto::state_record_id(roster.vault_id(), id) == record_id).cloned()
     }
 
-    /// 解密后的全部校验：AEAD、类型绑定、花名册头部传播、写入者在册、防回滚与分叉、epoch 下限。
+    /// 解密后的全部校验：AEAD、类型绑定、花名册头部传播、写入者在册、写入者签名、防回滚与分叉、epoch 下限、
+    /// 已撤销写入者。
     pub fn verify_record(&mut self, w: &WireRecord) -> Result<Verdict, SyncError> {
         let vault = self.vault()?;
+        let me = self.me()?;
         let rid = &w.record_id;
-        if !valid_record_id(rid) {
-            self.alert("bad_record", "服务端返回了格式不正确的记录 ID，已丢弃");
+        if !valid_record_id(rid) || w.seq == 0 {
+            self.alert("bad_record", "服务端返回了格式不正确的记录，已丢弃");
             return Ok(Verdict::Reject);
         }
         let owner = self.state_owner(rid);
         let min_epoch = self.roster()?.min_epoch();
         if w.epoch < min_epoch {
+            // 本机写入、但轮换时没有被重新加密的版本（轮换期间才被接受的版本，§7）：用当前密钥重新推送
+            if let Some(m) = self.state.records.get_mut(rid)
+                && m.writer == me
+                && m.kind == Kind::Template
+                && m.epoch < min_epoch
+            {
+                m.dirty = true;
+                m.seq = Some(w.seq);
+                return Ok(Verdict::Reject);
+            }
             // 已撤销设备的状态记录停留在旧 epoch，属于正常情况，不报警
             if owner.is_none() {
-                self.alert("stale_epoch", format!("记录 {} 使用已作废的密钥版本（epoch {}），已拒收", short(rid), w.epoch));
+                self.alert("stale_epoch", "一条记录使用已作废的密钥版本，已拒收");
             }
             return Ok(Verdict::Reject);
         }
@@ -442,35 +461,29 @@ impl Core {
             ring = self.ensure_keys()?;
         }
         let Some(vk) = ring.get(w.epoch).copied().map(Zeroizing::new) else {
-            self.alert("missing_key", format!("记录 {} 使用了本机没有的密钥版本（epoch {}），暂时无法读取", short(rid), w.epoch));
+            self.alert("missing_key", "有记录使用了本机没有的密钥版本，暂时无法读取");
             return Ok(Verdict::Retry);
         };
         let opened = codec::from_b64u(&w.ciphertext).and_then(|ct| crypto::open_record(&vk, &vault, rid, w.epoch, &ct));
         let Ok(padded) = opened else {
-            self.alert("tampered", format!("记录 {} 的密文校验失败（可能被篡改或挪用），已丢弃", short(rid)));
+            self.alert("tampered", "一条记录的密文校验失败（可能被篡改或挪用），已丢弃");
             return Ok(Verdict::Reject);
         };
-        let (pt, hash) = match Plaintext::decode_padded(&padded) {
-            Ok(v) => v,
-            Err(e) => {
-                self.alert("bad_plaintext", format!("记录 {} 的内容格式不正确（{e}），已丢弃", short(rid)));
-                return Ok(Verdict::Reject);
-            }
+        let Ok((pt, hash)) = Plaintext::decode_padded(&padded) else {
+            self.alert("bad_plaintext", "一条记录的内容格式不正确，已丢弃");
+            return Ok(Verdict::Reject);
         };
         // 状态记录只能由对应设备写入；其他类型不能占用状态记录 ID
         let is_state_id = crypto::state_record_id(&vault, &pt.writer) == *rid;
         if (pt.kind == Kind::DeviceState) != is_state_id || (pt.kind != Kind::DeviceState && owner.is_some()) {
-            self.alert("bad_kind", format!("记录 {} 的类型与 ID 不符，已丢弃", short(rid)));
+            self.alert("bad_kind", "一条记录的类型与 ID 不符，已丢弃");
             return Ok(Verdict::Reject);
         }
         // 头部传播：写入者见过的花名册不能比本机新；拉不到就停止写入（§4.3 第 2 步）
         if pt.roster_index >= self.roster()?.len() {
             let _ = self.refresh_roster();
             if pt.roster_index >= self.roster()?.len() {
-                self.alert(
-                    "roster_withheld",
-                    format!("记录 {} 引用了本机拿不到的花名册条目（第 {} 条），疑似服务端扣留，已停止写入", short(rid), pt.roster_index),
-                );
+                self.alert("roster_withheld", "有记录引用了本机拿不到的花名册条目，疑似服务端扣留，已停止写入");
                 let need = self.state.writes_blocked.unwrap_or(0).max(pt.roster_index);
                 self.state.writes_blocked = Some(need);
                 return Ok(Verdict::Retry);
@@ -478,42 +491,54 @@ impl Core {
         }
         let roster = self.roster()?;
         if roster.hash_at(pt.roster_index) != Some(pt.roster_head) {
-            self.alert("roster_fork", format!("记录 {} 引用的花名册与本机不一致（疑似分叉），已停止写入", short(rid)));
+            self.alert("roster_fork", "有记录引用的花名册与本机不一致（疑似分叉），已停止写入");
             self.state.writes_blocked = Some(u32::MAX);
             return Ok(Verdict::Reject);
         }
-        if roster.enrolled_at(&pt.writer, pt.roster_index).is_none() {
-            self.alert("writer_not_enrolled", format!("记录 {} 的写入者不在册，已丢弃", short(rid)));
+        let Some(writer_pk) = roster.enrolled_at(&pt.writer, pt.roster_index).map(|k| k.roster) else {
+            self.alert("writer_not_enrolled", "一条记录的写入者不在册，已丢弃");
+            return Ok(Verdict::Reject);
+        };
+        // 写入者签名（v0.3）：持有 VK 的其他设备或被撤销的设备不能冒充写入者
+        if pt.verify(&vault, rid, w.epoch, &writer_pk).is_err() {
+            self.alert("bad_signature", "一条记录的写入者签名无效，已丢弃");
             return Ok(Verdict::Reject);
         }
+        let writer_revoked = roster.member(&pt.writer).is_some_and(|m| m.removed.is_some());
         let acc = Box::new(Accepted { pt, hash, wire: w.clone() });
         // 防回滚与分叉（§4.3 第 3 步）
-        let me = self.me()?;
         if let Some(m) = self.state.records.get_mut(rid) {
             let hash_b64 = codec::b64u(&hash);
             if acc.pt.counter < m.counter {
-                let (local, remote) = (m.counter, acc.pt.counter);
                 if m.writer == me {
                     // 自己写入的新版本被回滚：自动重新推送
                     m.dirty = true;
                     m.seq = Some(w.seq);
                 }
-                self.alert("rollback", format!("记录 {} 被回滚到旧版本（{remote} < {local}），已拒收", short(rid)));
+                self.alert("rollback", "有记录被回滚到旧版本，已拒收");
                 return Ok(Verdict::Reject);
             }
             if acc.pt.counter == m.counter {
                 if hash_b64 != m.hash {
-                    self.alert("fork", format!("记录 {} 出现同一版本号的不同内容（疑似分叉），已拒收", short(rid)));
+                    self.alert("fork", "有记录出现同一版本号的不同内容（疑似分叉），已拒收");
                     return Ok(Verdict::Reject);
                 }
                 return Ok(Verdict::Same(acc));
             }
+        }
+        // 写入者已被移除：不接受任何本机之前没见过的版本（§7，被撤销设备可能与服务端勾结写入旧 epoch）
+        if writer_revoked {
+            if acc.pt.kind != Kind::DeviceState {
+                self.alert("revoked_writer", "有记录由已移除的设备写入，已拒收");
+            }
+            return Ok(Verdict::Reject);
         }
         Ok(Verdict::Accept(acc))
     }
 
     /// 记录一个已接受（或已推送成功）的版本，保留模板文件映射。
     pub fn ack(&mut self, rid: &str, pt: &Plaintext, hash: &[u8; 32], seq: u64, epoch: u32, file: Option<Option<(String, String)>>) {
+        let accepted_len = self.roster.as_ref().map_or(0, |r| r.len());
         let prev = self.state.records.get(rid);
         let (file, file_hash) = match file {
             Some(Some((f, h))) => (Some(f), Some(h)),
@@ -533,6 +558,7 @@ impl Core {
                 file,
                 file_hash,
                 dirty: false,
+                accepted_len,
             },
         );
     }
@@ -600,11 +626,12 @@ impl Core {
             return Ok(None);
         };
         if !files::valid_file_name(file_name) {
-            self.alert("bad_file_name", format!("记录 {} 的文件名不合法，未写入模板目录", short(rid)));
+            self.alert("bad_file_name", "一条模板记录的文件名不合法，未写入模板目录");
             return Ok(None);
         }
-        // 同名文件已被另一条记录占用（两台设备并发新建同名模板）时，换一个名字
-        let taken = self.state.records.iter().any(|(id, m)| id != rid && m.file.as_deref() == Some(file_name) && !m.deleted);
+        // 同名文件已被另一条记录占用（两台设备并发新建同名模板；比较不区分大小写与 Unicode 规范化形式）时，换一个名字
+        let key = files::name_key(file_name);
+        let taken = self.state.records.iter().any(|(id, m)| id != rid && !m.deleted && m.file.as_deref().is_some_and(|f| files::name_key(f) == key));
         let target = if taken { format!("{}-{}.md", file_name.trim_end_matches(".md"), short(rid)) } else { file_name.clone() };
         if old_file.as_deref() != Some(target.as_str()) {
             release_old(self, report)?;
@@ -677,6 +704,9 @@ impl Core {
         loop {
             let page = self.api.changes(&vault, since)?;
             out.extend(page.records);
+            if out.len() > MAX_PULL_RECORDS {
+                return Err(security("服务端返回的记录数超出上限"));
+            }
             match page.next {
                 Some(n) if n > since => since = n,
                 _ => return Ok(out),
@@ -692,12 +722,17 @@ impl Core {
         let mut seen = BTreeSet::new();
         let mut max_seq = 0;
         let mut retry: Option<u64> = None;
+        let mut total = 0usize;
         loop {
             let page = self.api.changes(&vault, since)?;
             if !full && page.purged_seq > self.state.last_seq {
                 full = true;
                 since = 0;
                 continue;
+            }
+            total += page.records.len();
+            if total > MAX_PULL_RECORDS {
+                return Err(security("服务端返回的记录数超出上限"));
             }
             for w in &page.records {
                 seen.insert(w.record_id.clone());
@@ -739,7 +774,7 @@ impl Core {
                 if m.writer == me || m.kind == Kind::Template {
                     m.dirty = true;
                 }
-                self.alert("hidden", format!("服务端缺少记录 {}（疑似被隐藏或删除），将重新推送本机版本", short(&id)));
+                self.alert("hidden", "服务端缺少本机已知的记录（疑似被隐藏或删除），将重新推送本机版本");
             }
             self.state.needs_full = false;
         }
@@ -748,34 +783,57 @@ impl Core {
             self.state.last_seq = max_seq;
         }
         if let Some(r) = retry {
-            self.state.last_seq = r - 1;
+            // verify_record 已拒绝 seq = 0 的记录；这里仍用饱和减法防止下溢
+            self.state.last_seq = r.saturating_sub(1);
         }
         Ok(())
     }
 
     /// 对账（§4.4）：取所有在册设备状态记录的并集最大值，与本机已接受的版本比对。
+    ///
+    /// 必须存在状态记录的设备：写过本机已接受记录的在册设备、创建保险库的设备（仍在册时）、
+    /// 加入时批准本机的设备（锚点，见 [`super::state::JoinAnchor`]）。已移除设备的状态记录不再参与比对。
     fn reconcile(&mut self) {
+        let (Some(roster), Ok(me)) = (self.roster.clone(), self.me()) else { return };
         let mut problems = Vec::new();
         for (dev, entries) in &self.state.peers {
+            if !roster.is_enrolled(dev) {
+                continue;
+            }
             for (rid, e) in entries {
                 match self.state.records.get(rid) {
-                    None if !e.deleted => problems.push(("hidden", format!("设备 {} 写过的记录 {} 在服务端缺失（疑似被隐藏）", short(dev), short(rid)))),
-                    Some(m) if m.counter < e.counter => {
-                        problems.push(("withheld", format!("记录 {} 落后于设备 {} 所见的版本（疑似被回滚或扣留）", short(rid), short(dev))))
-                    }
+                    None if !e.deleted => problems.push(("hidden", format!("设备 {} 写过的记录在服务端缺失（疑似被隐藏）", short(dev)))),
+                    Some(m) if m.counter < e.counter => problems.push(("withheld", format!("有记录落后于设备 {} 所见的版本（疑似被回滚或扣留）", short(dev)))),
                     Some(m) if m.counter == e.counter && m.hash != e.hash => {
-                        problems.push(("fork", format!("记录 {} 与设备 {} 所见的内容不同（疑似分叉）", short(rid), short(dev))))
+                        problems.push(("fork", format!("有记录与设备 {} 所见的内容不同（疑似分叉）", short(dev))))
                     }
                     _ => {}
                 }
             }
         }
-        // 写过记录的在册设备都应当有状态记录
-        if let (Some(roster), Ok(me)) = (&self.roster, self.me()) {
-            let writers: BTreeSet<&String> = self.state.records.values().map(|m| &m.writer).collect();
-            for w in writers {
-                if *w != me && roster.is_enrolled(w) && !self.state.peers.contains_key(w) {
-                    problems.push(("state_missing", format!("设备 {} 的状态记录缺失（疑似被隐藏）", short(w))));
+        let mut required: BTreeSet<String> = self.state.records.values().map(|m| m.writer.clone()).collect();
+        if let Some(g) = roster.genesis_device() {
+            required.insert(g.to_string());
+        }
+        for w in &required {
+            if *w != me && roster.is_enrolled(w) && !self.state.peers.contains_key(w) {
+                problems.push(("state_missing", format!("设备 {} 的状态记录缺失（疑似被隐藏）", short(w))));
+            }
+        }
+        if let Some(a) = self.state.join_anchor.clone() {
+            if a.device == me || !roster.is_enrolled(&a.device) {
+                self.state.join_anchor = None;
+            } else {
+                let rid = crypto::state_record_id(roster.vault_id(), &a.device);
+                match self.state.records.get(&rid) {
+                    None => problems.push(("state_missing", format!("设备 {} 的状态记录缺失（疑似被隐藏）", short(&a.device)))),
+                    Some(m) if m.counter < a.counter || m.seq.unwrap_or(0) < a.seq => {
+                        problems.push(("withheld", format!("设备 {} 的状态记录早于加入时的版本（疑似被回滚或扣留）", short(&a.device))))
+                    }
+                    Some(m) if m.counter == a.counter && m.hash != a.hash => {
+                        problems.push(("fork", format!("设备 {} 的状态记录与加入时的版本不同（疑似分叉）", short(&a.device))))
+                    }
+                    _ => self.state.join_anchor = None,
                 }
             }
         }
@@ -784,22 +842,63 @@ impl Core {
         }
     }
 
+    /// 重新拉取完整花名册与全部记录并逐条重新校验（L2）。本机已验证的花名册必须是服务端花名册的前缀；
+    /// 只有这一轮校验没有再次触发停止写入时，才解除之前的停止写入。
+    pub fn reverify(&mut self) -> Result<(), SyncError> {
+        self.new_alerts = 0;
+        let vault = self.vault()?;
+        let me = self.me()?;
+        let local = self.roster()?.clone();
+        let (raws, length) = self.api.roster(&vault, 0)?;
+        let consistent = length as usize == raws.len() && raws.len() >= local.raw().len() && raws[..local.raw().len()] == *local.raw();
+        let fresh = Roster::from_entries(&vault, &raws).ok().filter(|_| consistent);
+        let Some(fresh) = fresh else {
+            self.alert("roster_invalid", "重新校验时服务端的花名册仍与本机已验证的不一致，继续停止写入");
+            self.state.writes_blocked = Some(u32::MAX);
+            self.save()?;
+            return Err(security("花名册校验失败"));
+        };
+        self.set_roster(fresh);
+        if !self.roster()?.is_enrolled(&me) {
+            self.save()?;
+            return Err(SyncError::NotEnrolled { message: "本机不在保险库的设备名单中".into() });
+        }
+        self.ensure_keys()?;
+        let before = self.state.writes_blocked.take();
+        self.state.needs_full = true;
+        let mut report = SyncReport::default();
+        if let Err(e) = self.pull(&mut report) {
+            self.state.writes_blocked = before.max(self.state.writes_blocked);
+            self.save()?;
+            return Err(e);
+        }
+        self.reconcile();
+        self.save()
+    }
+
     /// 构造一条写入：counter 在本地已知最大值上加 1。
     pub fn build_write(&self, rid: &str, kind: Kind, deleted: bool, body: Body, base: Option<&RecordMeta>, key: &(u32, [u8; 32])) -> Result<Pending, SyncError> {
         let vault = self.vault()?;
         let (index, head) = self.roster()?.head().ok_or_else(|| security("花名册为空"))?;
-        let pt = Plaintext {
+        let counter = match base {
+            None => 1,
+            Some(m) => m.counter.checked_add(1).filter(|c| *c <= MAX_COUNTER).ok_or_else(|| security("记录的版本号已达上限"))?,
+        };
+        let keys = self.keys()?;
+        let mut pt = Plaintext {
             kind,
-            counter: base.map_or(0, |m| m.counter) + 1,
+            counter,
             deleted,
-            writer: self.me()?,
+            writer: keys.device_id(),
             roster_index: index,
             roster_head: head,
             time: self.now().max(0) as u64,
             body,
+            sig: [0; 64],
         };
+        pt.sign(&vault, rid, key.0, |m| keys.roster_sign(m));
+        let hash = pt.content_hash();
         let plain = Zeroizing::new(pt.encode());
-        let hash = crypto::sha256(&[&plain]);
         let ct = crypto::seal_record(&key.1, &crypto::random(), &vault, rid, key.0, &plain);
         let req = WriteReq {
             record_id: rid.to_string(),
@@ -820,16 +919,24 @@ impl Core {
         };
         let dir = self.template_dir.clone();
         let mut pending = Vec::new();
+        // 已映射的文件名（比较键，见 files::name_key）
         let mut mapped = BTreeSet::new();
         let metas: Vec<(String, RecordMeta)> = self.state.records.iter().filter(|(_, m)| m.kind == Kind::Template).map(|(k, m)| (k.clone(), m.clone())).collect();
         for (rid, meta) in &metas {
+            if let Some(f) = &meta.file {
+                mapped.insert(files::name_key(f));
+            }
+            // 版本号已达上限（只可能由恶意写入造成）：不再修改这条记录，避免整个同步失败
+            if meta.counter >= MAX_COUNTER {
+                self.alert("counter_exhausted", "有记录的版本号已达上限，本机不再修改它");
+                continue;
+            }
             let Some(f) = &meta.file else {
                 if meta.dirty && meta.deleted {
                     pending.push(self.build_write(rid, Kind::Template, true, Body::Empty, Some(meta), &key)?);
                 }
                 continue;
             };
-            mapped.insert(f.clone());
             match files::read(&dir, f) {
                 None if !meta.deleted => {
                     let mut p = self.build_write(rid, Kind::Template, true, Body::Empty, Some(meta), &key)?;
@@ -853,7 +960,7 @@ impl Core {
             }
         }
         for name in files::list(&dir) {
-            if mapped.contains(&name) {
+            if !mapped.insert(files::name_key(&name)) {
                 continue;
             }
             let Some(bytes) = files::read(&dir, &name) else { continue };
@@ -929,10 +1036,7 @@ impl Core {
                 self.state.needs_full = true;
             }
             "stale_epoch" => report.deferred += 1,
-            _ => {
-                let msg = r.message.unwrap_or_default();
-                self.alert("push_rejected", format!("服务端拒绝写入记录 {}：{msg}", short(&rid)));
-            }
+            _ => self.alert("push_rejected", "服务端拒绝了本机的写入"),
         }
         Ok(false)
     }
@@ -954,17 +1058,7 @@ impl Core {
             })
             .collect();
         let body = Body::DeviceState { entries };
-        let digest = codec::b64u(&crypto::sha256(&[&Plaintext {
-            kind: Kind::DeviceState,
-            counter: 0,
-            deleted: false,
-            writer: String::new(),
-            roster_index: 0,
-            roster_head: [0; 32],
-            time: 0,
-            body: body.clone(),
-        }
-        .encode()]));
+        let digest = codec::b64u(&crypto::sha256(&[&codec::encode(&body.encode())]));
         for _ in 0..3 {
             let meta = self.state.records.get(&rid).cloned();
             let current = meta.as_ref().is_some_and(|m| m.seq.is_some() && !m.dirty && m.epoch == key.0);

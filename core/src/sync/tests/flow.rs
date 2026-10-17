@@ -48,8 +48,15 @@ fn two_devices_full_lifecycle() {
     // 输错一次：计数，不完成加入
     assert_eq!(a.client.approve_join(p.join_id.clone(), "AAAA-AAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
     assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::EnterCodeOnOtherDevice);
-    // 输入正确（小写、无连字符也接受）
-    a.client.approve_join(p.join_id, sas.to_lowercase().replace('-', "")).unwrap();
+    // 输入正确（小写、无连字符也接受）：A 显示确认码
+    let code = a.client.approve_join(p.join_id, sas.to_lowercase().replace('-', "")).unwrap();
+    assert_eq!(code.len(), 9);
+    assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    assert!(!b.client.status().enrolled, "确认码输入之前不加入");
+    // B 上输错一次确认码：计数，不加入
+    assert_eq!(b.client.confirm_join("AAAA-AAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
+    assert!(!b.client.status().enrolled);
+    b.client.confirm_join(code.to_lowercase()).unwrap();
     assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::Completed);
     assert!(b.client.status().enrolled);
     assert_eq!(b.client.devices().unwrap().len(), 2);
@@ -168,8 +175,69 @@ fn sas_failures_cool_down() {
     let sas = n.client.poll_join().unwrap().sas.unwrap();
     assert!(matches!(a.client.approve_join(p.join_id.clone(), sas.clone()), Err(SyncError::Cooldown { .. })));
     a.advance(601);
-    a.client.approve_join(p.join_id, sas).unwrap();
+    let code = a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    n.client.confirm_join(code).unwrap();
     assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+}
+
+#[test]
+fn confirm_code_failures_cool_down_on_new_device() {
+    let server = server();
+    let (a, _) = first_device(&server);
+    let n = Dev::signed_in(&server);
+    let p = n.client.start_join().unwrap();
+    a.client.list_join_requests().unwrap();
+    let sas = n.client.poll_join().unwrap().sas.unwrap();
+    let code = a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
+    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 1 }));
+    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::Cooldown { seconds: 600 }));
+    assert!(n.has_alert("sas_cooldown"));
+    // 本次加入已取消：正确的确认码也不再有效，冷却期间不能重新发起
+    assert!(matches!(n.client.confirm_join(code), Err(SyncError::Cooldown { .. })));
+    assert!(matches!(n.client.start_join(), Err(SyncError::Cooldown { .. })));
+    assert!(!n.client.status().enrolled);
+    // 本机在确认之前没有向服务端写入任何记录（只有 A 创建保险库时写入的状态记录）
+    let w = server.world.lock().unwrap();
+    assert_eq!(w.vault.as_ref().unwrap().records.len(), 1);
+}
+
+#[test]
+fn join_survives_restart_on_both_sides() {
+    let server = server();
+    let (mut a, _) = first_device(&server);
+    a.client.sync_now().unwrap();
+    let mut n = Dev::signed_in(&server);
+    n.write("mine.md", "local");
+    let p = n.client.start_join().unwrap();
+    n.restart();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::WaitingForApprover);
+    a.client.list_join_requests().unwrap();
+    // E 回复之后重启：仍可批准（n_E 与锁定的 commit 保存在安全存储中）
+    a.restart();
+    let shown = n.client.poll_join().unwrap();
+    assert_eq!(shown.stage, JoinStage::EnterCodeOnOtherDevice);
+    n.restart();
+    let again = n.client.poll_join().unwrap();
+    assert_eq!(again.stage, JoinStage::EnterCodeOnOtherDevice);
+    assert_eq!(again.sas, shown.sas, "重启后显示同一个校验码");
+    assert_eq!(a.client.list_join_requests().unwrap()[0].status, crate::sync::JoinRequestStatus::ReadyForCode);
+    a.restart();
+    let code = a.client.approve_join(p.join_id, shown.sas.unwrap()).unwrap();
+    assert!(a.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_E).is_none(), "批准完成后删除 E 的加入状态");
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    n.restart();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    n.client.confirm_join(code).unwrap();
+    assert!(n.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_N).is_none(), "加入完成后删除 N 的加入状态");
+    n.restart();
+    assert!(n.client.status().enrolled);
+    n.client.sync_now().unwrap();
+    a.client.sync_now().unwrap();
+    assert_eq!(a.read("mine.md").unwrap(), "local");
+    assert!(n.client.status().alerts.is_empty(), "{:?}", n.client.status().alerts);
 }
 
 #[test]
