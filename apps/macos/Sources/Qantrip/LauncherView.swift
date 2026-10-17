@@ -164,6 +164,11 @@ struct LauncherView: View {
                 if let p = model.analysis.preview {
                     previewBox(p)
                 }
+            } else if model.isCommandMode, let p = model.analysis.preview {
+                // 指令模式：还没确定指令时显示用法说明
+                Text(L("指令", "Commands")).font(.qDisplay(22)).foregroundStyle(Color.qAccent)
+                Text(p.text).font(.qMono(12)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Spacer()
                 Text(L("没有匹配的模板", "No matching templates")).foregroundStyle(.tertiary).frame(maxWidth: .infinity)

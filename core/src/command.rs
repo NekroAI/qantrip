@@ -336,6 +336,11 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             a.ghost = Some(format!("{} ", &c.title[first.text.len()..]));
         }
     }
+    // 还没有确定指令：右侧显示用法说明
+    if cmd.is_none() || completing_cmd {
+        let help: Vec<String> = COMMANDS.iter().map(|(c, _)| format!("{}\n    {}", c.usage(loc), c.summary(loc))).collect();
+        a.preview = Some(plain_preview(&help.join("\n\n")));
+    }
     let Some(cmd) = cmd else {
         ctx.token(TokenKind::CommandUnknown, first.start, first.end);
         if a.candidates.is_empty() {
