@@ -1,44 +1,158 @@
-# Nekro Qantrip
+<p align="center">
+  <img src="docs/assets/icon-128.png" width="96" height="96" alt="Qantrip icon">
+</p>
 
-**Qantrip** 读作 /ˈkæntrɪp/，与 cantrip 同音：D&D 里不耗资源、可以随手反复施放的「戏法」。首字母换成 Q，呼应唤起快捷键——**按 Q 施放一个戏法**。不是拼写错误。
+<h1 align="center">Nekro Qantrip</h1>
 
-跨平台的 Prompt 快捷输入与管理工具。在任何应用里按下快捷键，输入几个字母和参数，就能把一段完整的 Prompt 插入当前输入框：
+<p align="center">
+  <strong>An open-source prompt launcher. Press <kbd>⌃Q</kbd>, type a few keys, and a complete prompt lands in whatever app you're using.</strong>
+</p>
 
+<p align="center">
+  <a href="https://qantrip.nekro.ai">Website</a> ·
+  <a href="https://qantrip.nekro.ai/#demo">Try it in your browser</a> ·
+  <a href="docs/install-macos.md">Install</a> ·
+  <a href="README.zh-CN.md">中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml"><img src="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey" alt="Platform: macOS 14+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
+</p>
+
+> **Qantrip** is pronounced like *cantrip* — the D&D spell you can cast again and again at no cost. The **Q** is the key you press to cast one. It is not a typo.
+
+![Qantrip panel: typing a command with syntax highlighting, inline completion and a live preview](docs/assets/panel.png)
+
+## Why
+
+If you work with Claude Code, Codex, Cursor or a chat window all day, you retype the same instructions over and over: *review the staged changes, focus on security, don't edit files…* Snippet tools can paste fixed text, but real prompts need small variations every time.
+
+Qantrip turns your prompts into **parameterized templates** you call with a short command:
+
+```text
+r security --scope=staged -s focus on the auth module
+│ │        │              │  └ free text, appended verbatim
+│ │        │              └ short flag (-s = --strict)
+│ │        └ option with a value (prefixes work: --sc=st)
+│ └ positional value for the template's main parameter
+└ template name or alias
 ```
-r security --scope=staged --strict 重点看认证和权限
-```
 
-- **参数化模板**：MiniJinja 渲染、声明式参数（开关、单选、多选、文本、数字），位置参数与附加要求。
-- **可发现的命令行**：分层匹配、灰字补全、语法高亮、实时预览，鼠标也能点选参数。
-- **可靠插入**：剪贴板 + 粘贴，粘贴后还原剪贴板，不进入剪贴板管理器历史；没有权限时退回只复制。
-- **本地优先**：模板是普通的 Markdown 文件，离线可用。
+…and inserts the rendered prompt into the app you were using, without touching your clipboard history and without accidentally submitting multi-line text in a terminal.
 
-## 状态
+## Features
 
-macOS Demo（P0）。Windows 与 Linux、端到端加密同步、AI 辅助编辑在规划中，见 [`docs/PRD.md`](docs/PRD.md) 与 [`docs/decisions.md`](docs/decisions.md)。
+- **Discoverable command line** — exact, prefix and fuzzy matching; inline ghost completion; type `--` to see every parameter; fuzzy matches complete first and insert on the second <kbd>↩</kbd>, so typos never insert the wrong prompt.
+- **See what you'll insert** — a live preview highlights exactly which lines each parameter and your free text changed.
+- **Templates are Markdown files** — YAML front matter declares parameters (bool, enum, multi-select, string, number, text); the body is a [MiniJinja](https://github.com/mitsuhiko/minijinja) template. Edit them in any editor, or in the built-in library with a form editor, live preview and validation.
+- **Insertion that stays out of your way** — paste-based (terminals and AI agents won't treat newlines as <kbd>Enter</kbd>), your clipboard is restored afterwards and the prompt is marked transient so clipboard managers skip it. No Accessibility permission? It falls back to copy-only.
+- **Built for AI coding agents** — 17 built-in templates (review, fix, debug, test, refactor, commit, PR, …); <kbd>⌘↩</kbd> expands Claude Code's collapsed `[Pasted text]` placeholder.
+- **Keyboard first, mouse friendly** — every parameter chip is clickable, and clicks rewrite the command line, so mouse and keyboard always agree.
+- **Local first** — search, rendering and insertion work offline. Optional end-to-end encrypted sync is [in development](docs/sync-design.md).
 
-安装：[`docs/install-macos.md`](docs/install-macos.md)
+## Install
 
-## 构建
+Qantrip currently runs on **macOS 14 or later** (Apple silicon and Intel). Windows and Linux are planned.
 
-需要 Rust（stable）与 Xcode Command Line Tools，不需要完整的 Xcode。
+Pre-built downloads are not public yet. Build from source:
 
 ```sh
-scripts/build-macos.sh          # 开发构建，产物在 dist/
-ARCH=x86_64 scripts/package-macos.sh   # 打包 DMG，产物在 dist/release/
-cargo test --manifest-path core/Cargo.toml
+# Prerequisites: Xcode Command Line Tools and Rust (rustup)
+git clone https://github.com/NekroAI/qantrip.git
+cd qantrip
+scripts/build-macos.sh        # builds core + app, output in dist/Qantrip.app
+open dist/Qantrip.app
 ```
 
-目录结构：
+The first launch walks you through choosing the hotkey and (optionally) granting Accessibility permission. See [docs/install-macos.md](docs/install-macos.md) for details, including Gatekeeper on unnotarized builds.
 
-| 路径 | 内容 |
+## Writing a template
+
+Create `~/Library/Application Support/Qantrip/templates/review.md`:
+
+```markdown
+---
+name: review
+aliases: [r]
+description: Code review
+params:
+  focus:
+    type: multi
+    positional: true
+    choices: [security, performance]
+  strict: { type: bool, short: s, description: Report every doubt }
+---
+Review the current changes.
+{% if focus %}Focus on: {{ focus | join(", ") }}.{% endif %}
+{% if strict %}List anything uncertain and give a confidence level.{% endif %}
+{% include "_extra" %}
+```
+
+Qantrip reloads it automatically. A file with the same name as a built-in template overrides it. You can also create and edit templates in the built-in library:
+
+![Template library with form editor and live preview](docs/assets/library.png)
+
+The full format is described in the [input grammar](docs/input-grammar.md) and on the [website](https://qantrip.nekro.ai/docs#templates).
+
+## Project status
+
+| Area | Status |
 |---|---|
-| `core/` | Rust 核心：输入语法、模板库与渲染、使用记录，通过 UniFFI 导出 |
-| `core/templates/` | 内置模板 |
-| `apps/macos/` | macOS 外壳（Swift，AppKit + SwiftUI） |
-| `tests/spike/` | 插入链路的自动化测试 |
-| `docs/` | 产品需求、输入语法规范、决策记录、可行性报告 |
+| macOS app (panel, grammar, templates, library, settings, onboarding) | ✅ 0.1.0 — in daily use |
+| Online demo (core compiled to WebAssembly) | ✅ [qantrip.nekro.ai](https://qantrip.nekro.ai) |
+| Sync server (Cloudflare Workers + D1, ciphertext only) | ✅ deployed, client pending |
+| End-to-end encrypted sync client | 🚧 in progress — [design](docs/sync-design.md) |
+| Command mode for creating templates in the panel | 📝 planned |
+| Windows / Linux | 📝 planned |
+| AI-assisted template editing | 📝 planned |
 
-## 许可证
+## Architecture
 
-客户端与核心以 [GPL-3.0-or-later](LICENSE) 发布。内置字体 Monaspace Neon 与 Fraunces 以 SIL OFL 1.1 分发，许可证见 `apps/macos/Resources/Fonts/`。
+```text
+┌──────────────────────────── core/ (Rust) ────────────────────────────┐
+│ input grammar · template library · MiniJinja rendering · usage ranking │
+└───────────┬───────────────────────┬───────────────────────────────────┘
+            │ UniFFI                 │ wasm-bindgen
+┌───────────▼──────────┐   ┌─────────▼──────────────┐   ┌──────────────────────────┐
+│ apps/macos (Swift)   │   │ website demo (WASM)     │   │ apps/cloud (Workers)     │
+│ AppKit + SwiftUI     │   │ same parser, same       │   │ website · accounts ·     │
+│ hotkey · panel ·     │   │ templates, in the       │   │ E2EE sync API (opaque    │
+│ paste · library      │   │ browser                 │   │ ciphertext, D1 + R2)     │
+└──────────────────────┘   └─────────────────────────┘   └──────────────────────────┘
+```
+
+Each platform gets a native shell over a shared Rust core rather than a cross-platform UI framework — see [decision D6](docs/decisions.md).
+
+| Path | Contents |
+|---|---|
+| [`core/`](core) | Rust core: grammar, templates, rendering, usage ranking; built-in templates in `core/templates/` |
+| [`core/wasm/`](core/wasm) | WebAssembly bindings for the website demo |
+| [`apps/macos/`](apps/macos) | macOS app (Swift, SwiftPM — no Xcode project required) |
+| [`apps/cloud/`](apps/cloud) | Website and sync server (Cloudflare Workers, React Router, Hono, D1) |
+| [`docs/`](docs) | Product requirements, input grammar, sync security design, decision log |
+| [`scripts/`](scripts) | Build, packaging and signing scripts |
+
+## Development
+
+```sh
+cargo test --manifest-path core/Cargo.toml     # core tests
+scripts/build-macos.sh                          # macOS app (dev-signed)
+scripts/build-wasm.sh                           # WebAssembly core for the website
+cd apps/cloud && pnpm install && pnpm test      # website + server contract tests
+```
+
+Design documents in `docs/` are written in Chinese; code, comments and commit messages follow the language of the surrounding code. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+Sync is end-to-end encrypted: keys are generated on your devices, and the server only stores ciphertext it cannot decrypt. The threat model, key hierarchy and the metadata the server *can* see are documented in [docs/sync-design.md](docs/sync-design.md). Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
+## License
+
+- Client and core: [GPL-3.0-or-later](LICENSE)
+- Sync server (`apps/cloud/`): [AGPL-3.0-or-later](apps/cloud/LICENSE)
+- Bundled fonts Monaspace Neon and Fraunces: SIL Open Font License 1.1
+
+Made by [NekroAI](https://github.com/NekroAI).

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! For security problems, please use **Security → Report a vulnerability** instead of a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command typed in the panel (if relevant)
+      placeholder: r security --scope=staged -s
+  - type: input
+    id: target
+    attributes:
+      label: Target app (if insertion is involved)
+      placeholder: Terminal + Claude Code, VS Code, Chrome…
+  - type: input
+    id: version
+    attributes:
+      label: Qantrip version
+      description: Menu bar icon → Settings → About
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 15.3, Apple M2
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything else?
+      description: Screenshots, template files, steps to reproduce. Please remove anything private from your prompts.

@@ -39,7 +39,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="wrap">
+      <section className="wrap" id="demo">
         <LiveDemo />
       </section>
 

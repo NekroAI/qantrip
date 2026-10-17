@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://qantrip.nekro.ai/docs
+    about: Installation, input grammar and template format.
+  - name: Security vulnerability
+    url: https://github.com/NekroAI/qantrip/security/advisories/new
+    about: Report security problems privately.
