@@ -242,6 +242,11 @@
   - **下载：** 首页按钮自动识别系统与芯片一键下载，可展开其他版本（将来含 Windows）；下载页直接列出 Release 直链。发布时额外上传固定文件名（如 `Qantrip-macOS-arm64.dmg`），使 `releases/latest/download/…` 直链长期有效。
   - **国际化：** 官网按浏览器语言、应用按系统语言自动选择中文或英文，均可手动切换；17 个内置模板提供英文版，模板语言可在设置中单独指定。Rust 核心的提示信息也做双语。
   - **同步：** 按 `docs/sync-design.md` v0.2 实现客户端（Rust 核心）与 macOS 同步界面，负责人随后整体测试。
+- **实现补充（同日）：**
+  - 官网英文在根路径、中文在 `/zh`，各自独立 URL 并互相标注 hreflang；首次访问英文页面时按 Cookie / Accept-Language 跳转，手动切换写入 Cookie。账号、授权页没有语言前缀，按同样规则选择语言。
+  - 搜索与 AI 检索（负责人追加要求）：`robots.txt`、`sitemap.xml`、`llms.txt` / `llms-full.txt`（含全部内置模板说明）、JSON-LD（SoftwareApplication、FAQPage）、各语言 Open Graph 图；首页常见问题直接展示。staging 一律 `noindex`。
+  - 内置模板按工作流排序并细分为五类（理解与规划 / 编写与修复 / 审查与测试 / 提交与文档 / 翻译），同类相邻；首屏、模板库与官网使用同一顺序。
+  - Release 不再标记为预发布：GitHub 的 `releases/latest` 不包含预发布版本，否则直链失效。v0.1.0 已改为正式版并补传固定文件名的 DMG。
 
 ---
 

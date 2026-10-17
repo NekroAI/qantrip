@@ -18,3 +18,4 @@
 /apps/macos/Sources/qantrip_coreFFI/include/
 /apps/macos/Sources/QantripCore/qantrip_core.swift
 /core/wasm/target/
+.claude/
