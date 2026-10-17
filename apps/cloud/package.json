@@ -1,0 +1,38 @@
+{
+  "name": "@qantrip/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nekro Qantrip 官网、账号与端到端加密同步服务（Cloudflare Worker）",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "dev": "react-router dev",
+    "build": "react-router build",
+    "typecheck": "wrangler types --strict-vars false --env-file .dev.vars.example && react-router typegen && tsc -b",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy:staging": "CLOUDFLARE_ENV=staging react-router build && wrangler d1 migrations apply DB --remote --env staging && wrangler deploy",
+    "deploy:production": "react-router build && wrangler d1 migrations apply DB --remote && wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "4.13.13",
+    "isbot": "5.2.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router": "8.4.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.63.0",
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@react-router/dev": "8.4.0",
+    "@types/node": "22.20.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.3",
+    "vitest": "4.1.8",
+    "wrangler": "4.148.0"
+  }
+}

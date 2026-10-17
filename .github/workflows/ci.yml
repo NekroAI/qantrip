@@ -20,3 +20,25 @@ jobs:
         run: cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
       - name: 构建 macOS 应用（开发签名）
         run: scripts/build-macos.sh
+
+  cloud:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cloud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/cloud/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 类型检查
+        run: pnpm typecheck
+      - name: 契约测试
+        run: pnpm test

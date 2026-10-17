@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Nekro Qantrip 官网、账号与端到端加密同步服务（docs/decisions.md D23）
+  "name": "nekro-qantrip",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "routes": [{ "pattern": "qantrip.nekro.ai", "custom_domain": true }],
+  "upload_source_maps": true,
+  // GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET 通过 wrangler secret 设置
+  "vars": {
+    "SITE_ORIGIN": "https://qantrip.nekro.ai",
+    "QANTRIP_ENV": "production",
+    "PUBLIC_DOWNLOADS": "0",
+    "SUPER_ADMIN_GITHUB_IDS": "57167362"
+  },
+  "triggers": { "crons": ["23 4 * * *"] },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "nekro-qantrip", "database_id": "d68008df-f4cf-453d-81a6-096ffbab6acb", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "nekro-qantrip-releases" }],
+  // 写入限流：每个设备令牌 / IP 每分钟（docs/sync-design.md 成本控制）
+  "ratelimits": [
+    { "name": "WRITE_LIMITER", "namespace_id": "4201", "simple": { "limit": 60, "period": 60 } },
+    { "name": "READ_LIMITER", "namespace_id": "4202", "simple": { "limit": 120, "period": 60 } }
+  ],
+  "env": {
+    "staging": {
+      "name": "nekro-qantrip-staging",
+      "routes": [{ "pattern": "qantrip-staging.nekro.ai", "custom_domain": true }],
+      "vars": {
+        "SITE_ORIGIN": "https://qantrip-staging.nekro.ai",
+        "QANTRIP_ENV": "staging",
+        "PUBLIC_DOWNLOADS": "0",
+        "SUPER_ADMIN_GITHUB_IDS": "57167362"
+      },
+      "triggers": { "crons": ["23 4 * * *"] },
+      "d1_databases": [
+        { "binding": "DB", "database_name": "nekro-qantrip-staging", "database_id": "757c1a61-040d-4c9b-a358-35b9991aaf77", "migrations_dir": "migrations" }
+      ],
+      "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "nekro-qantrip-releases-staging" }],
+      "ratelimits": [
+        { "name": "WRITE_LIMITER", "namespace_id": "4211", "simple": { "limit": 60, "period": 60 } },
+        { "name": "READ_LIMITER", "namespace_id": "4212", "simple": { "limit": 120, "period": 60 } }
+      ]
+    }
+  }
+}
