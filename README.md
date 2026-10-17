@@ -50,7 +50,7 @@ r security --scope=staged -s focus on the auth module
 - **Insertion that stays out of your way** — paste-based (terminals and AI agents won't treat newlines as <kbd>Enter</kbd>), your clipboard is restored afterwards and the prompt is marked transient so clipboard managers skip it. No Accessibility permission? It falls back to copy-only.
 - **Built for AI coding agents** — 17 built-in templates in English and Chinese (review, fix, debug, test, refactor, commit, PR, …); <kbd>⌘↩</kbd> expands Claude Code's collapsed `[Pasted text]` placeholder.
 - **Keyboard first, mouse friendly** — every parameter chip is clickable, and clicks rewrite the command line, so mouse and keyboard always agree.
-- **Local first** — search, rendering and insertion work offline. Optional end-to-end encrypted sync is [in development](docs/sync-design.md).
+- **Local first** — search, rendering and insertion work offline. Optional sync is [end-to-end encrypted](docs/sync-design.md).
 
 ## Install
 
@@ -90,10 +90,10 @@ The full format is described in the [input grammar](docs/input-grammar.md) and o
 
 | Area | Status |
 |---|---|
-| macOS app (panel, grammar, templates, library, settings, onboarding) | ✅ 0.1.0 — in daily use |
+| macOS app (panel, grammar, templates, library, settings, onboarding) | ✅ 0.2.0 — English and Chinese |
 | Online demo (core compiled to WebAssembly) | ✅ [qantrip.nekro.ai](https://qantrip.nekro.ai) |
-| Sync server (Cloudflare Workers + D1, ciphertext only) | ✅ deployed, client pending |
-| End-to-end encrypted sync client | 🚧 in progress — [design](docs/sync-design.md) |
+| Sync server (Cloudflare Workers + D1, ciphertext only) | ✅ deployed |
+| End-to-end encrypted sync | ✅ 0.2.0 — [design](docs/sync-design.md) |
 | Command mode for creating templates in the panel | 📝 planned |
 | Windows / Linux | 📝 planned |
 | AI-assisted template editing | 📝 planned |

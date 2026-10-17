@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-18
+
 ### Added
 - Website at [qantrip.nekro.ai](https://qantrip.nekro.ai) with an interactive demo running the real core compiled to WebAssembly.
 - Sync server (`apps/cloud/`): GitHub sign-in, desktop sign-in with PKCE, and the end-to-end encrypted sync API (vaults, records with compare-and-swap, signed roster, key envelopes, device-join relay). The server stores ciphertext only.
@@ -31,5 +33,6 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.2.0
 [0.1.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.1.0
