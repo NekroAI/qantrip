@@ -77,6 +77,16 @@ Invoke (ByName $w "恢复内置")
 Start-Sleep -Milliseconds 600
 "restored: file gone=" + (-not (Test-Path "$tpl\review.md")) + " status=" + (U (El $w "lib_status").Current.Name) + " customize button=" + [bool](TryEl $w "lib_customize")
 
+# 6b) 复制为新模板：review-copy（别名清空），随后删除
+Invoke (El $w "lib_duplicate")
+Start-Sleep -Milliseconds 500
+"duplicated: " + (Test-Path "$tpl\review-copy.md") + " title=" + (El $w "lib_title").Current.Name + " aliases=" + (Select-String -Path "$tpl\review-copy.md" -Pattern "^aliases" -Quiet)
+Invoke (El $w "lib_more")
+Invoke (El $w "lib_menu_delete")
+Invoke (ByName $w "删除")
+Start-Sleep -Milliseconds 500
+"duplicate deleted: " + (-not (Test-Path "$tpl\review-copy.md"))
+
 # 7) 新建 → 改名 qtlib-test → 保存（旧文件移到回收站）→ 立即可在面板中使用
 Invoke (El $w "lib_new")
 Start-Sleep -Milliseconds 500
@@ -106,6 +116,31 @@ Start-Sleep -Milliseconds 250
 Start-Sleep -Milliseconds 900
 "after /edit: library title=" + (El $w "lib_title").Current.Name + " fg=" + ([Drv]::Fg() -match "Qantrip")
 
+# 8b) 导出全部为 zip：通过系统保存对话框（UI 自动化填写文件名）
+$zip = "$Dev\qtlib-export.zip"
+Remove-Item $zip -ErrorAction SilentlyContinue
+function FileDialog([string]$title, [string]$path) {
+  $d = $null
+  for ($i = 0; $i -lt 30 -and -not $d; $i++) {
+    $d = $w.FindFirst($S::Descendants, (New-Object Windows.Automation.PropertyCondition($A::NameProperty, $title)))
+    if (-not $d) { $d = $A::RootElement.FindFirst($S::Children, (New-Object Windows.Automation.PropertyCondition($A::NameProperty, $title))) }
+    Start-Sleep -Milliseconds 200
+  }
+  if (-not $d) { return "!! file dialog not found: $title" }
+  # 对话框打开时焦点就在文件名框中：全选后输入完整路径（KEYEVENTF_UNICODE，不经过输入法）
+  Start-Sleep -Milliseconds 500
+  [Drv]::Combo($VK.CTRL, $VK.A) | Out-Null
+  [Drv]::Type($path, 5)
+  Start-Sleep -Milliseconds 300
+  [Drv]::Combo($VK.ENTER) | Out-Null
+  Start-Sleep -Milliseconds 1200
+  "file dialog done: $title"
+}
+Invoke (El $w "lib_export")
+FileDialog "另存为" $zip
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+if (Test-Path $zip) { "exported zip entries: " + ((([IO.Compression.ZipFile]::OpenRead($zip)).Entries | ForEach-Object { $_.FullName }) -join ",") } else { "!! zip not created" }
+
 # 9) 删除 qtlib-test（移到回收站）
 SelectItem (El $w "lib_item_qtlib-test")
 Invoke (El $w "lib_more")
@@ -114,10 +149,29 @@ Invoke (ByName $w "删除")
 Start-Sleep -Milliseconds 600
 "deleted: " + (-not (Test-Path "$tpl\qtlib-test.md")) + " still listed=" + [bool](TryEl $w "lib_item_qtlib-test")
 
-Get-Content $LogFile -Encoding UTF8 | Select-String '"library' | Select-Object -Last 12
+# 10) 从 zip 导入：qtlib-test 回到模板库；再导入一次 → 名称冲突对话框 → 跳过
+if (Test-Path $zip) {
+  Invoke (El $w "lib_import")
+  FileDialog "打开" $zip
+  ShotWin "lib-import-done" $w
+  Invoke (ByName $w "好")
+  "imported: " + (Test-Path "$tpl\qtlib-test.md") + " listed=" + [bool](TryEl $w "lib_item_qtlib-test")
+  Invoke (El $w "lib_import")
+  FileDialog "打开" $zip
+  Start-Sleep -Milliseconds 300
+  ShotWin "lib-import-conflict" $w
+  Invoke (ByName $w "跳过")
+  Start-Sleep -Milliseconds 800
+  $ok = ByName $w "好"
+  if ($ok) { Invoke $ok }
+  "second import: " + (Get-Content $LogFile -Encoding UTF8 | Select-String '"action":"import"' | Select-Object -Last 1)
+}
+
+Get-Content $LogFile -Encoding UTF8 | Select-String '"library' | Select-Object -Last 14
 
 # 清理：关闭窗口与应用，删除回收站中的测试文件
 CloseWin $w
 Get-Process Qantrip -ErrorAction SilentlyContinue | Stop-Process -Force
+Remove-Item "$tpl\qtlib-test.md", $zip -ErrorAction SilentlyContinue
 PurgeRecycle $tpl
 "templates left: " + (@(Get-ChildItem $tpl -Filter *.md).Name -join ",")
