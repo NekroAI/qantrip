@@ -80,7 +80,7 @@ D9 的目标在微软拼音下达成。模拟 Shift 依赖输入法的中英切�
 
 实现要点：
 
-- **同步密钥存储（SecretStore）：** 在 `qantrip-ffi` 内用 Rust 实现（`native/src/secrets.rs`）。核心用到的所有键（`device_keys`、`vault_keyring`、`access_token`、`refresh_token` 与加入过程中的临时密钥）合成一个映射，序列化后用 DPAPI `CryptProtectData`（当前用户范围、`CRYPTPROTECT_UI_FORBIDDEN`、附加应用熵）加密为一个文件 `%APPDATA%\Qantrip\sync\<主机>\secrets.bin`，先写临时文件再替换；与 macOS 把全部密钥合成一个钥匙串条目对应。没有选凭据管理器：单个凭据上限 2560 字节，钥匙环随轮换增长，拆成多个凭据会失去一次读写全部密钥的原子性；凭据管理器本身也是 DPAPI 保护，安全性相同。两者都意味着以同一用户身份运行的其他程序可以解密（与 D30 中"仅本用户可读的文件"相当），Windows 上也没有 macOS 那样"每次更新询问一次"的问题。
+- **同步密钥存储（SecretStore）：** 在 `qantrip-ffi` 内用 Rust 实现（`native/src/secrets.rs`）。核心用到的所有键（`device_keys`、`vault_keyring`、`access_token`、`refresh_token` 与加入过程中的临时密钥）合成一个映射，序列化后用 DPAPI `CryptProtectData`（当前用户范围、`CRYPTPROTECT_UI_FORBIDDEN`、附加应用熵）加密为一个文件 `%LOCALAPPDATA%\Qantrip\sync\<主机>\secrets.bin`，先写临时文件再替换；与 macOS 把全部密钥合成一个钥匙串条目对应。没有选凭据管理器：单个凭据上限 2560 字节，钥匙环随轮换增长，拆成多个凭据会失去一次读写全部密钥的原子性；凭据管理器本身也是 DPAPI 保护，安全性相同。两者都意味着以同一用户身份运行的其他程序可以解密（与 D30 中"仅本用户可读的文件"相当），Windows 上也没有 macOS 那样"每次更新询问一次"的问题。
 - **后台调用：** 同步调用全部在线程池上执行并串行化，结果回到 UI 线程；每 5 分钟同步一次，模板目录变化（`FileSystemWatcher`，300ms 合并后重新加载模板）8 秒后同步；拉取到新内容或冲突时重新加载引擎与模板库。错误按 `kind` 映射为双语文字（与 macOS `describe` 相同）。
 - **登录回调：** `TcpListener` 监听 `127.0.0.1:0`（`HttpListener` 绑定 127.0.0.1 需要 URL ACL），只接受 `/callback`，其他路径 404 并继续等待。
 - **WinUI 注意：** 把已经在界面树中的元素移到新的父元素（即使先从旧父元素移除）会抛出 `0x800F1000`（"没有检测到已安装的组件"）；模板库与同步页每次重建都新建控件，输入框的文字与焦点另行保存后还原。`TextBox` 的换行是 `\r`，写回源码前统一为 `\n`；`TextChanged` 对程序赋值也会异步触发，表单只在文档序列化结果真的变化时才算修改。
@@ -88,7 +88,7 @@ D9 的目标在微软拼音下达成。模拟 Shift 依赖输入法的中英切�
 注意：
 
 - 真实的 GitHub 登录、创建 / 加入 / 恢复与双向同步需要浏览器中的授权点击，本轮没有在 Windows 上做端到端测试；核心与协议已在 macOS 上做过完整联调（D30）。
-- 同步状态与密钥文件放在 `%APPDATA%`（漫游配置文件）下，与模板目录同一个根。域环境启用漫游配置文件时，设备身份会随用户漫游到另一台电脑，两台电脑将共用一个设备标识；如需支持，应把 `sync\` 移到 `%LOCALAPPDATA%`。
+- 同步状态与密钥文件已移到 `%LOCALAPPDATA%`（不漫游），避免域环境的漫游配置文件把设备身份带到另一台电脑。
 - 模板库窗口在界面语言切换后不会即时重建（重新打开即可）；源码编辑器没有语法高亮。
 
 ## 测试方法

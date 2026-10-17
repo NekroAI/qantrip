@@ -1,7 +1,7 @@
 //! 同步密钥的安全存储（核心 `SecretStore` 的 Windows 实现）。
 //!
 //! 所有键（设备私钥、VK 钥匙环、令牌、加入过程中的临时密钥）合成一个映射，序列化后用 DPAPI
-//! （`CryptProtectData`，当前用户范围）加密，写入一个文件（默认 `%APPDATA%\Qantrip\sync\<host>\secrets.bin`）。
+//! （`CryptProtectData`，当前用户范围）加密，写入一个文件（默认 `%LOCALAPPDATA%\Qantrip\sync\<host>\secrets.bin`）。
 //! 与 macOS 把所有密钥合成一个钥匙串条目的做法对应。
 //!
 //! 选择 DPAPI 文件而不是凭据管理器：凭据管理器的单个凭据上限为 2560 字节（`CRED_MAX_CREDENTIAL_BLOB_SIZE`），

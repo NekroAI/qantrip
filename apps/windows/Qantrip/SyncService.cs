@@ -53,7 +53,11 @@ internal sealed class SyncService
     {
         var host = Uri.TryCreate(serverUrl, UriKind.Absolute, out var u) ? u.Host : "default";
         if (u != null && !u.IsDefaultPort) host += "_" + u.Port;
-        return Path.Combine(Settings.DataDir, "sync", host);
+        // 设备身份与密钥只属于这台电脑：放在 %LOCALAPPDATA%，不随漫游配置文件同步到别的电脑（测试时跟随 QANTRIP_DATA_DIR）
+        var root = Environment.GetEnvironmentVariable("QANTRIP_DATA_DIR") is { Length: > 0 } d
+            ? d
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Qantrip");
+        return Path.Combine(root, "sync", host);
     }
 
     /// 启动或切换服务端时调用（UI 线程）。

@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File apps\windows\build.ps1 -NoZip     # 不
 
 - 启动后常驻托盘（通知区域，可能在"隐藏的图标"里）。Alt+Q 唤起 / 关闭面板；再次运行 `Qantrip.exe` 也会打开面板，`Qantrip.exe --settings` 打开设置窗口，`Qantrip.exe --library` 打开模板库。
 - 首次启动显示引导（做什么、确认或更换快捷键、插入方式、练习一次），关闭或完成后不再显示（`settings.json` 的 `onboardingDone`）；托盘菜单"使用引导…"可以再次打开。
-- 数据目录：`%APPDATA%\Qantrip\`（`templates\*.md` 用户模板，指令模式、模板库与同步都写在这里；`usage.json` 使用记录；`settings.json` 设置；`sync\<服务端主机>\` 同步状态与加密的密钥文件）。模板目录有变化（包括用其他编辑器修改）时自动重新加载。
+- 数据目录：`%APPDATA%\Qantrip\`（`templates\*.md` 用户模板，指令模式、模板库与同步都写在这里；`usage.json` 使用记录；`settings.json` 设置）；同步状态与加密的密钥文件在 `%LOCALAPPDATA%\Qantrip\sync\<服务端主机>\`（只属于这台电脑，不随漫游配置文件同步）。模板目录有变化（包括用其他编辑器修改）时自动重新加载。
 - 设置窗口（托盘右键 › 设置…）：唤起快捷键录制（注册失败时提示冲突并保留原快捷键）、登录时启动（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\NekroQantrip`）、界面语言与内置模板语言、插入方式（自动粘贴 / 只复制）、Ctrl+↩ 展开粘贴与间隔、输入法、记录使用习惯与清除、关于。修改立即生效并写入 `settings.json`（保留文件中其他键），也可以手动编辑该文件（重启后生效）：
 
   ```json
