@@ -1,7 +1,8 @@
-import { isRouteErrorResponse, Link, Links, Meta, NavLink, Outlet, Scripts, ScrollRestoration } from 'react-router'
+import { isRouteErrorResponse, Link, Links, Meta, NavLink, Outlet, Scripts, ScrollRestoration, useLocation } from 'react-router'
 import type { Route } from './+types/root'
 import './app.css'
 import { GitHubIcon } from './components/GitHubIcon'
+import { detectLocale, localePath, rememberLocale, stripLocale, useCommon, useHref, useLocale, LOCALIZED_PATHS } from './lib/i18n'
 import { REPO_URL } from './lib/site'
 
 export const links: Route.LinksFunction = () => [
@@ -10,16 +11,30 @@ export const links: Route.LinksFunction = () => [
   { rel: 'preload', href: '/fonts/MonaspaceNeon-latin.woff2', as: 'font', type: 'font/woff2', crossOrigin: 'anonymous' },
 ]
 
-const NAV = [
-  { to: '/docs', label: '文档' },
-  { to: '/security', label: '安全' },
-  { to: '/download', label: '下载' },
-  { to: '/account', label: '账号' },
-] as const
+/** 没有语言前缀的页面（账号、授权）按 Cookie / Accept-Language 选择语言 */
+export const loader = ({ request }: Route.LoaderArgs) => ({ detected: detectLocale(request) })
+
+function LangSwitch() {
+  const locale = useLocale()
+  const t = useCommon()
+  const { pathname } = useLocation()
+  const other = locale === 'zh' ? 'en' : 'zh'
+  const bare = stripLocale(pathname)
+  // 只有中英两版的页面才有对应地址；其他页面切换后回到对应语言的首页
+  const target = (LOCALIZED_PATHS as readonly string[]).includes(bare) ? localePath(other, bare) : localePath(other, '/')
+  return (
+    <Link className="lang" to={target} hrefLang={other === 'zh' ? 'zh-Hans' : 'en'} aria-label={t.switchLabel} onClick={() => rememberLocale(other)}>
+      {t.switchTo}
+    </Link>
+  )
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const locale = useLocale()
+  const t = useCommon()
+  const href = useHref()
   return (
-    <html lang="zh-CN">
+    <html lang={locale === 'zh' ? 'zh-CN' : 'en'}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -30,19 +45,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <body>
         <header className="nav">
           <div className="wrap">
-            <Link to="/" className="brand" aria-label="Nekro Qantrip 首页">
+            <Link to={href('/')} className="brand" aria-label={t.home}>
               <img src="/media/icon-256.png" alt="" width={24} height={24} />
               Qantrip
             </Link>
-            <nav className="nav-links" aria-label="主导航">
-              {NAV.map((n) => (
-                <NavLink key={n.to} to={n.to}>
-                  {n.label}
-                </NavLink>
-              ))}
+            <nav className="nav-links" aria-label={t.mainNav}>
+              <NavLink to={href('/docs')}>{t.nav.docs}</NavLink>
+              <NavLink to={href('/security')}>{t.nav.security}</NavLink>
+              <NavLink to={href('/download')}>{t.nav.download}</NavLink>
+              <NavLink to="/account">{t.nav.account}</NavLink>
               <a className="gh" href={REPO_URL} rel="noopener">
                 <GitHubIcon /> GitHub
               </a>
+              <LangSwitch />
             </nav>
           </div>
         </header>
@@ -50,16 +65,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <footer className="footer">
           <div className="wrap">
             <div>
-              Nekro Qantrip，由 NekroAI 开发的开源项目。
+              {t.footerAbout}
               <br />
-              客户端 GPL-3.0-or-later，服务端 AGPL-3.0-or-later。
+              {t.footerLicense}
             </div>
-            <nav aria-label="页脚">
-              <a href={REPO_URL}>源代码</a>
-              <a href={`${REPO_URL}/issues`}>问题反馈</a>
-              <Link to="/docs">文档</Link>
-              <Link to="/security">安全设计</Link>
-              <Link to="/download">下载</Link>
+            <nav aria-label={t.footerNav}>
+              <a href={REPO_URL}>{t.source}</a>
+              <a href={`${REPO_URL}/issues`}>{t.issues}</a>
+              <Link to={href('/docs')}>{t.nav.docs}</Link>
+              <Link to={href('/security')}>{t.securityDesign}</Link>
+              <Link to={href('/download')}>{t.nav.download}</Link>
             </nav>
           </div>
         </footer>
@@ -75,17 +90,19 @@ export default function App() {
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  const title = isRouteErrorResponse(error) ? (error.status === 404 ? '页面不存在' : `出错了（${error.status}）`) : '出错了'
-  const detail = isRouteErrorResponse(error) && typeof error.data === 'string' ? error.data : '请稍后重试，或返回首页。'
+  const t = useCommon()
+  const href = useHref()
+  const notFound = isRouteErrorResponse(error) && error.status === 404
+  const title = notFound ? t.notFound : isRouteErrorResponse(error) ? `${t.error} (${error.status})` : t.error
   return (
     <section className="wrap page">
       <header>
         <h1>{title}</h1>
-        <p>{detail}</p>
+        <p>{notFound ? t.notFoundDetail : t.errorDetail}</p>
       </header>
       <p>
-        <Link className="btn" to="/">
-          返回首页
+        <Link className="btn" to={href('/')}>
+          {t.backHome}
         </Link>
       </p>
     </section>

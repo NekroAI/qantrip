@@ -240,3 +240,30 @@ describe('公开接口', () => {
     expect((await call('/api/v1/vault', get('qta_invalid'))).status).toBe(401)
   })
 })
+
+describe('seo', () => {
+  const prod = { ...env, QANTRIP_ENV: 'production', SITE_ORIGIN: 'https://qantrip.nekro.ai' } as Env
+
+  it('serves robots, sitemap and llms.txt; staging is not indexable', async () => {
+    const { seoResponse } = await import('../server/seo.js')
+    expect(await seoResponse('/robots.txt', prod)!.text()).toContain('Sitemap: https://qantrip.nekro.ai/sitemap.xml')
+    expect(await seoResponse('/robots.txt', { ...prod, QANTRIP_ENV: 'staging' } as Env)!.text()).toContain('Disallow: /\n')
+    const sitemap = await seoResponse('/sitemap.xml', prod)!.text()
+    expect(sitemap).toContain('<loc>https://qantrip.nekro.ai/zh/docs</loc>')
+    expect(sitemap).toContain('hreflang="zh-Hans"')
+    const full = await seoResponse('/llms-full.txt', prod)!.text()
+    expect(full).toContain('`review` (alias r)')
+    expect(seoResponse('/docs', prod)).toBeNull()
+  })
+
+  it('redirects Chinese browsers to /zh unless English was chosen', async () => {
+    const { localeRedirect } = await import('../server/seo.js')
+    const req = (path: string, headers: Record<string, string>) => new Request(`https://qantrip.nekro.ai${path}`, { headers })
+    expect(localeRedirect(req('/docs', { 'accept-language': 'zh-CN,zh;q=0.9' }))?.headers.get('location')).toBe('/zh/docs')
+    expect(localeRedirect(req('/', { 'accept-language': 'zh-CN' }))?.headers.get('location')).toBe('/zh')
+    expect(localeRedirect(req('/', { 'accept-language': 'zh-CN', cookie: 'lang=en' }))).toBeNull()
+    expect(localeRedirect(req('/', { 'accept-language': 'en-US', cookie: 'lang=zh' }))?.headers.get('location')).toBe('/zh')
+    expect(localeRedirect(req('/', { 'accept-language': 'en-US' }))).toBeNull()
+    expect(localeRedirect(req('/account', { 'accept-language': 'zh-CN' }))).toBeNull()
+  })
+})

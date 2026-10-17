@@ -54,9 +54,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 固定文件名的副本：官网直链 releases/latest/download/Qantrip-macOS-<arch>.dmg 始终指向最新版本
+          for arch in arm64 x86_64; do cp dmgs/Qantrip-*-"$arch".dmg "dmgs/Qantrip-macOS-$arch.dmg"; done
           (cd dmgs && sha256sum *.dmg > SHA256SUMS.txt)
+          # 不标记为预发布：GitHub 的 releases/latest 不包含预发布版本
           gh release create "$GITHUB_REF_NAME" dmgs/*.dmg dmgs/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "Nekro Qantrip $GITHUB_REF_NAME" \
             --notes-file docs/install-macos.md \
-            --prerelease
+            --latest

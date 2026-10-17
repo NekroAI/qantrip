@@ -1,6 +1,7 @@
 import { createRequestHandler, type ServerBuild } from 'react-router'
 import { api, handlesPath } from '../server/api.js'
 import { dailyCleanup } from '../server/cleanup.js'
+import { localeRedirect, noindex, seoResponse } from '../server/seo.js'
 
 const pageHandler = createRequestHandler(
   () => import('virtual:react-router/server-build') as Promise<unknown> as Promise<ServerBuild>,
@@ -32,8 +33,10 @@ export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url)
     if (!pathname.startsWith('/api/') && crossSiteForm(request, env)) return new Response('Forbidden', { status: 403 })
-    const response = handlesPath(pathname) ? await api.fetch(request, env, ctx) : await pageHandler(request)
-    return withSecurityHeaders(response)
+    const response = seoResponse(pathname, env) ?? localeRedirect(request) ?? (handlesPath(pathname) ? await api.fetch(request, env, ctx) : await pageHandler(request))
+    const out = withSecurityHeaders(response)
+    if (noindex(env)) out.headers.set('x-robots-tag', 'noindex')
+    return out
   },
 
   async scheduled(_controller, env) {

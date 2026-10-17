@@ -42,13 +42,13 @@ r security --scope=staged -s 重点看认证模块
 - **插入前看得到结果**：实时预览，标出每个参数和附加要求改变了哪些内容。
 - **模板就是 Markdown 文件**：YAML 头部声明参数（开关、单选、多选、文本、数字、多行文本），正文是 [MiniJinja](https://github.com/mitsuhiko/minijinja) 模板。可以用任何编辑器修改，也可以在内置的模板库里用表单编辑、试用、校验。
 - **插入时不打扰你**：以粘贴方式插入，完成后还原剪贴板，Prompt 标记为临时内容，剪贴板管理器不会记录。没有辅助功能权限时自动改为只复制。
-- **为 AI 编程代理而做**：17 个内置模板（审查、修复、调试、测试、重构、提交信息、PR 描述等）；<kbd>⌘↩</kbd> 让 Claude Code 中被折叠的 `[Pasted text]` 展开。
+- **为 AI 编程代理而做**：17 个内置模板（中英文两套）（审查、修复、调试、测试、重构、提交信息、PR 描述等）；<kbd>⌘↩</kbd> 让 Claude Code 中被折叠的 `[Pasted text]` 展开。
 - **键盘优先，鼠标也顺手**：参数标签都可以点，点击会改写命令行，键盘与鼠标的结果始终一致。
 - **本地优先**：搜索、渲染、插入全部离线可用。端到端加密同步[正在开发](docs/sync-design.md)。
 
 ## 安装
 
-从 [Releases](https://github.com/NekroAI/qantrip/releases/latest) 下载最新的 `.dmg`（Apple 芯片选 `arm64`，Intel 芯片选 `x86_64`），打开后把 **Qantrip** 拖进「应用程序」即可。需要 macOS 14 或更新版本。
+下载 DMG：[Apple 芯片](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-arm64.dmg) 或 [Intel 芯片](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-x86_64.dmg)，打开后把 **Qantrip** 拖进「应用程序」即可。需要 macOS 14 或更新版本。
 
 Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性** 点 **仍要打开**。之后更新会保留权限与模板。
 

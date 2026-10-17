@@ -48,13 +48,13 @@ r security --scope=staged -s focus on the auth module
 - **See what you'll insert** — a live preview highlights exactly which lines each parameter and your free text changed.
 - **Templates are Markdown files** — YAML front matter declares parameters (bool, enum, multi-select, string, number, text); the body is a [MiniJinja](https://github.com/mitsuhiko/minijinja) template. Edit them in any editor, or in the built-in library with a form editor, live preview and validation.
 - **Insertion that stays out of your way** — paste-based (terminals and AI agents won't treat newlines as <kbd>Enter</kbd>), your clipboard is restored afterwards and the prompt is marked transient so clipboard managers skip it. No Accessibility permission? It falls back to copy-only.
-- **Built for AI coding agents** — 17 built-in templates (review, fix, debug, test, refactor, commit, PR, …); <kbd>⌘↩</kbd> expands Claude Code's collapsed `[Pasted text]` placeholder.
+- **Built for AI coding agents** — 17 built-in templates in English and Chinese (review, fix, debug, test, refactor, commit, PR, …); <kbd>⌘↩</kbd> expands Claude Code's collapsed `[Pasted text]` placeholder.
 - **Keyboard first, mouse friendly** — every parameter chip is clickable, and clicks rewrite the command line, so mouse and keyboard always agree.
 - **Local first** — search, rendering and insertion work offline. Optional end-to-end encrypted sync is [in development](docs/sync-design.md).
 
 ## Install
 
-Download the latest `.dmg` from [Releases](https://github.com/NekroAI/qantrip/releases/latest) — `arm64` for Apple silicon, `x86_64` for Intel — open it and drag **Qantrip** into Applications. Requires macOS 14 or later.
+Download the DMG — [Apple silicon](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-arm64.dmg) or [Intel](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-x86_64.dmg) — open it and drag **Qantrip** into Applications. Requires macOS 14 or later.
 
 Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 

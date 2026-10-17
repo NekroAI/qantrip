@@ -1,41 +1,136 @@
 import { Link } from 'react-router'
+import { DownloadButton } from '../components/DownloadButton'
 import { GitHubIcon } from '../components/GitHubIcon'
 import { LiveDemo } from '../components/LiveDemo'
+import { type Locale, localeOf, SITE_ORIGIN, seo, useHref, useLocale } from '../lib/i18n'
 import { REPO_URL } from '../lib/site'
-import { BUILTIN_TEMPLATES } from '../lib/templates'
+import { groupTemplates, templatesOf } from '../lib/templates'
 import type { Route } from './+types/home'
 
-export const meta: Route.MetaFunction = () => [
-  { title: 'Nekro Qantrip — 开源的 Prompt 启动器' },
-  { name: 'description', content: '按下 ⌃Q，输入模板名和参数，完整的 Prompt 就出现在 Claude Code、Codex、浏览器或任何输入框里。开源、本地优先。' },
-  { property: 'og:title', content: 'Nekro Qantrip' },
-  { property: 'og:description', content: '开源的 Prompt 启动器：几个按键调出带参数的 Prompt，插入任何应用。' },
-  { property: 'og:image', content: '/media/icon-256.png' },
-]
+const T = {
+  en: {
+    title: 'Nekro Qantrip — open-source prompt launcher for Claude Code, Codex and any app',
+    description:
+      'Press ⌃Q, type a short command, and a full prompt lands at your cursor. Parameterized prompt templates for Claude Code, Codex, Cursor and any text field. Open source, works offline, end-to-end encrypted sync.',
+    tags: ['Open source', 'macOS', 'Works offline'],
+    h1: 'Your best prompts, a few keystrokes away',
+    lead: (
+      <>
+        Press <kbd>⌃Q</kbd>, type a template and a few options, hit <kbd>↩</kbd>. The full prompt appears right at your cursor, in Claude Code, Codex, Cursor, your browser, or any text field.
+      </>
+    ),
+    github: 'View on GitHub',
+    steps: [
+      { keys: ['⌃', 'Q'], title: 'Summon', body: 'From any app.' },
+      { keys: ['r sec -s'], title: 'Type', body: 'A template, a few options.' },
+      { keys: ['↩'], title: 'Insert', body: 'The prompt lands at the cursor.' },
+    ],
+    templatesH: (n: number) => `${n} built-in templates`,
+    templatesP: 'Each one is a Markdown file you can change, or use as a starting point for your own.',
+    browse: 'Browse and edit them live',
+    syncH: 'Sync across devices, end-to-end encrypted',
+    syncP: "Even on our public sync service, we can't read your templates.",
+    syncLink: 'See how',
+    ossH: 'Open source',
+    ossP: 'The app, the core and the sync server are all on GitHub. Run your own server if you prefer.',
+    issues: 'Report an issue',
+    faqH: 'Questions',
+    faq: [
+      ['What is Qantrip?', 'An open-source prompt launcher. You write your prompts as templates with parameters, then call them up from any app with a global hotkey and a short command.'],
+      ['Which apps does it work with?', 'Anything you can paste into: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, your editor.'],
+      ['Is it free?', 'Yes. The app is GPL-3.0 and the sync server is AGPL-3.0.'],
+      ['Which systems are supported?', 'macOS 14 or later, on Apple silicon and Intel. Windows and Linux are planned.'],
+      ['Does it need special permissions?', 'Auto-paste needs Accessibility access. Without it, Qantrip copies the prompt and you paste it yourself.'],
+      ['Where are my templates stored?', 'On your Mac, as plain Markdown files. Sync is optional and end-to-end encrypted.'],
+    ] as [string, string][],
+  },
+  zh: {
+    title: 'Nekro Qantrip — 开源的 Prompt 启动器，适用于 Claude Code、Codex 与任何应用',
+    description: '按下 ⌃Q，输入一条短命令，完整的 Prompt 就出现在光标处。为 Claude Code、Codex、Cursor 和任何输入框准备的参数化 Prompt 模板。开源、离线可用、端到端加密同步。',
+    tags: ['开源', 'macOS', '离线可用'],
+    h1: '常用的 Prompt，敲几个键就到',
+    lead: (
+      <>
+        按 <kbd>⌃Q</kbd>，输入模板名和参数，回车。完整的 Prompt 就出现在光标处，不管你在用 Claude Code、Codex、Cursor、浏览器还是任何输入框。
+      </>
+    ),
+    github: '在 GitHub 上查看',
+    steps: [
+      { keys: ['⌃', 'Q'], title: '唤出', body: '在任何应用里。' },
+      { keys: ['r sec -s'], title: '输入', body: '模板名和几个参数。' },
+      { keys: ['↩'], title: '插入', body: 'Prompt 出现在光标处。' },
+    ],
+    templatesH: (n: number) => `${n} 个内置模板`,
+    templatesP: '每个模板都是一个 Markdown 文件，可以直接改，也可以照着写自己的。',
+    browse: '在线浏览和编辑',
+    syncH: '多设备同步，端到端加密',
+    syncP: '即使使用我们的公共同步服务，我们也无法读取你的模板。',
+    syncLink: '看看是怎么做到的',
+    ossH: '开源',
+    ossP: '应用、核心和同步服务端都在 GitHub 上。也可以部署自己的服务端。',
+    issues: '问题反馈',
+    faqH: '常见问题',
+    faq: [
+      ['Qantrip 是什么？', '一个开源的 Prompt 启动器。把常用的 Prompt 写成带参数的模板，在任何应用里用全局快捷键和一条短命令调出来。'],
+      ['能在哪些应用里用？', '任何能粘贴文字的地方：Claude Code、Codex CLI、Cursor、网页版 ChatGPT 或 Claude、Slack、编辑器。'],
+      ['收费吗？', '免费。应用以 GPL-3.0 开源，同步服务端以 AGPL-3.0 开源。'],
+      ['支持哪些系统？', 'macOS 14 及更新版本，Apple 芯片和 Intel 芯片都支持。Windows 和 Linux 在计划中。'],
+      ['需要什么权限？', '自动粘贴需要「辅助功能」权限。不授权也能用：Prompt 会复制到剪贴板，由你手动粘贴。'],
+      ['模板存在哪里？', '存在你的 Mac 上，是普通的 Markdown 文件。同步是可选的，并且端到端加密。'],
+    ] as [string, string][],
+  },
+} satisfies Record<Locale, unknown>
+
+export const meta: Route.MetaFunction = ({ location }) => {
+  const locale = localeOf(location.pathname)
+  const t = T[locale]
+  const app = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Nekro Qantrip',
+    alternateName: 'Qantrip',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'macOS 14+',
+    description: t.description,
+    url: SITE_ORIGIN + (locale === 'zh' ? '/zh' : '/'),
+    downloadUrl: `${REPO_URL}/releases/latest`,
+    license: 'https://www.gnu.org/licenses/gpl-3.0.html',
+    isAccessibleForFree: true,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    codeRepository: REPO_URL,
+    image: `${SITE_ORIGIN}/media/icon-256.png`,
+    author: { '@type': 'Organization', name: 'NekroAI', url: 'https://github.com/NekroAI' },
+    inLanguage: locale === 'zh' ? 'zh-CN' : 'en',
+  }
+  const faq = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: t.faq.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+  }
+  return [...seo({ locale, path: '/', title: t.title, description: t.description }), { 'script:ld+json': app }, { 'script:ld+json': faq }]
+}
 
 export default function Home() {
+  const locale = useLocale()
+  const t = T[locale]
+  const href = useHref()
+  const templates = templatesOf(locale)
+
   return (
     <>
       <section className="wrap hero">
         <div className="hero-meta">
-          <span>开源</span>
-          <span>macOS 14+</span>
-          <span>本地优先</span>
+          {t.tags.map((x) => (
+            <span key={x}>{x}</span>
+          ))}
         </div>
-        <h1>
-          <span>在任何 AI 工具里，</span>
-          <span>用几个按键调出你的 Prompt</span>
-        </h1>
-        <p>
-          Qantrip 是一个开源的 Prompt 启动器。按下 <kbd>⌃Q</kbd> 唤起面板，输入模板名和参数，回车后完整的 Prompt 就出现在 Claude Code、Codex、浏览器或任何输入框里。
-        </p>
+        <h1>{t.h1}</h1>
+        <p>{t.lead}</p>
         <div className="hero-actions">
-          <a className="btn primary" href={REPO_URL}>
-            <GitHubIcon /> 在 GitHub 上查看
+          <DownloadButton />
+          <a className="btn" href={REPO_URL}>
+            <GitHubIcon /> {t.github}
           </a>
-          <Link className="btn" to="/download">
-            下载 macOS 版
-          </Link>
         </div>
       </section>
 
@@ -44,168 +139,84 @@ export default function Home() {
       </section>
 
       <section className="wrap section">
-        <header>
-          <h2>一条命令，一段完整的 Prompt</h2>
-          <p>命令由模板名、参数和附加要求组成。不记得参数也没关系：输入 <code>--</code> 就会列出全部参数，灰字会提示下一步可以输入什么。</p>
-        </header>
-        <div className="anatomy">
-          <div className="anatomy-line" aria-label="命令示例">
-            <span className="t-command">r</span> <span className="t-positional">security</span> <span className="t-optionname">--scope=</span>
-            <span className="t-optionvalue">staged</span> <span className="t-shortflag">-s</span> 重点看认证和权限
-          </div>
-          <ul className="anatomy-parts">
-            <li>
-              <code className="t-command">r</code>
-              模板名或别名。拼错时会给出最接近的模板，确认后才插入。
-            </li>
-            <li>
-              <code className="t-positional">security</code>
-              位置参数：直接输入候选值，不必写参数名。
-            </li>
-            <li>
-              <code className="t-optionname">--scope=staged</code>
-              长参数。多选用逗号分隔，参数名和取值都可以只输前缀。
-            </li>
-            <li>
-              <code className="t-shortflag">-s</code>
-              开关参数的单字母简写。
-            </li>
-            <li>
-              <code>重点看认证和权限</code>
-              第一个不是参数的词起，后面的文字原样附在 Prompt 末尾。
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <section className="wrap section">
-        <header>
-          <h2>模板就是一个 Markdown 文件</h2>
-          <p>参数在文件头部声明，正文用 MiniJinja 编写。可以用任何编辑器修改，Qantrip 会自动重新加载；应用内的模板库也提供表单编辑、试用和预览。</p>
-        </header>
-        <div className="cols">
-          <div>
-            <span className="label">~/Library/Application Support/Qantrip/templates/review.md</span>
-            <pre className="code">
-              <span className="c">---</span>
-              {'\n'}
-              <span className="k">name</span>: review{'\n'}
-              <span className="k">aliases</span>: [r]{'\n'}
-              <span className="k">params</span>:{'\n'}
-              {'  '}
-              <span className="k">focus</span>:{'\n'}
-              {'    '}type: multi{'\n'}
-              {'    '}positional: true{'\n'}
-              {'    '}choices: [<span className="s">security</span>, <span className="s">performance</span>]{'\n'}
-              {'  '}
-              <span className="k">strict</span>: {'{ '}type: bool, short: s {'}'}
-              {'\n'}
-              <span className="c">---</span>
-              {'\n'}
-              请审查当前改动。{'\n'}
-              <span className="j">{'{% if strict %}'}</span>不确定的地方也列出来。<span className="j">{'{% endif %}'}</span>
-              {'\n'}
-              <span className="j">{'{% include "_extra" %}'}</span>
-            </pre>
-          </div>
-          <div>
-            <span className="label">输入 r security -s 重点看认证 得到</span>
-            <pre className="code" style={{ whiteSpace: 'pre-wrap' }}>
-              {'请审查当前改动。\n重点关注：安全（权限、输入校验、敏感信息、注入）。\n不确定的地方也列出来。\n\n补充要求：重点看认证'}
-            </pre>
-          </div>
-        </div>
-      </section>
-
-      <section className="wrap section">
-        <header>
-          <h2>插入时不打扰你</h2>
-        </header>
-        <ul className="facts two">
-          <li>
-            <b>剪贴板会还原</b>
-            <span>通过剪贴板粘贴，完成后恢复你原来复制的内容；Prompt 标记为临时内容，不进入剪贴板管理器的历史。</span>
-          </li>
-          <li>
-            <b>多行不会被提交</b>
-            <span>以粘贴而不是逐字键入的方式插入，终端和 AI 编程代理不会把换行当作回车。</span>
-          </li>
-          <li>
-            <b>不授权也能用</b>
-            <span>没有辅助功能权限时，Prompt 复制到剪贴板，由你手动粘贴。</span>
-          </li>
-          <li>
-            <b>Claude Code 长粘贴</b>
-            <span>超过 800 字或 3 行的粘贴会被折叠，<kbd>⌘↩</kbd> 连续粘贴两次让它展开。</span>
-          </li>
-        </ul>
-      </section>
-
-      <section className="wrap section">
-        <header>
-          <h2>{BUILTIN_TEMPLATES.length} 个内置模板</h2>
-          <p>覆盖审查、调试、测试、重构、提交与翻译。每个都可以自定义，也可以照着写自己的。</p>
-        </header>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>命令</th>
-                <th>用途</th>
-                <th>参数</th>
-              </tr>
-            </thead>
-            <tbody>
-              {BUILTIN_TEMPLATES.map((t) => (
-                <tr key={t.name}>
-                  <td>
-                    <code className="name">{t.name}</code>
-                    {t.aliases.length > 0 && <span className="muted"> · {t.aliases.join(' · ')}</span>}
-                  </td>
-                  <td>{t.description}</td>
-                  <td>
-                    <code className="params">{t.params.map((p) => `--${p}`).join(' ')}</code>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="wrap section">
-        <div className="oss">
-          <header style={{ display: 'grid', gap: 8 }}>
-            <h2>开源，也可以自己部署</h2>
-            <p className="muted" style={{ maxWidth: '64ch' }}>
-              客户端、核心与同步服务端都在同一个仓库里。同步采用端到端加密：密钥只在你的设备上，服务端只保存无法解密的密文；你也可以把服务端部署到自己的 Cloudflare 账号，在客户端里切换后端地址。
-            </p>
-          </header>
-          <ul className="facts">
-            <li>
-              <b>客户端与核心</b>
-              <span>Rust 核心 + 各平台原生界面，GPL-3.0-or-later。</span>
-            </li>
-            <li>
-              <b>同步服务端</b>
-              <span>Cloudflare Workers + D1，AGPL-3.0-or-later，不含任何解密逻辑。</span>
-            </li>
-            <li>
-              <b>安全设计公开</b>
-              <span>
-                威胁模型、密钥层级与服务端可见的元数据都写在 <Link to="/security">安全设计</Link> 里。
+        <ol className="steps">
+          {t.steps.map((s, i) => (
+            <li key={s.title}>
+              <span className="step-n">{i + 1}</span>
+              <span className="step-keys">
+                {s.keys.map((k) => (
+                  <kbd key={k}>{k}</kbd>
+                ))}
               </span>
+              <b>{s.title}</b>
+              <span className="muted">{s.body}</span>
             </li>
-          </ul>
+          ))}
+        </ol>
+      </section>
+
+      <section className="wrap section">
+        <header>
+          <h2>{t.templatesH(templates.length)}</h2>
+          <p>{t.templatesP}</p>
+        </header>
+        <div className="tgroups">
+          {groupTemplates(templates).map((g) => (
+            <div className="tgroup" key={g.category}>
+              <h3>{g.category}</h3>
+              <ul>
+                {g.items.map((x) => (
+                  <li key={x.name}>
+                    <Link to={`${href('/docs')}#t-${x.name}`}>
+                      <code>{x.name}</code>
+                      {x.aliases.length > 0 && <span className="alias">{x.aliases.join(' ')}</span>}
+                    </Link>
+                    <span>{x.description}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <p>
+          <Link to={`${href('/docs')}#templates`}>{t.browse} →</Link>
+        </p>
+      </section>
+
+      <section className="wrap section split">
+        <div>
+          <h2>{t.syncH}</h2>
+          <p>{t.syncP}</p>
+          <Link className="btn" to={href('/security')}>
+            {t.syncLink} →
+          </Link>
+        </div>
+        <div>
+          <h2>{t.ossH}</h2>
+          <p>{t.ossP}</p>
           <div className="hero-actions">
-            <a className="btn primary" href={REPO_URL}>
-              <GitHubIcon /> 源代码
+            <a className="btn" href={REPO_URL}>
+              <GitHubIcon /> GitHub
             </a>
             <a className="btn" href={`${REPO_URL}/issues`}>
-              问题反馈
+              {t.issues}
             </a>
           </div>
         </div>
+      </section>
+
+      <section className="wrap section">
+        <header>
+          <h2>{t.faqH}</h2>
+        </header>
+        <dl className="faq">
+          {t.faq.map(([q, a]) => (
+            <div key={q}>
+              <dt>{q}</dt>
+              <dd>{a}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
     </>
   )
