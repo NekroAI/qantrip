@@ -4,9 +4,11 @@
 
 ## 当前阶段
 
-**Demo 阶段 2（macOS）。** 阶段 1 可行性 Spike 已通过（`docs/spike-report.md`），技术路线为 Rust 核心 + UniFFI + 各平台原生外壳（D6）。当前目标是 P0 纵向切片：输入语法解析、MiniJinja 渲染、内置模板、面板体验改版（D7 / D9 / D10）。
+**macOS Demo 0.1.0 已发布（预发布，私有仓库 Release）。** 技术路线为 Rust 核心 + UniFFI + 各平台原生外壳（D6）。macOS P0 已完成：面板、语法、17 个内置模板、设置、模板库与编辑器、导入导出、引导、图标（D7–D21）。打包与发布流程见 D22。下一步：负责人在 MacBook 上日常使用反馈，之后进入 Windows 可行性验证（负责人提供 Windows 实体机）。
 
-构建：`scripts/build-macos.sh`（产物在 `dist/`）。插入链路回归测试：`tests/spike/run_insert_tests.py`。
+- 开发构建：`scripts/build-macos.sh`（产物在 `dist/`，本机开发证书签名）
+- 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布
+- 测试：`cargo test --manifest-path core/Cargo.toml`；插入链路回归：以 `QANTRIP_DEBUG_HOOKS=1` 构建后运行 `tests/spike/run_insert_tests.py`
 
 ## 文档
 
@@ -16,6 +18,7 @@
 | `docs/input-grammar.md` | 面板 / CLI 共用的输入语法规范草案 |
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
+| `docs/install-macos.md` | macOS 安装说明（同时用作 Release 说明） |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。
 
@@ -24,6 +27,6 @@
 - Local-first：搜索、渲染、插入必须离线可用，同步和 AI 都不能阻塞主流程。
 - 端到端加密是强制要求：服务端不得持有可解密密钥。**不要复用** `nekro-nxt-community` 的 `server/crypto.ts`（服务端持有密钥模型）。
 - 插入用剪贴板 + 粘贴，默认不自动提交；必须有不需要任何系统权限的"只复制"模式。
-- macOS 暂无 Developer ID：用固定自签名证书签名。
+- macOS 暂无 Developer ID：发布版本一律用「Nekro Qantrip Release」自签名证书签名（存于 Actions Secrets），不得更换（D1 / D22）。
 - 模板渲染具有确定性，不依赖 AI。
 - 技术选型：Rust 核心 + 原生外壳，不以 Tauri 为主框架（D6）。
