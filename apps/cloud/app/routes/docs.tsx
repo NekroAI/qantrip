@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import type { Route } from './+types/docs'
 
 export const meta: Route.MetaFunction = () => [{ title: '文档 · Nekro Qantrip' }]
@@ -11,19 +12,10 @@ export default function Docs() {
       </header>
       <div className="prose">
         <h2 id="install">安装（macOS）</h2>
-        <ol>
-          <li>
-            按芯片选择安装包：Apple 芯片用 <code>arm64</code>，Intel 芯片用 <code>x86_64</code>。不确定时查看 苹果菜单 → 关于本机 →「芯片」。
-          </li>
-          <li>打开 DMG，把 Qantrip 拖到「应用程序」。</li>
-          <li>
-            首次打开会被系统拦截：在 <strong>系统设置 → 隐私与安全性</strong> 底部点 <strong>仍要打开</strong>。
-          </li>
-          <li>
-            跟随引导确认唤起快捷键（默认 <code>⌃Q</code>），授予 <strong>辅助功能</strong> 权限后即可自动粘贴；不授权也能用，Prompt 会复制到剪贴板。
-          </li>
-        </ol>
-        <p>更新时下载新版本覆盖即可。所有版本使用同一张签名证书，权限、模板与设置都会保留。</p>
+        <p>
+          从 <Link to="/download">下载页</Link> 获取 DMG（Apple 芯片选 <code>arm64</code>，Intel 芯片选 <code>x86_64</code>），打开后把 Qantrip 拖进「应用程序」。Qantrip 尚未经过 Apple 公证，首次打开时到 <strong>系统设置 → 隐私与安全性</strong> 点 <strong>仍要打开</strong>。
+        </p>
+        <p>首次启动会引导你确认唤起快捷键（默认 <code>⌃Q</code>），授予「辅助功能」权限后即可自动粘贴；不授权也能用，Prompt 会复制到剪贴板。</p>
 
         <h2 id="grammar">输入语法</h2>
         <pre className="code">{`r security --scope=staged -s 重点看认证和权限

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://qantrip.nekro.ai">官网</a> ·
   <a href="https://qantrip.nekro.ai/#demo">在浏览器里试用</a> ·
-  <a href="docs/install-macos.md">安装</a> ·
+  <a href="https://github.com/NekroAI/qantrip/releases/latest">下载</a> ·
   <a href="README.md">English</a>
 </p>
 
@@ -48,19 +48,9 @@ r security --scope=staged -s 重点看认证模块
 
 ## 安装
 
-目前支持 **macOS 14 及以上**（Apple 芯片与 Intel 芯片）。Windows 与 Linux 在计划中。
+从 [Releases](https://github.com/NekroAI/qantrip/releases/latest) 下载最新的 `.dmg`（Apple 芯片选 `arm64`，Intel 芯片选 `x86_64`），打开后把 **Qantrip** 拖进「应用程序」即可。需要 macOS 14 或更新版本。
 
-预编译安装包暂未公开，可以从源码构建：
-
-```sh
-# 需要：Xcode Command Line Tools 与 Rust（rustup）
-git clone https://github.com/NekroAI/qantrip.git
-cd qantrip
-scripts/build-macos.sh        # 构建核心与应用，产物在 dist/Qantrip.app
-open dist/Qantrip.app
-```
-
-首次启动会引导你确认唤起快捷键，并（可选）授予辅助功能权限。详见 [docs/install-macos.md](docs/install-macos.md)，包括未公证应用的 Gatekeeper 处理。
+Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性** 点 **仍要打开**。之后更新会保留权限与模板。
 
 ## 编写模板
 

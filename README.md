@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://qantrip.nekro.ai">Website</a> ·
   <a href="https://qantrip.nekro.ai/#demo">Try it in your browser</a> ·
-  <a href="docs/install-macos.md">Install</a> ·
+  <a href="https://github.com/NekroAI/qantrip/releases/latest">Download</a> ·
   <a href="README.zh-CN.md">中文</a>
 </p>
 
@@ -54,19 +54,9 @@ r security --scope=staged -s focus on the auth module
 
 ## Install
 
-Qantrip currently runs on **macOS 14 or later** (Apple silicon and Intel). Windows and Linux are planned.
+Download the latest `.dmg` from [Releases](https://github.com/NekroAI/qantrip/releases/latest) — `arm64` for Apple silicon, `x86_64` for Intel — open it and drag **Qantrip** into Applications. Requires macOS 14 or later.
 
-Pre-built downloads are not public yet. Build from source:
-
-```sh
-# Prerequisites: Xcode Command Line Tools and Rust (rustup)
-git clone https://github.com/NekroAI/qantrip.git
-cd qantrip
-scripts/build-macos.sh        # builds core + app, output in dist/Qantrip.app
-open dist/Qantrip.app
-```
-
-The first launch walks you through choosing the hotkey and (optionally) granting Accessibility permission. See [docs/install-macos.md](docs/install-macos.md) for details, including Gatekeeper on unnotarized builds.
+Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 
 ## Writing a template
 
