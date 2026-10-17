@@ -21,10 +21,16 @@ public partial class App : Application
     private TrayIcon? tray;
     private Inserter? inserter;
     private SettingsWindow? settingsWindow;
+    private LibraryModel? library;
+    private LibraryWindow? libraryWindow;
+    private OnboardingWindow? onboarding;
+    private FileSystemWatcher? watcher;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? reloadTimer;
     private Hud? hud;
     private bool submitting;
 
     public Engine? Engine => engine;
+    public static new App? Current => Application.Current as App;
 
     public App()
     {
@@ -59,10 +65,12 @@ public partial class App : Application
         inserter = new Inserter(messages.Handle);
         messages.ShowRequested += () => Show("second_instance", -1);
         messages.SettingsRequested += ShowSettings;
+        messages.LibraryRequested += () => ShowLibrary(null);
         hotKey = new HotKey(messages);
         hotKey.Pressed += time =>
         {
             int delay = Environment.TickCount - time; // GetMessageTime 与 TickCount 同一时间基准
+            onboarding?.HotKeyPressed();
             if (panel.IsShown) Hide(restoreFocus: true); else Show("hotkey", delay);
         };
         var (mods, vk) = HotKeySpec.Parse(Settings.HotKey);
@@ -73,10 +81,16 @@ public partial class App : Application
         {
             OpenLabel = () => Loc.T("打开面板", "Open panel") + (hotKey.IsRegistered ? $"\t{hotKey.Describe()}" : ""),
             SettingsLabel = () => Loc.T("设置…", "Settings…"),
+            LibraryLabel = () => Loc.T("模板库…", "Template Library…"),
+            GuideLabel = () => Loc.T("使用引导…", "Welcome Guide…"),
+            SyncLabel = () => SyncService.Shared.PendingJoinCount > 0 ? Loc.T("有设备请求加入同步…", "A device wants to join sync…") : null,
             QuitLabel = () => Loc.T("退出 Nekro Qantrip", "Quit Nekro Qantrip"),
         };
         tray.Open += () => Show("tray", -1);
         tray.OpenSettings += ShowSettings;
+        tray.OpenLibrary += () => ShowLibrary(null);
+        tray.OpenGuide += ShowOnboarding;
+        tray.OpenSync += ActivateSettings;
         tray.Quit += Quit;
         Settings.Changed += OnSettingChanged;
         if (!hotKey.IsRegistered)
@@ -100,7 +114,62 @@ public partial class App : Application
             ["motion"] = Motion.Enabled,
         });
         Prewarm();
+        WatchTemplates();
+        // 同步：拉取到新内容后重新加载模板（D29 / sync-design）；启动只读本地状态，已加入时才联网
+        SyncService.Shared.OnTemplatesChanged = ReloadTemplates;
+        SyncService.Shared.Start();
         if (Program.OpenSettingsOnLaunch) ShowSettings();
+        if (Program.OpenLibraryOnLaunch) ShowLibrary(null);
+        if (!Settings.OnboardingDone && Environment.GetEnvironmentVariable("QANTRIP_SKIP_ONBOARDING") != "1") ShowOnboarding();
+    }
+
+    // MARK: 模板目录
+
+    /// 模板目录变化（模板库保存、指令、外部编辑器、同步）时重新加载，并在稍后同步。
+    private void WatchTemplates()
+    {
+        try
+        {
+            Directory.CreateDirectory(Settings.TemplatesDir);
+            watcher = new FileSystemWatcher(Settings.TemplatesDir, "*.md")
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+            };
+            var ui = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            void Changed(object? s, FileSystemEventArgs e) => ui.TryEnqueue(ScheduleReload);
+            watcher.Changed += Changed;
+            watcher.Created += Changed;
+            watcher.Deleted += Changed;
+            watcher.Renamed += (s, e) => Changed(s, e);
+            watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception e) { Log.Error("watch_templates", e); }
+    }
+
+    private void ScheduleReload()
+    {
+        if (panel is null) return;
+        reloadTimer ??= panel.DispatcherQueue.CreateTimer();
+        reloadTimer.Stop();
+        reloadTimer.Interval = TimeSpan.FromMilliseconds(300);
+        reloadTimer.IsRepeating = false;
+        reloadTimer.Tick -= OnReloadTick;
+        reloadTimer.Tick += OnReloadTick;
+        reloadTimer.Start();
+    }
+
+    private void OnReloadTick(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object e)
+    {
+        ReloadTemplates();
+        SyncService.Shared.ScheduleSync();
+    }
+
+    private void ReloadTemplates()
+    {
+        engine?.Reload();
+        if (library != null) library.Reload();
+        model?.Refresh();
     }
 
     /// 启动后离屏完整走一遍显示流程，消除首次唤起时的冷启动开销（对应 macOS prewarm）。
@@ -203,6 +272,9 @@ public partial class App : Application
 
     private void Quit()
     {
+        watcher?.Dispose();
+        libraryWindow?.Close();
+        onboarding?.Close();
         tray?.Dispose();
         hotKey?.Dispose();
         messages?.Dispose();
@@ -215,12 +287,11 @@ public partial class App : Application
 
     // MARK: 指令模式（D31）
 
-    /// 指令完成：关闭面板，删除的文件移到回收站，最后提示（模板库窗口尚未实现，/edit 只提示）。
+    /// 指令完成：关闭面板，删除的文件移到回收站，/edit、/dup 在模板库中打开，最后提示。
     private void FinishCommand(CommandOutcome outcome)
     {
         Hide(restoreFocus: true);
-        // 核心的提示沿用 macOS 的"废纸篓"（与"回收站"等长，替换不影响高亮位置）
-        var message = outcome.Message.Replace("废纸篓", "回收站").Replace("the Trash", "the Recycle Bin");
+        var message = outcome.Message;
         bool trashed = true;
         if (outcome.TrashPath is string path)
         {
@@ -228,14 +299,13 @@ public partial class App : Application
             engine?.Reload();
             if (!trashed) message = Loc.T($"无法移到回收站：{Path.GetFileName(path)}", $"Could not move {Path.GetFileName(path)} to the Recycle Bin");
         }
-        if (outcome.OpenEditor is string name && string.IsNullOrEmpty(message))
-            message = Loc.T($"Windows 版还没有模板库窗口，{name} 可在模板文件夹中编辑", $"The template library is not available on Windows yet. Edit {name} in the templates folder");
+        if (outcome.OpenEditor is string name) ShowLibrary(name);
         Log.Event("command", new() { ["open_editor"] = outcome.OpenEditor is not null, ["trash"] = outcome.TrashPath is not null, ["trashed"] = trashed });
         if (Settings.DebugHooks) Log.Event("debug_command", new() { ["message"] = message, ["trash_path"] = outcome.TrashPath, ["open_editor"] = outcome.OpenEditor });
         if (!string.IsNullOrEmpty(message)) (hud ??= new Hud()).Show(message);
     }
 
-    // MARK: 设置
+    // MARK: 窗口
 
     private void ShowSettings()
     {
@@ -245,6 +315,40 @@ public partial class App : Application
             settingsWindow.Closed += (_, _) => settingsWindow = null;
         }
         settingsWindow.ShowAndActivate();
+    }
+
+    /// 打开设置 › 同步并置于前台（浏览器登录完成、托盘"有设备请求加入"）。
+    public void ActivateSettings()
+    {
+        ShowSettings();
+        settingsWindow?.ShowPage("sync");
+    }
+
+    /// 打开模板库；`name` 不为空时选中该模板（/edit、/dup）。
+    public void ShowLibrary(string? name)
+    {
+        if (engine is null) return;
+        library ??= new LibraryModel(engine);
+        if (libraryWindow is null)
+        {
+            library.Reload();
+            libraryWindow = new LibraryWindow(library);
+            libraryWindow.Closed += (_, _) => libraryWindow = null;
+        }
+        else library.Reload();
+        if (name != null) libraryWindow.SelectTemplate(name);
+        libraryWindow.ShowAndActivate();
+        Log.Event("library_open", new() { ["select"] = name != null });
+    }
+
+    private void ShowOnboarding()
+    {
+        if (onboarding is null)
+        {
+            onboarding = new OnboardingWindow(this);
+            onboarding.Closed += (_, _) => onboarding = null;
+        }
+        onboarding.ShowAndActivate();
     }
 
     private void OnSettingChanged(string key)
@@ -257,6 +361,7 @@ public partial class App : Application
                 model?.Refresh();
                 panel?.ApplyLanguage();
                 settingsWindow?.Rebuild();
+                library?.Reload();
                 break;
             case "forceAsciiInput":
                 panel?.ApplyInputScope();

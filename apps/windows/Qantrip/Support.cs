@@ -88,6 +88,16 @@ internal static class Settings
     /// 内置模板语言：auto（跟随界面语言）/ zh / en
     public static string TemplateLanguage { get => Lang("templateLanguage"); set => Set("templateLanguage", value); }
 
+    public const string DefaultSyncServer = "https://qantrip.nekro.ai";
+    /// 同步服务端地址（可自行部署，登录后不能修改）
+    public static string SyncServer
+    {
+        get => Str("syncServer") is { Length: > 0 } s ? s.TrimEnd('/') : DefaultSyncServer;
+        set => Set("syncServer", string.IsNullOrWhiteSpace(value) ? DefaultSyncServer : value.Trim().TrimEnd('/'));
+    }
+    /// 首次启动引导已完成
+    public static bool OnboardingDone { get => Bool("onboardingDone", false); set => Set("onboardingDone", value); }
+
     /// 调试钩子（仅开发测试）：记录最后一次插入的文本，便于回归脚本比对
     public static bool DebugHooks => Environment.GetEnvironmentVariable("QANTRIP_DEBUG_HOOKS") == "1";
 

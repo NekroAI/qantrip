@@ -30,14 +30,11 @@ internal sealed class SettingsWindow : Window
     private readonly IntPtr hwnd;
     private readonly Grid root = new();
     private ScrollViewer? scroll;
-
-    // 快捷键录制
-    private Button? recorder;
-    private TextBlock? recorderText;
-    private TextBlock? recorderMessage;
-    private bool recording;
-    /// 录制完成后吞掉随后的按键抬起（否则空格 / 回车抬起会再次触发按钮）
-    private bool swallowKeyUp;
+    private NavigationView? nav;
+    private HotKeyRecorder? recorder;
+    private SyncPage? syncPage;
+    /// 当前页面：general / sync
+    private string page = "general";
 
     public SettingsWindow(App app)
     {
@@ -53,11 +50,15 @@ internal sealed class SettingsWindow : Window
         if (File.Exists(icon)) AppWindow.SetIcon(icon);
         Place();
         Content = root;
-        Closed += (_, _) => { if (recording) app.ResumeHotKey(); };
+        Closed += (_, _) =>
+        {
+            recorder?.Cancel();
+            syncPage?.Detach();
+        };
         Build();
     }
 
-    private static Brush Res(string key) => (Brush)Application.Current.Resources[key];
+    internal static Brush Res(string key) => (Brush)Application.Current.Resources[key];
 
     /// 在鼠标所在显示器居中，按该显示器的缩放计算尺寸。
     private void Place()
@@ -69,7 +70,7 @@ internal sealed class SettingsWindow : Window
         GetDpiForMonitor(mon, 0, out uint dpi, out _);
         double scale = dpi == 0 ? 1 : dpi / 96.0;
         var wa = mi.rcWork;
-        int w = (int)Math.Round(720 * scale), h = (int)Math.Min(Math.Round(820 * scale), (wa.Bottom - wa.Top) * 0.9);
+        int w = (int)Math.Round(900 * scale), h = (int)Math.Min(Math.Round(820 * scale), (wa.Bottom - wa.Top) * 0.9);
         AppWindow.MoveAndResize(new RectInt32(wa.Left + (wa.Right - wa.Left - w) / 2, wa.Top + (wa.Bottom - wa.Top - h) / 2, w, h));
     }
 
@@ -88,6 +89,14 @@ internal sealed class SettingsWindow : Window
         scroll?.UpdateLayout();
         scroll?.ChangeView(null, offset, null, true);
     });
+
+    /// 切换到指定页面（general / sync）。
+    public void ShowPage(string name)
+    {
+        if (nav is null) return;
+        foreach (var item in nav.MenuItems.OfType<NavigationViewItem>())
+            if ((string)item.Tag == name) { nav.SelectedItem = item; break; }
+    }
 
     // MARK: 构建
 
@@ -109,13 +118,58 @@ internal sealed class SettingsWindow : Window
         root.Children.Add(titleHost);
         SetTitleBar(titleHost);
 
+        scroll = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        AutomationProperties.SetAutomationId(scroll, "settings_scroll");
+        nav = new NavigationView
+        {
+            PaneDisplayMode = NavigationViewPaneDisplayMode.Left, IsSettingsVisible = false, IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
+            IsPaneToggleButtonVisible = false, OpenPaneLength = 200, Content = scroll, IsTitleBarAutoPaddingEnabled = false,
+        };
+        AutomationProperties.SetAutomationId(nav, "settingsNav");
+        nav.MenuItems.Add(NavItem("general", Loc.T("通用", "General"), "\uE713"));
+        nav.MenuItems.Add(NavItem("sync", Loc.T("同步", "Sync"), "\uE895"));
+        nav.SelectionChanged += (_, e) =>
+        {
+            if (e.SelectedItem is NavigationViewItem { Tag: string tag }) ShowContent(tag);
+        };
+        Grid.SetRow(nav, 1);
+        root.Children.Add(nav);
+        ShowPage(page);
+    }
+
+    private static NavigationViewItem NavItem(string tag, string text, string glyph)
+    {
+        var item = new NavigationViewItem { Content = text, Tag = tag, Icon = new FontIcon { Glyph = glyph, FontFamily = Theme.Icons } };
+        AutomationProperties.SetAutomationId(item, "nav_" + tag);
+        return item;
+    }
+
+    private void ShowContent(string name)
+    {
+        if (scroll is null) return;
+        page = name;
+        recorder?.Cancel();
+        syncPage?.Detach();
+        syncPage = null;
+        if (name == "sync")
+        {
+            syncPage = new SyncPage(root);
+            scroll.Content = syncPage.View;
+            syncPage.Attach();
+        }
+        else scroll.Content = General();
+        Log.Event("settings_page", new() { ["page"] = name });
+    }
+
+    private FrameworkElement General()
+    {
         var page = new StackPanel { Spacing = 4, MaxWidth = 860, Padding = new Thickness(28, 8, 28, 28) };
-        page.Children.Add(new TextBlock { Text = Loc.T("设置", "Settings"), FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 12) });
+        page.Children.Add(new TextBlock { Text = Loc.T("通用", "General"), FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 12) });
 
         // 通用
         page.Children.Add(Section(Loc.T("通用", "General")));
         page.Children.Add(Card("", Loc.T("唤起快捷键", "Panel shortcut"),
-            Loc.T("在任意程序中按下即可唤起命令面板。默认 Alt+Q。", "Press it in any app to open the command panel. The default is Alt+Q."), HotKeyRecorder()));
+            Loc.T("在任意程序中按下即可唤起命令面板。默认 Alt+Q。", "Press it in any app to open the command panel. The default is Alt+Q."), (recorder = new HotKeyRecorder(app)).View));
         page.Children.Add(Card("", Loc.T("登录时启动", "Launch at login"), AutostartDescription(), AutostartToggle()));
         page.Children.Add(Card("", Loc.T("界面语言", "Language"), null,
             LanguageBox("uiLanguage", Loc.T("跟随系统", "System default"), Settings.Language, v => Settings.Language = v)));
@@ -162,19 +216,16 @@ internal sealed class SettingsWindow : Window
         // 关于
         page.Children.Add(Section(Loc.T("关于", "About")));
         page.Children.Add(About());
-
-        scroll = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(scroll, 1);
-        root.Children.Add(scroll);
+        return page;
     }
 
-    private static TextBlock Section(string title) => new()
+    internal static TextBlock Section(string title) => new()
     {
         Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 18, 0, 6),
     };
 
     /// 设置卡片：图标 | 标题 + 说明 | 控件（Windows 设置的样式）。
-    private static FrameworkElement Card(string glyph, string title, string? description, FrameworkElement control)
+    internal static FrameworkElement Card(string glyph, string title, string? description, FrameworkElement control)
     {
         var grid = new Grid { ColumnSpacing = 16, MinHeight = 44 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -264,131 +315,6 @@ internal sealed class SettingsWindow : Window
             Log.Event("setting", new() { ["key"] = "clearUsage" });
         };
         return b;
-    }
-
-    // MARK: 快捷键录制
-
-    private FrameworkElement HotKeyRecorder()
-    {
-        recording = false;
-        recorderText = new TextBlock { FontFamily = Theme.Mono, FontWeight = FontWeights.SemiBold, FontSize = 13 };
-        recorder = new Button { Content = recorderText, MinWidth = 140 };
-        AutomationProperties.SetAutomationId(recorder, "hotkeyRecorder");
-        recorder.Click += (_, _) => { if (recording) StopRecording(); else StartRecording(); };
-        recorder.PreviewKeyDown += OnRecorderKeyDown;
-        recorder.PreviewKeyUp += (_, e) => { if (recording || swallowKeyUp) { e.Handled = true; if (!IsModifier(e.Key)) swallowKeyUp = false; } };
-        recorder.LostFocus += (_, _) => StopRecording();
-
-        var restore = new HyperlinkButton { Content = Loc.T("恢复默认", "Restore default"), Padding = new Thickness(6, 2, 6, 2) };
-        AutomationProperties.SetAutomationId(restore, "hotkeyRestore");
-        restore.Click += (_, _) =>
-        {
-            var (m, k) = HotKeySpec.Parse(Settings.DefaultHotKey);
-            Apply(m, k);
-        };
-
-        recorderMessage = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, MaxWidth = 280, TextAlignment = TextAlignment.Right, HorizontalAlignment = HorizontalAlignment.Right };
-        AutomationProperties.SetAutomationId(recorderMessage, "hotkeyMessage");
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
-        row.Children.Add(restore);
-        row.Children.Add(recorder);
-        var sp = new StackPanel { Spacing = 4 };
-        sp.Children.Add(row);
-        sp.Children.Add(recorderMessage);
-        UpdateRecorder(restore);
-        if (!app.HotKeyRegistered)
-            ShowMessage(Loc.T($"当前快捷键 {Settings.HotKey} 注册失败（错误 {app.HotKeyError}），可能已被其他程序占用，请换一个组合",
-                $"Could not register {Settings.HotKey} (error {app.HotKeyError}). It may be in use by another app; choose another shortcut"), error: true);
-        return sp;
-    }
-
-    private HyperlinkButton? restoreButton;
-
-    private void UpdateRecorder(HyperlinkButton? restore = null)
-    {
-        if (restore != null) restoreButton = restore;
-        if (recorderText != null) recorderText.Text = recording ? Loc.T("按下新的组合键…", "Press new shortcut…") : Settings.HotKey;
-        if (restoreButton != null)
-            restoreButton.Visibility = !recording && !string.Equals(Settings.HotKey, Settings.DefaultHotKey, StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void ShowMessage(string text, bool error)
-    {
-        if (recorderMessage is null) return;
-        recorderMessage.Text = text;
-        recorderMessage.Foreground = error ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xC4, 0x2B, 0x1C)) : Res("TextFillColorSecondaryBrush");
-        if (error && Application.Current.RequestedTheme == ApplicationTheme.Dark) recorderMessage.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0x99, 0xA4));
-    }
-
-    private void StartRecording()
-    {
-        recording = true;
-        app.SuspendHotKey(); // 否则按下当前组合会唤起面板，录制收不到
-        UpdateRecorder();
-        ShowMessage(Loc.T("按 Esc 取消", "Press Esc to cancel"), error: false);
-    }
-
-    private void StopRecording()
-    {
-        if (!recording) return;
-        recording = false;
-        app.ResumeHotKey();
-        UpdateRecorder();
-        if (recorderMessage != null) recorderMessage.Text = "";
-    }
-
-    private static bool IsModifier(VirtualKey k) => k is VirtualKey.Control or VirtualKey.LeftControl or VirtualKey.RightControl
-        or VirtualKey.Menu or VirtualKey.LeftMenu or VirtualKey.RightMenu or VirtualKey.Shift or VirtualKey.LeftShift or VirtualKey.RightShift
-        or VirtualKey.LeftWindows or VirtualKey.RightWindows;
-
-    private static bool Down(VirtualKey k) => InputKeyboardSource.GetKeyStateForCurrentThread(k).HasFlag(CoreVirtualKeyStates.Down);
-
-    private void OnRecorderKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (!recording) return;
-        e.Handled = true;
-        if (e.Key == VirtualKey.Escape) { StopRecording(); swallowKeyUp = true; return; }
-        if (IsModifier(e.Key)) return; // 等待主键
-        uint vk = (uint)e.Key;
-        uint mods = 0;
-        if (Down(VirtualKey.Control)) mods |= MOD_CONTROL;
-        if (Down(VirtualKey.Menu)) mods |= MOD_ALT;
-        if (Down(VirtualKey.Shift)) mods |= MOD_SHIFT;
-        if (Down(VirtualKey.LeftWindows) || Down(VirtualKey.RightWindows)) mods |= MOD_WIN;
-        if (!HotKeySpec.IsSupportedKey(vk))
-        {
-            ShowMessage(Loc.T("请使用字母、数字、空格或 F1–F24", "Use a letter, digit, Space or F1–F24"), error: true);
-            return;
-        }
-        bool function = vk is >= 0x70 and <= 0x87;
-        if (mods == 0 && !function)
-        {
-            ShowMessage(Loc.T("需要包含至少一个修饰键（Ctrl / Alt / Shift / Win）", "Include at least one modifier key (Ctrl / Alt / Shift / Win)"), error: true);
-            return;
-        }
-        swallowKeyUp = true;
-        Apply(mods, vk);
-    }
-
-    private void Apply(uint mods, uint vk)
-    {
-        recording = false;
-        var spec = HotKeySpec.Format(mods, vk);
-        if (app.TrySetHotKey(mods, vk, out int error))
-        {
-            var msg = Loc.T($"已设置为 {spec}", $"Set to {spec}");
-            // D5：Ctrl+Q 在浏览器和许多程序中是"退出"
-            if (mods == MOD_CONTROL && vk == 'Q')
-                msg += Loc.T("。注意：Ctrl+Q 在浏览器等许多程序中是“退出”，Qantrip 运行期间这些程序收不到它", ". Note: Ctrl+Q quits many apps such as browsers; they won’t receive it while Qantrip is running");
-            ShowMessage(msg, error: false);
-            Log.Event("setting", new() { ["key"] = "hotKey", ["value"] = spec });
-        }
-        else
-        {
-            ShowMessage(Loc.T($"{spec} 已被其他程序占用（错误 {error}），请换一个组合", $"{spec} is in use by another app (error {error}). Choose another shortcut"), error: true);
-            Log.Event("setting", new() { ["key"] = "hotKey", ["value"] = spec, ["conflict"] = error });
-        }
-        UpdateRecorder();
     }
 
     // MARK: 关于

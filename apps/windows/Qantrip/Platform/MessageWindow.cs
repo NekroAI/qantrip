@@ -12,6 +12,7 @@ internal sealed class MessageWindow : IDisposable
     public const string ClassName = "NekroQantrip.MessageWindow";
     public static readonly uint ShowPanelMessage = RegisterWindowMessage("NekroQantrip.ShowPanel");
     public static readonly uint ShowSettingsMessage = RegisterWindowMessage("NekroQantrip.ShowSettings");
+    public static readonly uint ShowLibraryMessage = RegisterWindowMessage("NekroQantrip.ShowLibrary");
     private static readonly uint TaskbarCreated = RegisterWindowMessage("TaskbarCreated");
     public const uint TrayMessage = WM_APP + 1;
 
@@ -22,6 +23,7 @@ internal sealed class MessageWindow : IDisposable
     public event Action? TaskbarRestarted;
     public event Action? ShowRequested;
     public event Action? SettingsRequested;
+    public event Action? LibraryRequested;
 
     private readonly WndProc proc; // 防止委托被回收
 
@@ -49,6 +51,7 @@ internal sealed class MessageWindow : IDisposable
             if (msg == TaskbarCreated) { TaskbarRestarted?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowPanelMessage) { ShowRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowSettingsMessage) { SettingsRequested?.Invoke(); return IntPtr.Zero; }
+            if (msg == ShowLibraryMessage) { LibraryRequested?.Invoke(); return IntPtr.Zero; }
         }
         catch (Exception e) { Log.Error("wndproc", e); }
         return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -103,8 +106,13 @@ internal sealed class TrayIcon : IDisposable
     public bool Added { get; private set; }
     public event Action? Open;
     public event Action? OpenSettings;
+    public event Action? OpenLibrary;
+    public event Action? OpenGuide;
+    public event Action? OpenSync;
     public event Action? Quit;
-    public Func<string>? OpenLabel, SettingsLabel, QuitLabel;
+    public Func<string>? OpenLabel, SettingsLabel, LibraryLabel, GuideLabel, QuitLabel;
+    /// 有设备等待加入同步时显示的菜单项（null 表示不显示）
+    public Func<string?>? SyncLabel;
 
     public TrayIcon(MessageWindow window, string iconPath, string tip)
     {
@@ -152,7 +160,11 @@ internal sealed class TrayIcon : IDisposable
         if (msg != WM_RBUTTONUP && msg != WM_CONTEXTMENU) return;
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, (UIntPtr)1, OpenLabel?.Invoke() ?? "Open");
+        if (SyncLabel?.Invoke() is { } sync) AppendMenu(menu, MF_STRING, (UIntPtr)6, sync);
+        AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
+        AppendMenu(menu, MF_STRING, (UIntPtr)4, LibraryLabel?.Invoke() ?? "Template Library…");
         AppendMenu(menu, MF_STRING, (UIntPtr)3, SettingsLabel?.Invoke() ?? "Settings…");
+        AppendMenu(menu, MF_STRING, (UIntPtr)5, GuideLabel?.Invoke() ?? "Welcome Guide…");
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING, (UIntPtr)2, QuitLabel?.Invoke() ?? "Quit");
         GetCursorPos(out var p);
@@ -164,6 +176,9 @@ internal sealed class TrayIcon : IDisposable
         if (cmd == 1) Open?.Invoke();
         if (cmd == 2) Quit?.Invoke();
         if (cmd == 3) OpenSettings?.Invoke();
+        if (cmd == 4) OpenLibrary?.Invoke();
+        if (cmd == 5) OpenGuide?.Invoke();
+        if (cmd == 6) OpenSync?.Invoke();
     }
 
     public void Dispose()
