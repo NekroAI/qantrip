@@ -12,13 +12,20 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
     private let ghost = GhostView()
     private var lastAnalysis: Analysis?
 
+    private func updatePlaceholder() {
+        placeholderString = L("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth")
+    }
+
     init() {
         super.init(frame: .zero)
         isBordered = false
         drawsBackground = false
         focusRingType = .none
         font = Theme.commandFont
-        placeholderString = "施放一个戏法…  如 r security 重点检查认证"
+        updatePlaceholder()
+        NotificationCenter.default.addObserver(forName: AppSettings.languageChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePlaceholder() }
+        }
         cell?.usesSingleLineMode = true
         cell?.wraps = false
         cell?.isScrollable = true

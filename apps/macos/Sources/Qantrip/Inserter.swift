@@ -53,13 +53,13 @@ final class Inserter {
         if AppSettings.shared.copyOnly {
             copyOnly(text)
             log(.copiedOnly(reason: "copy_only_mode"), text: text, started: started)
-            completion(.copiedOnly(reason: "只复制模式"))
+            completion(.copiedOnly(reason: L("只复制模式", "copy-only mode")))
             return
         }
         guard Self.isTrusted else {
             copyOnly(text)
             log(.copiedOnly(reason: "no_accessibility"), text: text, started: started)
-            completion(.copiedOnly(reason: "未授予辅助功能权限"))
+            completion(.copiedOnly(reason: L("未授予辅助功能权限", "Accessibility permission not granted")))
             return
         }
 
@@ -69,7 +69,7 @@ final class Inserter {
                 copyOnly(text)
                 log(.copiedOnly(reason: "target_changed"), text: text, started: started,
                     extra: ["expected": target.bundleIdentifier ?? "?", "actual": front?.bundleIdentifier ?? "?"])
-                completion(.copiedOnly(reason: "目标应用已切换"))
+                completion(.copiedOnly(reason: L("目标应用已切换", "target app changed")))
                 return
             }
 

@@ -25,6 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launcher = LauncherController(engine: engine)
 
         let settings = AppSettings.shared
+        engine.setLocale(ui: settings.uiLocale, templates: settings.templateLocale)
+        settings.onLanguageChange = { [weak self] in
+            guard let self else { return }
+            self.engine.setLocale(ui: settings.uiLocale, templates: settings.templateLocale)
+            LibraryWindow.model.reload()
+            NotificationCenter.default.post(name: AppSettings.languageChanged, object: nil)
+        }
         hotKey = HotKey(settings.hotKey)
         hotKey.onPress = { [weak self] t in
             NotificationCenter.default.post(name: Onboarding.hotKeyPressed, object: nil)
@@ -204,31 +211,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openSettings() {
-        WindowManager.shared.show("settings", title: "Qantrip 设置", size: NSSize(width: 560, height: 400)) { SettingsView() }
+        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 560, height: 400)) { SettingsView() }
     }
 }
 
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(withTitle: "打开面板（\(hotKey.spec.display)）", action: #selector(openPanel), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "模板库…", action: #selector(openLibrary), keyEquivalent: "l").target = self
-        menu.addItem(withTitle: "设置…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: L("打开面板（\(hotKey.spec.display)）", "Open Panel (\(hotKey.spec.display))"), action: #selector(openPanel), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("模板库…", "Template Library…"), action: #selector(openLibrary), keyEquivalent: "l").target = self
+        menu.addItem(withTitle: L("设置…", "Settings…"), action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
 
         if !hotKey.isRegistered {
-            menu.addItem(withTitle: "⚠︎ 快捷键 \(hotKey.spec.display) 注册失败，请在设置中更换", action: #selector(openSettings), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("⚠︎ 快捷键 \(hotKey.spec.display) 注册失败，请在设置中更换", "⚠︎ Shortcut \(hotKey.spec.display) could not be registered. Change it in Settings"), action: #selector(openSettings), keyEquivalent: "").target = self
         }
         if !Inserter.isTrusted && !AppSettings.shared.copyOnly {
-            menu.addItem(withTitle: "⚠︎ 未授予辅助功能权限（只复制）", action: #selector(requestTrust), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("⚠︎ 未授予辅助功能权限（只复制）", "⚠︎ Accessibility permission not granted (copy only)"), action: #selector(requestTrust), keyEquivalent: "").target = self
         }
         let problems = engine.problems()
         if !problems.isEmpty {
-            menu.addItem(withTitle: "⚠︎ \(problems.count) 个模板加载问题", action: #selector(openSettings), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("⚠︎ \(problems.count) 个模板加载问题", problems.count == 1 ? "⚠︎ 1 template problem" : "⚠︎ \(problems.count) template problems"), action: #selector(openSettings), keyEquivalent: "").target = self
         }
-        menu.addItem(withTitle: "使用引导…", action: #selector(openOnboarding), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("使用引导…", "Welcome Guide…"), action: #selector(openOnboarding), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 Qantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: L("退出 Qantrip", "Quit Qantrip"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc private func openPanel() {

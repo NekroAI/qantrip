@@ -140,7 +140,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
     func insert(_ text: String, target override: NSRunningApplication? = nil, expand: Bool = false) {
         inserter.insert(text, target: override ?? model.target, expand: expand) { [weak self] outcome in
             if case .copiedOnly(let reason) = outcome {
-                self?.hud.show("已复制到剪贴板（\(reason)），按 ⌘V 粘贴")
+                self?.hud.show(L("已复制到剪贴板（\(reason)），按 ⌘V 粘贴", "Copied to clipboard (\(reason)). Press ⌘V to paste"))
             }
         }
     }

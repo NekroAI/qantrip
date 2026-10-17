@@ -1,6 +1,18 @@
 import AppKit
 import Carbon
+import QantripCore
 import ServiceManagement
+
+/// 界面与内置模板的语言（docs/decisions.md D29）。auto：界面跟随系统，模板跟随界面。
+enum LanguageChoice: String, CaseIterable, Identifiable {
+    case auto, zh, en
+    var id: String { rawValue }
+}
+
+/// 界面文字：按当前界面语言选择中文或英文。在 SwiftUI 视图中调用时会随语言设置自动刷新。
+func L(_ zh: String, _ en: String) -> String {
+    AppSettings.shared.uiLocale == .en ? en : zh
+}
 
 /// 应用设置（UserDefaults）。热键等需要即时生效的项通过回调通知。
 @Observable
@@ -28,6 +40,32 @@ final class AppSettings {
     var recordUsage: Bool { didSet { d.set(recordUsage, forKey: "recordUsage") } }
     var onboardingDone: Bool { didSet { d.set(onboardingDone, forKey: "onboardingDone") } }
 
+    var interfaceLanguage: LanguageChoice {
+        didSet { d.set(interfaceLanguage.rawValue, forKey: "interfaceLanguage"); onLanguageChange?() }
+    }
+    var templateLanguage: LanguageChoice {
+        didSet { d.set(templateLanguage.rawValue, forKey: "templateLanguage"); onLanguageChange?() }
+    }
+    @ObservationIgnored var onLanguageChange: (() -> Void)?
+    static let languageChanged = Notification.Name("ai.nekro.qantrip.languageChanged")
+
+    /// 实际使用的界面语言
+    var uiLocale: QantripCore.Locale {
+        switch interfaceLanguage {
+        case .zh: return .zh
+        case .en: return .en
+        case .auto: return (Foundation.Locale.preferredLanguages.first ?? "en").hasPrefix("zh") ? .zh : .en
+        }
+    }
+    /// 实际使用的内置模板语言
+    var templateLocale: QantripCore.Locale {
+        switch templateLanguage {
+        case .zh: return .zh
+        case .en: return .en
+        case .auto: return uiLocale
+        }
+    }
+
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
         set {
@@ -54,6 +92,8 @@ final class AppSettings {
         copyOnly = bool("copyOnly", false)
         recordUsage = bool("recordUsage", true)
         onboardingDone = bool("onboardingDone", false)
+        interfaceLanguage = LanguageChoice(rawValue: ud.string(forKey: "interfaceLanguage") ?? "") ?? .auto
+        templateLanguage = LanguageChoice(rawValue: ud.string(forKey: "templateLanguage") ?? "") ?? .auto
     }
 }
 
@@ -105,14 +145,14 @@ struct HotKeySpec: Equatable {
     /// 与系统快捷键（键盘设置中启用的项）冲突的描述；无冲突返回 nil。
     func systemConflict() -> String? {
         guard let dict = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") else { return nil }
-        let names: [String: String] = ["60": "切换输入法", "61": "切换到下一个输入法", "64": "聚焦（Spotlight）", "65": "访达搜索窗口",
-                                        "32": "调度中心", "33": "应用程序窗口", "36": "显示桌面", "28": "截屏", "30": "截屏（选区）"]
+        let names: [String: String] = ["60": L("切换输入法", "Switch input source"), "61": L("切换到下一个输入法", "Switch to next input source"), "64": L("聚焦（Spotlight）", "Spotlight"), "65": L("访达搜索窗口", "Finder search window"),
+                                        "32": L("调度中心", "Mission Control"), "33": L("应用程序窗口", "Application windows"), "36": L("显示桌面", "Show Desktop"), "28": L("截屏", "Screenshot"), "30": L("截屏（选区）", "Screenshot (selection)")]
         for (id, value) in dict {
             guard let v = value as? [String: Any], (v["enabled"] as? Bool) == true,
                   let params = (v["value"] as? [String: Any])?["parameters"] as? [Int], params.count == 3 else { continue }
             let flags = NSEvent.ModifierFlags(rawValue: UInt(params[2]))
             if UInt32(params[1]) == keyCode, Self.carbon(flags) == modifiers {
-                return "与系统快捷键「\(names[id] ?? "系统功能 #\(id)")」冲突"
+                return L("与系统快捷键「\(names[id] ?? L("系统功能 #\(id)", "System function #\(id)"))」冲突", "Conflicts with the system shortcut “\(names[id] ?? L("系统功能 #\(id)", "System function #\(id)"))”")
             }
         }
         return nil

@@ -10,7 +10,7 @@ enum LibraryWindow {
     static func show(select name: String? = nil) {
         model.reload()
         if let name { model.select(name) }
-        WindowManager.shared.show("library", title: "模板库", size: NSSize(width: 1180, height: 760), resizable: true) {
+        WindowManager.shared.show("library", title: L("模板库", "Template Library"), size: NSSize(width: 1180, height: 760), resizable: true) {
             LibraryView(model: model)
         }
     }
@@ -55,9 +55,9 @@ final class LibraryModel {
 
     private func confirmDiscard(_ name: String) -> Bool {
         let a = NSAlert()
-        a.messageText = "放弃对「\(name)」的修改？"
-        a.addButton(withTitle: "放弃修改")
-        a.addButton(withTitle: "取消")
+        a.messageText = L("放弃对「\(name)」的修改？", "Discard changes to “\(name)”?")
+        a.addButton(withTitle: L("放弃修改", "Discard Changes"))
+        a.addButton(withTitle: L("取消", "Cancel"))
         return a.runModal() == .alertFirstButtonReturn
     }
 
@@ -88,7 +88,7 @@ final class LibraryModel {
 
     func newTemplate() {
         let name = uniqueName("my-template")
-        let source = serializeTemplateDoc(doc: newTemplateDoc(name: name, locale: .zh))
+        let source = serializeTemplateDoc(doc: newTemplateDoc(name: name, locale: AppSettings.shared.uiLocale))
         try? write(source: source, name: name, replacing: nil)
         reload()
         select(name)
@@ -114,10 +114,10 @@ final class LibraryModel {
     func delete(_ e: TemplateEntry) {
         guard let path = e.path else { return }
         let a = NSAlert()
-        a.messageText = e.overridesBuiltin ? "恢复「\(e.name)」为内置版本？" : "删除模板「\(e.name)」？"
-        a.informativeText = "文件会被移到废纸篓。"
-        a.addButton(withTitle: e.overridesBuiltin ? "恢复内置" : "删除")
-        a.addButton(withTitle: "取消")
+        a.messageText = e.overridesBuiltin ? L("恢复「\(e.name)」为内置版本？", "Restore “\(e.name)” to the built-in version?") : L("删除模板「\(e.name)」？", "Delete template “\(e.name)”?")
+        a.informativeText = L("文件会被移到废纸篓。", "The file will be moved to the Trash.")
+        a.addButton(withTitle: e.overridesBuiltin ? L("恢复内置", "Restore") : L("删除", "Delete"))
+        a.addButton(withTitle: L("取消", "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
         editor?.dirty = false
@@ -158,7 +158,7 @@ final class LibraryModel {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText, .zip, .folder]
-        panel.message = "选择模板文件（.md）、文件夹或 zip"
+        panel.message = L("选择模板文件（.md）、文件夹或 zip", "Choose template files (.md), folders, or zip archives")
         guard panel.runModal() == .OK else { return }
         importURLs(panel.urls)
     }
@@ -209,10 +209,10 @@ final class LibraryModel {
             }
         }
         let a = NSAlert()
-        a.messageText = "导入完成：\(imported) 个"
+        a.messageText = L("导入完成：\(imported) 个", "Import complete: \(imported)")
         var info: [String] = []
-        if skipped > 0 { info.append("跳过 \(skipped) 个") }
-        if !failures.isEmpty { info.append("无法导入：\(failures.joined(separator: "、"))") }
+        if skipped > 0 { info.append(L("跳过 \(skipped) 个", "\(skipped) skipped")) }
+        if !failures.isEmpty { info.append(L("无法导入：\(failures.joined(separator: "、"))", "Could not import: \(failures.joined(separator: ", "))")) }
         a.informativeText = info.joined(separator: "\n")
         a.runModal()
     }
@@ -224,12 +224,12 @@ final class LibraryModel {
 
     private func askConflict(_ name: String, _ sticky: inout NSApplication.ModalResponse?) -> NSApplication.ModalResponse {
         let a = NSAlert()
-        a.messageText = "已存在名为「\(name)」的模板"
-        a.addButton(withTitle: "覆盖")
-        a.addButton(withTitle: "重命名导入")
-        a.addButton(withTitle: "跳过")
+        a.messageText = L("已存在名为「\(name)」的模板", "A template named “\(name)” already exists")
+        a.addButton(withTitle: L("覆盖", "Replace"))
+        a.addButton(withTitle: L("重命名导入", "Import as Copy"))
+        a.addButton(withTitle: L("跳过", "Skip"))
         a.showsSuppressionButton = true
-        a.suppressionButton?.title = "对其余冲突执行相同操作"
+        a.suppressionButton?.title = L("对其余冲突执行相同操作", "Apply to remaining conflicts")
         let r = a.runModal()
         if a.suppressionButton?.state == .on { sticky = r }
         return r
@@ -291,7 +291,7 @@ final class EditorModel {
         guard canSave, let name = check.name, let library else { return }
         // 改名时不得与其他用户模板重名
         if name != entry.name, library.userEntry(name) != nil {
-            saveError = "已存在名为「\(name)」的模板"
+            saveError = L("已存在名为「\(name)」的模板", "A template named “\(name)” already exists")
             return
         }
         do {
@@ -319,15 +319,15 @@ struct LibraryView: View {
             if let editor = model.editor {
                 EditorView(editor: editor, library: model).id(editor.entry.name + (editor.entry.path ?? ""))
             } else {
-                ContentUnavailableView("选择或新建一个模板", systemImage: "wand.and.stars",
-                                       description: Text("模板保存为 Markdown 文件，也可以用任意编辑器直接修改。"))
+                ContentUnavailableView(L("选择或新建一个模板", "Select or create a template"), systemImage: "wand.and.stars",
+                                       description: Text(L("模板保存为 Markdown 文件，也可以用任意编辑器直接修改。", "Templates are saved as Markdown files. You can also edit them in any editor.")))
             }
         }
         .toolbar {
             ToolbarItemGroup {
-                Button { model.newTemplate() } label: { Label("新建", systemImage: "plus") }.help("新建模板")
-                Button { model.importFiles() } label: { Label("导入", systemImage: "square.and.arrow.down") }.help("导入模板")
-                Button { model.exportAll() } label: { Label("导出全部", systemImage: "square.and.arrow.up") }.help("把我的模板导出为 zip")
+                Button { model.newTemplate() } label: { Label(L("新建", "New"), systemImage: "plus") }.help(L("新建模板", "New template"))
+                Button { model.importFiles() } label: { Label(L("导入", "Import"), systemImage: "square.and.arrow.down") }.help(L("导入模板", "Import templates"))
+                Button { model.exportAll() } label: { Label(L("导出全部", "Export All"), systemImage: "square.and.arrow.up") }.help(L("把我的模板导出为 zip", "Export my templates as a zip"))
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -348,9 +348,9 @@ struct LibraryView: View {
     private var sidebar: some View {
         let items = model.filtered
         let groups: [(String, [TemplateEntry])] = [
-            ("我的模板", items.filter { !$0.builtin && !$0.partial }),
-            ("内置", items.filter { $0.builtin && !$0.partial }),
-            ("公共片段", items.filter { $0.partial }),
+            (L("我的模板", "My templates"), items.filter { !$0.builtin && !$0.partial }),
+            (L("内置", "Built-in"), items.filter { $0.builtin && !$0.partial }),
+            (L("公共片段", "Shared snippets"), items.filter { $0.partial }),
         ]
         return List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
             ForEach(groups, id: \.0) { title, list in
@@ -363,16 +363,16 @@ struct LibraryView: View {
                 }
             }
         }
-        .searchable(text: $model.search, placement: .sidebar, prompt: "搜索模板")
+        .searchable(text: $model.search, placement: .sidebar, prompt: L("搜索模板", "Search templates"))
     }
 
     @ViewBuilder private func menu(_ e: TemplateEntry) -> some View {
-        Button("复制为新模板") { model.duplicate(e) }
-        Button("导出…") { model.exportOne(e) }
+        Button(L("复制为新模板", "Duplicate as New Template")) { model.duplicate(e) }
+        Button(L("导出…", "Export…")) { model.exportOne(e) }
         if let path = e.path {
-            Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            Button(L("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             Divider()
-            Button(e.overridesBuiltin ? "恢复内置版本" : "删除", role: .destructive) { model.delete(e) }
+            Button(e.overridesBuiltin ? L("恢复内置版本", "Restore Built-in Version") : L("删除", "Delete"), role: .destructive) { model.delete(e) }
         }
     }
 }
@@ -388,7 +388,7 @@ private struct SidebarRow: View {
                     Text(entry.aliases.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
                 }
                 if entry.overridesBuiltin {
-                    Text("已自定义").font(.system(size: 9, weight: .semibold))
+                    Text(L("已自定义", "Customized")).font(.system(size: 9, weight: .semibold))
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Color.qAccent.opacity(0.2), in: Capsule())
                 }
@@ -428,17 +428,17 @@ struct EditorView: View {
         }
         // 标题与操作放在窗口工具栏中（内容区顶部会被工具栏的模糊效果遮挡）
         .navigationTitle(editor.doc?.name ?? editor.entry.name)
-        .navigationSubtitle(editor.saveError ?? (editor.dirty ? "未保存" : (editor.readOnly ? "内置模板" : "")))
+        .navigationSubtitle(editor.saveError ?? (editor.dirty ? L("未保存", "Unsaved") : (editor.readOnly ? L("内置模板", "Built-in template") : "")))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Picker("", selection: $editor.mode) {
-                    Text("表单").tag(EditorModel.Mode.form)
-                    Text("源码").tag(EditorModel.Mode.source)
+                    Text(L("表单", "Form")).tag(EditorModel.Mode.form)
+                    Text(L("源码", "Source")).tag(EditorModel.Mode.source)
                 }
                 .pickerStyle(.segmented).fixedSize()
             }
             ToolbarItem(placement: .primaryAction) {
-                Button("保存") { editor.save() }
+                Button(L("保存", "Save")) { editor.save() }
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(!editor.canSave)
                     .buttonStyle(.borderedProminent)
@@ -449,10 +449,10 @@ struct EditorView: View {
     private var readOnlyBanner: some View {
         HStack {
             Image(systemName: "lock")
-            Text("内置模板为只读。自定义后会保存为你自己的模板并覆盖内置版本，随时可以恢复。")
+            Text(L("内置模板为只读。自定义后会保存为你自己的模板并覆盖内置版本，随时可以恢复。", "Built-in templates are read-only. Customizing saves your own copy that overrides the built-in version; you can restore it anytime."))
             Spacer()
-            Button("自定义此模板") { library.customize(editor.entry) }
-            Button("复制为新模板") { library.duplicate(editor.entry) }
+            Button(L("自定义此模板", "Customize This Template")) { library.customize(editor.entry) }
+            Button(L("复制为新模板", "Duplicate as New Template")) { library.duplicate(editor.entry) }
         }
         .font(.callout)
         .padding(.horizontal, 16).padding(.vertical, 8)
@@ -471,17 +471,17 @@ private struct FormEditor: View {
 
     var body: some View {
         if editor.doc == nil {
-            ContentUnavailableView("源码无法解析", systemImage: "exclamationmark.triangle",
-                                   description: Text("请在「源码」中修正格式错误后再使用表单。"))
+            ContentUnavailableView(L("源码无法解析", "Source can’t be parsed"), systemImage: "exclamationmark.triangle",
+                                   description: Text(L("请在「源码」中修正格式错误后再使用表单。", "Fix the errors in Source before using the form.")))
         } else {
             Form {
-                Section("基本信息") {
-                    TextField("名称", text: bind({ $0.name }, { $0.name = $1 })).font(.qMono(13))
-                    TextField("别名", text: bind({ $0.aliases.joined(separator: ", ") },
+                Section(L("基本信息", "Basics")) {
+                    TextField(L("名称", "Name"), text: bind({ $0.name }, { $0.name = $1 })).font(.qMono(13))
+                    TextField(L("别名", "Aliases"), text: bind({ $0.aliases.joined(separator: ", ") },
                                                 { $0.aliases = $1.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }),
-                              prompt: Text("用逗号分隔，如 r, rev"))
-                    TextField("描述", text: bind({ $0.description }, { $0.description = $1 }))
-                    TextField("分类", text: bind({ $0.category }, { $0.category = $1 }), prompt: Text("如 编程、日常"))
+                              prompt: Text(L("用逗号分隔，如 r, rev", "Separate with commas, e.g. r, rev")))
+                    TextField(L("描述", "Description"), text: bind({ $0.description }, { $0.description = $1 }))
+                    TextField(L("分类", "Category"), text: bind({ $0.category }, { $0.category = $1 }), prompt: Text(L("如 编程、日常", "e.g. Coding, Daily")))
                 }
                 .disabled(editor.readOnly)
                 ParamsSection(editor: editor)
@@ -489,9 +489,9 @@ private struct FormEditor: View {
                     CodeEditor(text: bind({ $0.body }, { $0.body = $1 }), editable: !editor.readOnly)
                         .frame(minHeight: 220)
                 } header: {
-                    Text("正文")
+                    Text(L("正文", "Body"))
                 } footer: {
-                    Text("MiniJinja 语法：{{ 参数名 }}（参数名中的 - 写作 _）、{% if strict %}…{% endif %}、{% for x in focus %}…{% endfor %}；附加要求为 extra；{% include \"_extra\" %} 引用公共片段。")
+                    Text(L("MiniJinja 语法：{{ 参数名 }}（参数名中的 - 写作 _）、{% if strict %}…{% endif %}、{% for x in focus %}…{% endfor %}；附加要求为 extra；{% include \"_extra\" %} 引用公共片段。", "MiniJinja syntax: {{ param_name }} (use _ in place of - in names), {% if strict %}…{% endif %}, {% for x in focus %}…{% endfor %}. Extra instructions are available as extra; {% include \"_extra\" %} pulls in a shared snippet."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -517,20 +517,20 @@ private struct ParamsSection: View {
             }
             if !editor.readOnly {
                 HStack {
-                    Button { addParam() } label: { Label("添加参数", systemImage: "plus") }
+                    Button { addParam() } label: { Label(L("添加参数", "Add Parameter"), systemImage: "plus") }
                     if let i = editor.selectedParam {
                         Button { move(i, -1) } label: { Image(systemName: "arrow.up") }.disabled(i == 0)
                         Button { move(i, 1) } label: { Image(systemName: "arrow.down") }.disabled(i >= params.count - 1)
                         Spacer()
-                        Button(role: .destructive) { remove(i) } label: { Label("删除参数", systemImage: "trash") }
+                        Button(role: .destructive) { remove(i) } label: { Label(L("删除参数", "Delete Parameter"), systemImage: "trash") }
                     }
                 }
                 .buttonStyle(.borderless)
             }
         } header: {
-            Text("参数")
+            Text(L("参数", "Parameters"))
         } footer: {
-            Text("参数顺序即命令补全和规范形式中的顺序。至多一个单选 / 多选参数可设为位置参数（可直接输入候选值，如 r security）。")
+            Text(L("参数顺序即命令补全和规范形式中的顺序。至多一个单选 / 多选参数可设为位置参数（可直接输入候选值，如 r security）。", "Parameter order determines the order in completion and the canonical form. At most one single- or multi-choice parameter can be positional (its values can be typed directly, e.g. r security)."))
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -558,12 +558,12 @@ private struct ParamsSection: View {
 
 private func kindLabel(_ k: ParamKind) -> String {
     switch k {
-    case .bool: return "开关"
-    case .enum: return "单选"
-    case .multi: return "多选"
-    case .string: return "文本"
-    case .number: return "数字"
-    case .text: return "多行文本"
+    case .bool: return L("开关", "Switch")
+    case .enum: return L("单选", "Single choice")
+    case .multi: return L("多选", "Multiple choice")
+    case .string: return L("文本", "Text")
+    case .number: return L("数字", "Number")
+    case .text: return L("多行文本", "Multiline text")
     }
 }
 
@@ -578,8 +578,8 @@ private struct ParamRow: View {
             if let s = param.short, !s.isEmpty { Text("-\(s)").font(.qMono(11)).foregroundStyle(.secondary) }
             Text(kindLabel(param.kind)).font(.caption)
                 .padding(.horizontal, 6).padding(.vertical, 1).background(.quaternary, in: Capsule())
-            if param.positional { Text("位置").font(.caption).foregroundStyle(Color.qAccent) }
-            if param.required { Text("必填").font(.caption).foregroundStyle(.orange) }
+            if param.positional { Text(L("位置", "Positional")).font(.caption).foregroundStyle(Color.qAccent) }
+            if param.required { Text(L("必填", "Required")).font(.caption).foregroundStyle(.orange) }
             Spacer()
             Text(param.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
@@ -599,8 +599,8 @@ private struct ParamInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                TextField("参数名", text: bind({ $0.name }, { $0.name = $1 })).font(.qMono(13))
-                Picker("类型", selection: bind({ $0.kind }, { p, k in
+                TextField(L("参数名", "Name"), text: bind({ $0.name }, { $0.name = $1 })).font(.qMono(13))
+                Picker(L("类型", "Type"), selection: bind({ $0.kind }, { p, k in
                     p.kind = k
                     p.defaultValue = nil
                     if k != .bool { p.short = nil }
@@ -611,24 +611,24 @@ private struct ParamInspector: View {
                 }
                 .frame(width: 160)
             }
-            TextField("说明", text: bind({ $0.description }, { $0.description = $1 }))
+            TextField(L("说明", "Description"), text: bind({ $0.description }, { $0.description = $1 }))
             HStack(spacing: 16) {
-                Toggle("必填", isOn: bind({ $0.required }, { $0.required = $1 }))
+                Toggle(L("必填", "Required"), isOn: bind({ $0.required }, { $0.required = $1 }))
                 if p.kind == .bool {
-                    LabeledContent("短名") {
+                    LabeledContent(L("短名", "Short name")) {
                         TextField("", text: bind({ $0.short ?? "" }, { $0.short = $1.isEmpty ? nil : String($1.prefix(1)) }))
                             .font(.qMono(13)).frame(width: 36)
                     }
                 }
                 if p.kind == .enum || p.kind == .multi {
-                    Toggle("位置参数", isOn: bind({ $0.positional }, { $0.positional = $1 }))
+                    Toggle(L("位置参数", "Positional"), isOn: bind({ $0.positional }, { $0.positional = $1 }))
                 }
             }
             defaultEditor
             if p.kind == .number {
                 HStack {
-                    numberField("最小值", bind({ $0.min }, { $0.min = $1 }))
-                    numberField("最大值", bind({ $0.max }, { $0.max = $1 }))
+                    numberField(L("最小值", "Minimum"), bind({ $0.min }, { $0.min = $1 }))
+                    numberField(L("最大值", "Maximum"), bind({ $0.max }, { $0.max = $1 }))
                 }
             }
             if p.kind == .enum || p.kind == .multi { ChoicesEditor(editor: editor, index: index) }
@@ -640,14 +640,14 @@ private struct ParamInspector: View {
     @ViewBuilder private var defaultEditor: some View {
         switch p.kind {
         case .bool:
-            Toggle("默认开启", isOn: bind({ $0.defaultValue == "true" }, { $0.defaultValue = $1 ? "true" : nil }))
+            Toggle(L("默认开启", "On by default"), isOn: bind({ $0.defaultValue == "true" }, { $0.defaultValue = $1 ? "true" : nil }))
         case .enum:
-            Picker("默认值", selection: bind({ $0.defaultValue ?? "" }, { $0.defaultValue = $1.isEmpty ? nil : $1 })) {
-                Text("无").tag("")
+            Picker(L("默认值", "Default"), selection: bind({ $0.defaultValue ?? "" }, { $0.defaultValue = $1.isEmpty ? nil : $1 })) {
+                Text(L("无", "None")).tag("")
                 ForEach(p.choices, id: \.value) { Text("\($0.label)（\($0.value)）").tag($0.value) }
             }
         case .multi:
-            LabeledContent("默认选中") {
+            LabeledContent(L("默认选中", "Selected by default")) {
                 HStack {
                     ForEach(p.choices, id: \.value) { c in
                         let on = (p.defaultValue ?? "").split(separator: ",").map(String.init).contains(c.value)
@@ -662,9 +662,9 @@ private struct ParamInspector: View {
                 }
             }
         case .number:
-            numberField("默认值", bind({ $0.defaultValue.flatMap(Double.init) }, { $0.defaultValue = $1.map { $0.truncatingRemainder(dividingBy: 1) == 0 ? String(Int($0)) : String($0) } }))
+            numberField(L("默认值", "Default"), bind({ $0.defaultValue.flatMap(Double.init) }, { $0.defaultValue = $1.map { $0.truncatingRemainder(dividingBy: 1) == 0 ? String(Int($0)) : String($0) } }))
         default:
-            TextField("默认值", text: bind({ $0.defaultValue ?? "" }, { $0.defaultValue = $1.isEmpty ? nil : $1 }))
+            TextField(L("默认值", "Default"), text: bind({ $0.defaultValue ?? "" }, { $0.defaultValue = $1.isEmpty ? nil : $1 }))
         }
     }
 
@@ -686,12 +686,12 @@ private struct ChoicesEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("候选值").font(.caption).foregroundStyle(.secondary)
+            Text(L("候选值", "Choices")).font(.caption).foregroundStyle(.secondary)
             ForEach(Array(choices.enumerated()), id: \.offset) { i, _ in
                 HStack {
-                    TextField("值", text: bind(i, \.value)).font(.qMono(12)).frame(width: 140)
-                    TextField("显示名", text: bind(i, \.label)).frame(width: 120)
-                    TextField("别名（逗号分隔）", text: Binding(
+                    TextField(L("值", "Value"), text: bind(i, \.value)).font(.qMono(12)).frame(width: 140)
+                    TextField(L("显示名", "Label"), text: bind(i, \.label)).frame(width: 120)
+                    TextField(L("别名（逗号分隔）", "Aliases (comma-separated)"), text: Binding(
                         get: { editor.doc!.params[index].choices[i].aliases.joined(separator: ", ") },
                         set: { v in editor.updateDoc { $0.params[index].choices[i].aliases = v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } } }))
                     Button { editor.updateDoc { $0.params[index].choices.remove(at: i) } } label: { Image(systemName: "minus.circle") }
@@ -702,7 +702,7 @@ private struct ChoicesEditor: View {
                 var n = "option", k = 2
                 while d.params[index].choices.contains(where: { $0.value == n }) { n = "option\(k)"; k += 1 }
                 d.params[index].choices.append(Choice(value: n, label: n, aliases: []))
-            } } label: { Label("添加候选值", systemImage: "plus") }
+            } } label: { Label(L("添加候选值", "Add Choice"), systemImage: "plus") }
                 .buttonStyle(.borderless)
         }
     }
@@ -720,8 +720,8 @@ private struct TryPanel: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("试用").font(.headline)
-            TextField("输入命令试用，如 \(editor.check.name ?? "r") --strict 附加要求", text: $editor.tryInput)
+            Text(L("试用", "Try it")).font(.headline)
+            TextField(L("输入命令试用，如 \(editor.check.name ?? "r") --strict 附加要求", "Type a command to try, e.g. \(editor.check.name ?? "r") --strict extra instructions"), text: $editor.tryInput)
                 .font(.qMono(13)).textFieldStyle(.roundedBorder)
             if !editor.check.problems.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -748,7 +748,7 @@ private struct TryPanel: View {
                 }
                 if let c = a.canonical { Text(c).font(.qMono(11)).foregroundStyle(.tertiary).textSelection(.enabled) }
                 if let p = a.preview {
-                    Text("预览 · \(p.chars) 字 · \(p.lines) 行").font(.caption).foregroundStyle(.secondary)
+                    Text(L("预览 · \(p.chars) 字 · \(p.lines) 行", "Preview · \(p.chars) chars · \(p.lines) lines")).font(.caption).foregroundStyle(.secondary)
                     Text(p.text).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                         .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))

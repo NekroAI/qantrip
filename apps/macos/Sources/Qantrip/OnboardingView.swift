@@ -7,7 +7,7 @@ enum Onboarding {
     static let hotKeyPressed = Notification.Name("ai.nekro.qantrip.hotKeyPressed")
 
     static func show() {
-        WindowManager.shared.show("onboarding", title: "欢迎使用 Nekro Qantrip", size: NSSize(width: 620, height: 520)) {
+        WindowManager.shared.show("onboarding", title: L("欢迎使用 Nekro Qantrip", "Welcome to Nekro Qantrip"), size: NSSize(width: 620, height: 520)) {
             OnboardingView()
         }
     }
@@ -59,12 +59,12 @@ struct OnboardingView: View {
         VStack(spacing: 22) {
             Image(systemName: "wand.and.stars").font(.system(size: 44)).foregroundStyle(Color.qAccent)
                 .symbolEffect(.bounce, value: hotKeyVerified)
-            title("按 Q 施放一个戏法", "在任何应用里按下唤起快捷键，输入几个字母，就能把常用 Prompt 插入到当前输入框。")
+            title(L("按 Q 施放一个戏法", "Press Q to cast a spell"), L("在任何应用里按下唤起快捷键，输入几个字母，就能把常用 Prompt 插入到当前输入框。", "In any app, press the shortcut, type a few letters, and insert a prompt into the current text field."))
             HStack {
-                Text("唤起快捷键")
+                Text(L("唤起快捷键", "Panel shortcut"))
                 HotKeyRecorder()
             }
-            Label(hotKeyVerified ? "快捷键可以正常使用" : "现在按一次 \(settings.hotKey.display) 试试",
+            Label(hotKeyVerified ? L("快捷键可以正常使用", "The shortcut works") : L("现在按一次 \(settings.hotKey.display) 试试", "Press \(settings.hotKey.display) now to try it"),
                   systemImage: hotKeyVerified ? "checkmark.circle.fill" : "keyboard")
                 .foregroundStyle(hotKeyVerified ? .green : .secondary)
                 .contentTransition(.symbolEffect(.replace))
@@ -75,19 +75,19 @@ struct OnboardingView: View {
         VStack(spacing: 22) {
             Image(systemName: trusted ? "checkmark.shield.fill" : "hand.raised.fill").font(.system(size: 44))
                 .foregroundStyle(trusted ? .green : Color.qAccent)
-            title("自动粘贴（可选）", "授予「辅助功能」权限后，Qantrip 会替你按下 ⌘V，把 Prompt 直接插入当前应用。\n不授权也能用：Prompt 会复制到剪贴板，由你手动粘贴。")
+            title(L("自动粘贴（可选）", "Auto-paste (optional)"), L("授予「辅助功能」权限后，Qantrip 会替你按下 ⌘V，把 Prompt 直接插入当前应用。\n不授权也能用：Prompt 会复制到剪贴板，由你手动粘贴。", "With Accessibility permission, Qantrip presses ⌘V for you and inserts the prompt into the current app.\nWithout it, the prompt is copied to the clipboard for you to paste."))
             if trusted {
-                Label("已授予辅助功能权限", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label(L("已授予辅助功能权限", "Accessibility permission granted"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             } else {
-                Button("授予辅助功能权限…") { Inserter.requestTrust() }.buttonStyle(.borderedProminent)
-                Text("系统设置 → 隐私与安全性 → 辅助功能，打开 Qantrip 的开关。").font(.caption).foregroundStyle(.secondary)
+                Button(L("授予辅助功能权限…", "Grant Accessibility Permission…")) { Inserter.requestTrust() }.buttonStyle(.borderedProminent)
+                Text(L("系统设置 → 隐私与安全性 → 辅助功能，打开 Qantrip 的开关。", "System Settings → Privacy & Security → Accessibility, then turn on Qantrip.")).font(.caption).foregroundStyle(.secondary)
             }
         }
     }
 
     private var practiceStep: some View {
         VStack(spacing: 18) {
-            title("施放一次", "点一下下面的输入框，按 \(settings.hotKey.display)，输入 zh 后按回车。")
+            title(L("施放一次", "Try it once"), L("点一下下面的输入框，按 \(settings.hotKey.display)，输入 zh 后按回车。", "Click the field below, press \(settings.hotKey.display), type zh, then press Return."))
             TextEditor(text: $practice)
                 .font(.system(size: 14))
                 .frame(height: 120)
@@ -96,10 +96,10 @@ struct OnboardingView: View {
                 .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.qAccent.opacity(practice.isEmpty ? 0.2 : 0.6)))
             if !practice.isEmpty {
-                Label("成功了！之后在任何应用里都可以这样使用。", systemImage: "sparkles").foregroundStyle(Color.qAccent)
+                Label(L("成功了！之后在任何应用里都可以这样使用。", "It worked! You can use it like this in any app."), systemImage: "sparkles").foregroundStyle(Color.qAccent)
                     .transition(.scale.combined(with: .opacity))
             }
-            Text("小提示：输入 r 后按空格再输入 --，可以看到审查模板的全部参数；面板里也可以用鼠标点选。")
+            Text(L("小提示：输入 r 后按空格再输入 --，可以看到审查模板的全部参数；面板里也可以用鼠标点选。", "Tip: type r, a space, then -- to see all parameters of the review template. You can also click items in the panel."))
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .animation(.spring(duration: 0.3), value: practice.isEmpty)
@@ -108,18 +108,18 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack {
             if step > 0 {
-                Button("上一步") { withAnimation { step -= 1 } }
+                Button(L("上一步", "Back")) { withAnimation { step -= 1 } }
             }
             Spacer()
             if step == 1 && !trusted {
-                Button("跳过，先用只复制") { withAnimation { step += 1 } }
+                Button(L("跳过，先用只复制", "Skip and use copy only")) { withAnimation { step += 1 } }
             }
             if step < 2 {
-                Button("继续") { withAnimation { step += 1 } }
+                Button(L("继续", "Continue")) { withAnimation { step += 1 } }
                     .buttonStyle(.borderedProminent)
                     .disabled(step == 1 && !trusted)
             } else {
-                Button("开始使用") {
+                Button(L("开始使用", "Get started")) {
                     settings.onboardingDone = true
                     WindowManager.shared.close("onboarding")
                 }

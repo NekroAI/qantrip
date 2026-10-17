@@ -95,7 +95,7 @@ struct LauncherView: View {
                     Image(systemName: model.analysis.phase == .extra ? "text.cursor" : "sparkles")
                         .font(.system(size: 22)).foregroundStyle(.tertiary)
                         .symbolEffect(.pulse, isActive: motion && model.analysis.phase == .extra)
-                    Text(model.analysis.phase == .extra ? "正在输入附加要求" : "没有可补全的内容")
+                    Text(model.analysis.phase == .extra ? L("正在输入附加要求", "Entering extra instructions") : L("没有可补全的内容", "Nothing to complete"))
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -166,7 +166,7 @@ struct LauncherView: View {
                 }
             } else {
                 Spacer()
-                Text("没有匹配的模板").foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+                Text(L("没有匹配的模板", "No matching templates")).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
                 Spacer()
             }
         }
@@ -178,13 +178,13 @@ struct LauncherView: View {
     private func previewBox(_ p: QantripCore.Preview) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("预览").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Text("\(p.chars) 字 · \(p.lines) 行").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text(L("预览", "Preview")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text(L("\(p.chars) 字 · \(p.lines) 行", "\(p.chars) chars · \(p.lines) lines")).font(.system(size: 11)).foregroundStyle(.tertiary)
                     .contentTransition(.numericText())
                     .animation(motion ? snappy : nil, value: p.chars)
                 Spacer()
                 if p.collapsesInClaudeCode && Inserter.expandPasteEnabled {
-                    Label("Claude Code 中会折叠 · ⌘↩ 展开粘贴", systemImage: "rectangle.expand.vertical")
+                    Label(L("Claude Code 中会折叠 · ⌘↩ 展开粘贴", "Collapsed in Claude Code · ⌘↩ to expand"), systemImage: "rectangle.expand.vertical")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
@@ -223,11 +223,11 @@ struct LauncherView: View {
         HStack(spacing: 14) {
             status
             Spacer()
-            KeyButton("↩", "插入") { model.confirm(expand: false) }
-            if Inserter.expandPasteEnabled { KeyButton("⌘↩", "展开粘贴") { model.confirm(expand: true) } }
-            Keycap("⇥", "补全")
-            Keycap("↑↓", "选择")
-            KeyButton("esc", "关闭") { model.onCancel?() }
+            KeyButton("↩", L("插入", "Insert")) { model.confirm(expand: false) }
+            if Inserter.expandPasteEnabled { KeyButton("⌘↩", L("展开粘贴", "Expand paste")) { model.confirm(expand: true) } }
+            Keycap("⇥", L("补全", "Complete"))
+            Keycap("↑↓", L("选择", "Select"))
+            KeyButton("esc", L("关闭", "Close")) { model.onCancel?() }
         }
         .padding(.horizontal, 16).padding(.vertical, 9)
     }
@@ -283,7 +283,7 @@ private struct CandidateRow: View {
     var body: some View {
         HStack(spacing: 8) {
             if candidate.kind == .invocation {
-                Image(systemName: candidate.section == "试试看" ? "lightbulb" : "clock.arrow.circlepath")
+                Image(systemName: (candidate.section == "试试看" || candidate.section == "Try these") ? "lightbulb" : "clock.arrow.circlepath")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
                 Text(colorizedInvocation(candidate.title))
                     .font(.qMono(13)).lineLimit(1).truncationMode(.tail)
@@ -349,7 +349,7 @@ private struct ParamChip: View {
                     }
                     if param.isSet {
                         Divider()
-                        Button("恢复默认") { edit(.clear) }
+                        Button(L("恢复默认", "Restore default")) { edit(.clear) }
                     }
                 } label: { label }
                     .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
