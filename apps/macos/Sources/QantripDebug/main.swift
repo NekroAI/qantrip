@@ -5,6 +5,8 @@ import Foundation
 //   qantrip-debug insert <面板输入>          按面板输入渲染后插入
 //   qantrip-debug paste <文本> [expand]      直接插入文本；expand 时展开粘贴
 //   qantrip-debug type <文本> [下移次数]     打开面板并填入输入（截图检查用）
+//   qantrip-debug confirm                    模拟回车
+//   qantrip-debug param <参数名> <操作>       模拟点击参数标签
 //   qantrip-debug status
 
 let args = CommandLine.arguments.dropFirst()
@@ -29,6 +31,13 @@ case "type":
     center.postNotificationName(.init("ai.nekro.qantrip.debug.type"), object: nil,
                                 userInfo: ["text": rest.first ?? "", "down": rest.dropFirst().first ?? "0"],
                                 deliverImmediately: true)
+case "confirm":
+    center.postNotificationName(.init("ai.nekro.qantrip.debug.confirm"), object: nil, userInfo: nil, deliverImmediately: true)
+case "param":
+    let rest = Array(args.dropFirst())
+    guard rest.count == 2 else { fputs("用法: qantrip-debug param <参数名> <toggle|set:v|choice:v|clear|begin>\n", stderr); exit(2) }
+    center.postNotificationName(.init("ai.nekro.qantrip.debug.param"), object: nil,
+                                userInfo: ["name": rest[0], "op": rest[1]], deliverImmediately: true)
 case "status":
     center.postNotificationName(.init("ai.nekro.qantrip.debug.status"), object: nil, userInfo: nil,
                                 deliverImmediately: true)

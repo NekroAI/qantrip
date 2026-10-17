@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::library::Library;
 use crate::template::{ParamKind, ParamSpec, Template, Value};
+use crate::usage::Usage;
 
 // MARK: - 对外类型
 
@@ -69,6 +70,8 @@ pub enum CandidateKind {
     Template,
     Param,
     Choice,
+    /// 首屏的"最近施放 / 试试看"：完整调用，`key` 为输入文本
+    Invocation,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -84,6 +87,8 @@ pub struct Candidate {
     pub tier: Option<MatchTier>,
     /// 候选值已被选中（多选参数）
     pub active: bool,
+    /// 首屏分段标题；输入后为空
+    pub section: String,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -151,6 +156,28 @@ pub enum EnterAction {
     /// 先修改输入（模糊匹配补全命令词 / 补上缺失的必填参数），不插入
     Complete { edit: Edit },
     Blocked,
+}
+
+/// 鼠标对参数的操作（docs/decisions.md D16）
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum ParamEdit {
+    /// 开关参数取反
+    Toggle,
+    /// 设置单选 / 文本 / 数字的值
+    Set { value: String },
+    /// 多选参数中加入或移除一个值
+    ToggleChoice { value: String },
+    /// 恢复默认
+    Clear,
+    /// 在输入中放置 `--name=` 并把光标移到值的位置（文本 / 数字参数）
+    Begin,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct EditResult {
+    pub text: String,
+    /// 新光标位置（UTF-16）
+    pub caret: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -383,7 +410,7 @@ fn match_name(q: &str, name: &str) -> Option<(MatchTier, usize)> {
     None
 }
 
-fn match_templates<'a>(lib: &'a Library, cmd: &str) -> Vec<(&'a Template, MatchTier)> {
+fn match_templates<'a>(lib: &'a Library, usage: &Usage, cmd: &str) -> Vec<(&'a Template, MatchTier)> {
     let q = cmd.to_lowercase();
     let mut out: Vec<(&Template, MatchTier, usize)> = lib
         .visible()
@@ -398,8 +425,12 @@ fn match_templates<'a>(lib: &'a Library, cmd: &str) -> Vec<(&'a Template, MatchT
                 .map(|(tier, rank)| (t, tier, rank))
         })
         .collect();
-    // 层级优先；层内按次序、名称（收藏与使用频率排序在接入使用记录后加入）
-    out.sort_by(|a, b| (a.1, a.2, &a.0.name).cmp(&(b.1, b.2, &b.0.name)));
+    // 层级优先；层内按使用频率（面板打开时的快照）、匹配次序、名称（§3）
+    out.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then(usage.score(&b.0.name).total_cmp(&usage.score(&a.0.name)))
+            .then((a.2, &a.0.name).cmp(&(b.2, &b.0.name)))
+    });
     out.into_iter().map(|(t, tier, _)| (t, tier)).collect()
 }
 
@@ -583,6 +614,15 @@ fn parse_long(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx:
         return;
     };
 
+    if raw.is_empty() && p.kind != ParamKind::String && p.kind != ParamKind::Text {
+        let msg = if p.choices.is_empty() {
+            format!("--{} 需要一个值", p.name)
+        } else {
+            format!("--{} 需要一个值，可选：{}", p.name, choice_list(p))
+        };
+        ctx.diag(Severity::Error, msg, w.start, w.end, at_cursor, None);
+        return;
+    }
     let result: Result<Value, String> = match p.kind {
         ParamKind::Bool => parse_bool(raw).map(Value::Bool).ok_or(format!("--{} 是开关，值只能是 true / false", p.name)),
         ParamKind::Enum => unquote(raw).and_then(|v| resolve_choice(p, &v)).map(Value::Str),
@@ -869,6 +909,7 @@ fn template_candidate(ctx: &Ctx, t: &Template, tier: MatchTier, cmd: &Word) -> C
         edit: Edit { start: ctx.u16(cmd.start), end: ctx.u16(cmd.end), text: format!("{} ", t.name) },
         tier: Some(tier),
         active: false,
+        section: String::new(),
     }
 }
 
@@ -914,6 +955,7 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
                 edit: edit(format!("--{}={done}{v} ", p.name)),
                 tier: None,
                 active: false,
+                section: String::new(),
             })
             .collect();
         let ghost = cands.first().map(|c| c.key.chars().skip(cur.chars().count()).collect::<String>()).filter(|g| !g.is_empty());
@@ -944,6 +986,7 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
                 edit: edit(format!("--{flag}{suffix}")),
                 tier: None,
                 active: parsed.values.contains_key(&p.name),
+                section: String::new(),
             });
         }
     }
@@ -965,6 +1008,7 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
                     edit: edit(format!("{} ", c.value)),
                     tier: None,
                     active: on,
+                    section: String::new(),
                 });
             }
         }
@@ -982,7 +1026,10 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
 
 // MARK: - 入口
 
-pub fn analyze(lib: &Library, input: &str, selected: Option<&str>) -> Analysis {
+pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>) -> Analysis {
+    if input.trim().is_empty() {
+        return home(lib, usage, selected);
+    }
     let mut ctx = Ctx { input, tokens: vec![], diags: vec![] };
     let words = scan(input);
     let ends_with_ws = input.ends_with(is_ws);
@@ -1003,7 +1050,7 @@ pub fn analyze(lib: &Library, input: &str, selected: Option<&str>) -> Analysis {
 
     let cmd_word = words.first();
     let cmd_text = cmd_word.map(|w| w.norm.as_str()).unwrap_or("");
-    let matches = match_templates(lib, cmd_text);
+    let matches = match_templates(lib, usage, cmd_text);
     let locked = cmd_word.is_some() && (words.len() > 1 || ends_with_ws);
 
     // 当前模板：界面高亮的那一项（若仍在匹配结果中），否则最佳匹配
@@ -1102,12 +1149,224 @@ pub fn analyze(lib: &Library, input: &str, selected: Option<&str>) -> Analysis {
 }
 
 /// 解析并返回可插入的最终文本；输入有错误时返回 None。
-pub fn render_final(lib: &Library, input: &str, selected: Option<&str>) -> Option<String> {
-    let a = analyze(lib, input, selected);
+pub fn render_final(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>) -> Option<String> {
+    let a = analyze(lib, usage, input, selected);
     match a.enter {
         EnterAction::Insert => a.preview.map(|p| p.text),
         _ => None,
     }
+}
+
+// MARK: - 首屏（docs/decisions.md D14）
+
+/// 新用户没有历史时展示的示例
+const EXAMPLES: &[&str] = &["r security 重点检查认证和权限", "zh -k", "commit --lang=zh", "explain beginner -d"];
+const RECENT_LIMIT: usize = 3;
+const FREQUENT_LIMIT: usize = 5;
+
+fn invocation_candidate(lib: &Library, usage: &Usage, invocation: &str, section: &str) -> Option<Candidate> {
+    let a = analyze(lib, usage, invocation, None);
+    let t = a.template.as_ref()?;
+    (a.enter == EnterAction::Insert).then(|| Candidate {
+        kind: CandidateKind::Invocation,
+        key: invocation.to_string(),
+        title: invocation.to_string(),
+        subtitle: String::new(),
+        detail: t.description.clone(),
+        edit: Edit { start: 0, end: 0, text: format!("{invocation} ") },
+        tier: None,
+        active: false,
+        section: section.to_string(),
+    })
+}
+
+fn home(lib: &Library, usage: &Usage, selected: Option<&str>) -> Analysis {
+    let mut cands: Vec<Candidate> = Vec::new();
+    let recent: Vec<Candidate> = usage
+        .recent(RECENT_LIMIT * 2)
+        .iter()
+        .filter_map(|e| invocation_candidate(lib, usage, &e.invocation, "最近施放"))
+        .take(RECENT_LIMIT)
+        .collect();
+    if recent.is_empty() {
+        cands.extend(EXAMPLES.iter().filter_map(|e| invocation_candidate(lib, usage, e, "试试看")));
+    } else {
+        cands.extend(recent);
+    }
+
+    let empty = Word { raw: "", start: 0, end: 0, norm: String::new() };
+    let ctx = Ctx { input: "", tokens: vec![], diags: vec![] };
+    let mut frequent: Vec<&Template> = lib.visible().filter(|t| usage.score(&t.name) > 0.0).collect();
+    frequent.sort_by(|a, b| usage.score(&b.name).total_cmp(&usage.score(&a.name)).then(a.name.cmp(&b.name)));
+    frequent.truncate(FREQUENT_LIMIT);
+    for t in &frequent {
+        cands.push(Candidate { section: "常用".into(), ..template_candidate(&ctx, t, MatchTier::Prefix, &empty) });
+    }
+    let mut rest: Vec<&Template> = lib.visible().filter(|t| !frequent.iter().any(|f| f.name == t.name)).collect();
+    rest.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
+    for t in rest {
+        let section = if t.category.is_empty() { "其他".to_string() } else { t.category.clone() };
+        cands.push(Candidate { section, ..template_candidate(&ctx, t, MatchTier::Prefix, &empty) });
+    }
+
+    let current = selected.and_then(|k| cands.iter().find(|c| c.key == k)).or(cands.first()).cloned();
+    let base = Analysis {
+        tokens: vec![],
+        phase: Phase::Command,
+        template: None,
+        locked: false,
+        candidates: vec![],
+        ghost: None,
+        diagnostics: vec![],
+        params: vec![],
+        preview: None,
+        canonical: None,
+        enter: EnterAction::Blocked,
+        hint: String::new(),
+    };
+    let mut a = match current {
+        Some(c) if c.kind == CandidateKind::Invocation => {
+            let inner = analyze(lib, usage, &c.key, None);
+            Analysis { hint: "↩ 重放这次施放".into(), ..inner }
+        }
+        Some(c) => match lib.get(&c.key) {
+            Some(t) => Analysis {
+                template: Some(info(t)),
+                params: param_states(t, &BTreeMap::new()),
+                preview: preview(lib, t, &BTreeMap::new(), None).ok(),
+                canonical: Some(t.name.clone()),
+                enter: EnterAction::Insert,
+                ..base
+            },
+            None => base,
+        },
+        None => base,
+    };
+    a.tokens = vec![];
+    a.locked = false;
+    a.phase = Phase::Command;
+    a.ghost = None;
+    a.diagnostics.clear();
+    a.candidates = cands;
+    a
+}
+
+// MARK: - 鼠标编辑参数（docs/decisions.md D16）
+
+/// 解析出当前模板、命令词原文、参数值和附加文本。
+fn parse_input<'a>(lib: &'a Library, usage: &Usage, input: &str, selected: Option<&str>) -> Option<(&'a Template, String, Parsed)> {
+    if input.trim().is_empty() {
+        // 首屏：以高亮的模板（或调用）为起点
+        let a = home(lib, usage, selected);
+        let key = selected.and_then(|k| a.candidates.iter().find(|c| c.key == k)).or(a.candidates.first())?.key.clone();
+        if lib.get(&key).is_some() {
+            return parse_input(lib, usage, &format!("{key} "), None);
+        }
+        return parse_input(lib, usage, &key, None);
+    }
+    let words = scan(input);
+    let cmd = words.first()?;
+    let matches = match_templates(lib, usage, &cmd.norm);
+    let (t, _) = selected.and_then(|s| matches.iter().find(|(t, _)| t.name == s)).or(matches.first()).copied()?;
+    let mut ctx = Ctx { input, tokens: vec![], diags: vec![] };
+    let parsed = parse_params(t, &words[1..], true, &mut ctx);
+    Some((t, cmd.raw.to_string(), parsed))
+}
+
+fn render_value(p: &ParamSpec, v: &Value) -> String {
+    match v {
+        Value::Bool(true) => format!("--{}", p.name),
+        Value::Bool(false) => format!("--no-{}", p.name),
+        Value::Str(x) if p.positional => x.clone(),
+        Value::List(l) if p.positional => l.join(" "),
+        Value::Str(x) => format!("--{}={}", p.name, quote_if_needed(x)),
+        Value::List(l) => format!("--{}={}", p.name, l.iter().map(|x| quote_if_needed(x)).collect::<Vec<_>>().join(",")),
+        Value::Num(n) => format!("--{}={}", p.name, fmt_num(*n)),
+    }
+}
+
+pub fn edit_param(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>, name: &str, edit: ParamEdit) -> Option<EditResult> {
+    let (t, cmd, mut parsed) = parse_input(lib, usage, input, selected)?;
+    let p = t.param(name)?;
+    let current = parsed.values.get(name).cloned().unwrap_or_else(|| p.effective_default());
+    let mut begin = false;
+    match edit {
+        ParamEdit::Toggle if p.kind == ParamKind::Bool => {
+            parsed.values.insert(p.name.clone(), Value::Bool(current != Value::Bool(true)));
+        }
+        ParamEdit::Set { value } => {
+            let v = match p.kind {
+                ParamKind::Enum => Value::Str(resolve_choice(p, &value).ok()?),
+                ParamKind::Number => Value::Num(value.parse().ok()?),
+                ParamKind::Bool => Value::Bool(parse_bool(&value)?),
+                ParamKind::Multi => Value::List(vec![resolve_choice(p, &value).ok()?]),
+                ParamKind::String | ParamKind::Text => Value::Str(value),
+            };
+            parsed.values.insert(p.name.clone(), v);
+        }
+        ParamEdit::ToggleChoice { value } if p.kind == ParamKind::Multi => {
+            let v = resolve_choice(p, &value).ok()?;
+            let mut list = match current {
+                Value::List(l) => l,
+                _ => vec![],
+            };
+            if let Some(i) = list.iter().position(|x| *x == v) {
+                list.remove(i);
+            } else {
+                list.push(v);
+            }
+            // 保持 schema 中的候选顺序
+            list.sort_by_key(|x| p.choices.iter().position(|c| c.value == *x));
+            parsed.values.insert(p.name.clone(), Value::List(list));
+        }
+        ParamEdit::Clear => {
+            parsed.values.remove(name);
+        }
+        ParamEdit::Begin => begin = true,
+        _ => return None,
+    }
+
+    let mut text = cmd;
+    let mut caret: Option<usize> = None;
+    for q in &t.params {
+        if begin && q.name == name {
+            let v = match parsed.values.get(name) {
+                Some(Value::Str(s)) => quote_if_needed(s),
+                Some(Value::Num(n)) => fmt_num(*n),
+                _ => String::new(),
+            };
+            text.push_str(&format!(" --{}=", q.name));
+            text.push_str(if v == "\"\"" { "" } else { &v });
+            caret = Some(text.len());
+            continue;
+        }
+        let Some(v) = parsed.values.get(&q.name) else { continue };
+        if *v == q.effective_default() {
+            continue;
+        }
+        text.push(' ');
+        text.push_str(&render_value(q, v));
+    }
+    match parsed.extra.as_deref().filter(|e| !e.is_empty()) {
+        Some(extra) => {
+            // 附加文本若可能被误解析为参数，则用 `--` 显式开始
+            let first = extra.split_whitespace().next().unwrap_or("");
+            let first_norm = normalize(first);
+            let ambiguous = first_norm.starts_with('-') || t.positional().is_some_and(|p| p.find_choice(&first_norm).is_some());
+            text.push_str(if ambiguous { " -- " } else { " " });
+            text.push_str(extra);
+        }
+        None => text.push(' '),
+    }
+    let caret = caret.map(|b| text[..b].encode_utf16().count()).unwrap_or_else(|| text.encode_utf16().count()) as u32;
+    Some(EditResult { text, caret })
+}
+
+/// 插入成功后记录使用：模板与不含附加文本的规范形式。
+pub fn record_use(lib: &Library, usage: &mut Usage, input: &str, selected: Option<&str>, app: Option<&str>) {
+    let Some((t, _, parsed)) = parse_input(lib, usage, input, selected) else { return };
+    let invocation = canonical(t, &parsed.values, None);
+    usage.record(&t.name, &invocation, app, crate::usage::now());
 }
 
 #[cfg(test)]

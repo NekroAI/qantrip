@@ -2,8 +2,13 @@ import AppKit
 import QantripCore
 import SwiftUI
 
+private let snappy: Animation = .snappy(duration: 0.2)
+
 struct LauncherView: View {
     @Bindable var model: LauncherModel
+    @Namespace private var ns
+
+    private var motion: Bool { !LauncherModel.reduceMotion }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,9 +26,11 @@ struct LauncherView: View {
         .background {
             ZStack(alignment: .top) {
                 Rectangle().fill(.regularMaterial)
-                // 顶部一抹品牌色辉光
-                LinearGradient(colors: [Color.qAccent.opacity(0.16), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 120)
+                // 顶部一抹品牌色辉光；命令锁定时增强
+                LinearGradient(colors: [Color.qAccent.opacity(model.analysis.locked ? 0.24 : 0.14), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 140)
+                    .animation(motion ? .easeOut(duration: 0.3) : nil, value: model.analysis.locked)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -37,7 +44,8 @@ struct LauncherView: View {
             Image(systemName: "wand.and.stars")
                 .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(Color.qAccent)
-                .symbolEffect(.bounce, value: model.rejectCount)
+                .symbolEffect(.bounce, value: model.analysis.locked)
+                .symbolEffect(.bounce.down, value: model.rejectCount)
             CommandFieldView(field: model.field).frame(height: 30)
             if let app = model.target {
                 HStack(spacing: 6) {
@@ -54,7 +62,31 @@ struct LauncherView: View {
         .padding(.horizontal, 18).padding(.vertical, 14)
     }
 
-    // MARK: 左栏：候选
+    // MARK: 左栏：候选（分段、可点击、带入场与重排动画）
+
+    private enum Row: Identifiable {
+        case header(String)
+        case item(Int, Candidate)
+        var id: String {
+            switch self {
+            case .header(let s): return "h:\(s)"
+            case .item(_, let c): return "\(c.section)|\(c.kind)|\(c.key)"
+            }
+        }
+    }
+
+    private var rows: [Row] {
+        var out: [Row] = []
+        var section: String?
+        for (i, c) in model.candidates.enumerated() {
+            if !c.section.isEmpty, c.section != section {
+                out.append(.header(c.section))
+                section = c.section
+            }
+            out.append(.item(i, c))
+        }
+        return out
+    }
 
     private var candidateList: some View {
         Group {
@@ -62,21 +94,44 @@ struct LauncherView: View {
                 VStack(spacing: 8) {
                     Image(systemName: model.analysis.phase == .extra ? "text.cursor" : "sparkles")
                         .font(.system(size: 22)).foregroundStyle(.tertiary)
+                        .symbolEffect(.pulse, isActive: motion && model.analysis.phase == .extra)
                     Text(model.analysis.phase == .extra ? "正在输入附加要求" : "没有可补全的内容")
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(Array(model.candidates.enumerated()), id: \.offset) { i, c in
-                                CandidateRow(candidate: c, selected: i == model.selectedIndex).id(i)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(rows.enumerated()), id: \.element.id) { n, row in
+                                Group {
+                                    switch row {
+                                    case .header(let title):
+                                        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                                            .padding(.horizontal, 10).padding(.top, n == 0 ? 2 : 10).padding(.bottom, 2)
+                                    case .item(let i, let c):
+                                        CandidateRow(candidate: c, selected: i == model.selectedIndex, ns: ns)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture(count: 2) { model.doubleClick(i) }
+                                            .onTapGesture { model.click(i) }
+                                    }
+                                }
+                                .opacity(model.entered ? 1 : 0)
+                                .offset(y: model.entered ? 0 : 8)
+                                .animation(motion ? .spring(duration: 0.28, bounce: 0.2).delay(Double(min(n, 12)) * 0.016) : nil,
+                                           value: model.entered)
                             }
                         }
                         .padding(8)
+                        .animation(motion ? snappy : nil, value: rows.map(\.id))
+                        .modifier(FadeIn(enabled: motion))
+                        .id(model.listKind)
                     }
-                    .onChange(of: model.selectedIndex) { _, new in proxy.scrollTo(new) }
+                    .onChange(of: model.selectedIndex) { _, new in
+                        guard let id = rows.first(where: { if case .item(new, _) = $0 { return true } else { return false } })?.id else { return }
+                        withAnimation(motion ? snappy : nil) { proxy.scrollTo(id) }
+                    }
                 }
             }
         }
@@ -94,11 +149,16 @@ struct LauncherView: View {
                     Spacer()
                     if !model.analysis.hint.isEmpty {
                         Text(model.analysis.hint).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .transition(.opacity)
                     }
                 }
+                .id(t.name)
+                .transition(motion ? .asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity) : .identity)
                 if !model.analysis.params.isEmpty {
                     FlowLayout(spacing: 6) {
-                        ForEach(model.analysis.params, id: \.name) { ParamChip(param: $0) }
+                        ForEach(model.analysis.params, id: \.name) { p in
+                            ParamChip(param: p, motion: motion) { model.editParam(p.name, $0) }
+                        }
                     }
                 }
                 if let p = model.analysis.preview {
@@ -112,6 +172,7 @@ struct LauncherView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(motion ? snappy : nil, value: model.analysis.template?.name)
     }
 
     private func previewBox(_ p: QantripCore.Preview) -> some View {
@@ -119,6 +180,8 @@ struct LauncherView: View {
             HStack(spacing: 8) {
                 Text("预览").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 Text("\(p.chars) 字 · \(p.lines) 行").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .contentTransition(.numericText())
+                    .animation(motion ? snappy : nil, value: p.chars)
                 Spacer()
                 if p.collapsesInClaudeCode && Inserter.expandPasteEnabled {
                     Label("Claude Code 中会折叠 · ⌘↩ 展开粘贴", systemImage: "rectangle.expand.vertical")
@@ -138,27 +201,33 @@ struct LauncherView: View {
     }
 
     private func highlighted(_ p: QantripCore.Preview) -> AttributedString {
-        let ns = NSMutableAttributedString(string: p.text)
+        let s = NSMutableAttributedString(string: p.text)
         for h in p.highlights {
             let r = NSRange(location: Int(h.start), length: Int(h.end - h.start))
-            guard NSMaxRange(r) <= ns.length else { continue }
+            guard NSMaxRange(r) <= s.length else { continue }
             let color = h.kind == .extra ? Theme.value : Theme.accent
-            ns.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.20), range: r)
+            s.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.26), range: r)
         }
-        return (try? AttributedString(ns, including: \.appKit)) ?? AttributedString(p.text)
+        // 新出现的片段闪光：从高亮度淡回常驻高亮
+        if model.flashLevel > 0 {
+            for r in model.flashRanges where NSMaxRange(r) <= s.length {
+                s.addAttribute(.backgroundColor, value: Theme.accent.withAlphaComponent(0.26 + 0.5 * model.flashLevel), range: r)
+            }
+        }
+        return (try? AttributedString(s, including: \.appKit)) ?? AttributedString(p.text)
     }
 
-    // MARK: 底栏：状态 + 按键提示
+    // MARK: 底栏：状态 + 可点击的操作
 
     private var footer: some View {
         HStack(spacing: 14) {
             status
             Spacer()
-            Keycap("↩", "插入")
-            if Inserter.expandPasteEnabled { Keycap("⌘↩", "展开粘贴") }
+            KeyButton("↩", "插入") { model.confirm(expand: false) }
+            if Inserter.expandPasteEnabled { KeyButton("⌘↩", "展开粘贴") { model.confirm(expand: true) } }
             Keycap("⇥", "补全")
             Keycap("↑↓", "选择")
-            Keycap("esc", "关闭")
+            KeyButton("esc", "关闭") { model.onCancel?() }
         }
         .padding(.horizontal, 16).padding(.vertical, 9)
     }
@@ -179,21 +248,57 @@ struct LauncherView: View {
 
 // MARK: - 组件
 
+/// 简单着色：命令词、--参数、=取值（用于首屏的调用记录）
+private func colorizedInvocation(_ s: String) -> AttributedString {
+    var out = AttributedString()
+    for (i, word) in s.split(separator: " ", omittingEmptySubsequences: false).enumerated() {
+        if i > 0 { out += AttributedString(" ") }
+        var piece: AttributedString
+        if i == 0 {
+            piece = AttributedString(word)
+            piece.foregroundColor = Color.qAccent
+        } else if word.hasPrefix("-"), let eq = word.firstIndex(of: "=") {
+            var a = AttributedString(word[..<word.index(after: eq)])
+            a.foregroundColor = Color.qOption
+            var b = AttributedString(word[word.index(after: eq)...])
+            b.foregroundColor = Color.qValue
+            piece = a + b
+        } else if word.hasPrefix("-") {
+            piece = AttributedString(word)
+            piece.foregroundColor = Color.qOption
+        } else {
+            piece = AttributedString(word)
+        }
+        out += piece
+    }
+    return out
+}
+
 private struct CandidateRow: View {
     let candidate: Candidate
     let selected: Bool
+    let ns: Namespace.ID
+    @State private var hover = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(candidate.title)
-                .font(.system(size: 14, weight: candidate.kind == .template ? .semibold : .regular, design: .monospaced))
-                .foregroundStyle(titleColor)
-            if !candidate.subtitle.isEmpty {
-                Text(candidate.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            if candidate.kind == .invocation {
+                Image(systemName: candidate.section == "试试看" ? "lightbulb" : "clock.arrow.circlepath")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text(colorizedInvocation(candidate.title))
+                    .font(.system(size: 13, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+            } else {
+                Text(candidate.title)
+                    .font(.system(size: 14, weight: candidate.kind == .template ? .semibold : .regular, design: .monospaced))
+                    .foregroundStyle(titleColor)
+                if !candidate.subtitle.isEmpty {
+                    Text(candidate.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
             if candidate.active {
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.qAccent)
+                    .transition(.scale.combined(with: .opacity))
             }
             if candidate.kind == .template {
                 Text(candidate.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
@@ -201,32 +306,93 @@ private struct CandidateRow: View {
         }
         .help(candidate.detail)
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(selected ? Color.qAccent.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background {
+            if selected {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.qAccent.opacity(0.20))
+                    .matchedGeometryEffect(id: "selection", in: ns)
+            } else if hover {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05))
+            }
+        }
+        .onHover { hover = $0 }
     }
 
     private var titleColor: Color {
         switch candidate.kind {
-        case .template: return .primary
+        case .template, .invocation: return .primary
         case .param: return .qOption
         case .choice: return .qValue
         }
     }
 }
 
+/// 参数标签：显示当前取值，点击可修改（D16）；取值变化时弹跳（D15）。
 private struct ParamChip: View {
     let param: ParamState
+    let motion: Bool
+    let edit: (ParamEdit) -> Void
+    @State private var hover = false
 
     var body: some View {
+        Group {
+            switch param.kind {
+            case .bool:
+                Button { edit(.toggle) } label: { label }.buttonStyle(.plain)
+            case .enum, .multi:
+                Menu {
+                    ForEach(param.choices, id: \.value) { c in
+                        Button {
+                            edit(param.kind == .multi ? .toggleChoice(value: c.value) : .set(value: c.value))
+                        } label: {
+                            if c.on { Label("\(c.label)  \(c.value)", systemImage: "checkmark") } else { Text("\(c.label)  \(c.value)") }
+                        }
+                    }
+                    if param.isSet {
+                        Divider()
+                        Button("恢复默认") { edit(.clear) }
+                    }
+                } label: { label }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            default:
+                Button { edit(.begin) } label: { label }.buttonStyle(.plain)
+            }
+        }
+        .help(param.description)
+        .onHover { hover = $0 }
+    }
+
+    private var label: some View {
         HStack(spacing: 4) {
             Text(param.name).font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(param.isSet ? Color.qOption : .secondary)
             Text(param.display).font(.system(size: 11, weight: param.isSet ? .semibold : .regular))
                 .foregroundStyle(param.isSet ? .primary : .tertiary)
+                .contentTransition(.interpolate)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(param.isSet ? Color.qAccent.opacity(0.14) : .clear, in: Capsule())
-        .overlay(Capsule().strokeBorder(param.isSet ? Color.qAccent.opacity(0.35) : Color.secondary.opacity(0.25)))
-        .help(param.description)
+        .background(param.isSet ? Color.qAccent.opacity(0.16) : (hover ? Color.primary.opacity(0.06) : .clear), in: Capsule())
+        .overlay(Capsule().strokeBorder(param.isSet ? Color.qAccent.opacity(0.4) : Color.secondary.opacity(0.25)))
+        .keyframeAnimator(initialValue: 1.0, trigger: param.display) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            SpringKeyframe(motion ? 1.12 : 1.0, duration: 0.09)
+            SpringKeyframe(1.0, duration: 0.22, spring: .bouncy)
+        }
+        .animation(motion ? snappy : nil, value: param.isSet)
+        .contentShape(Capsule())
+    }
+}
+
+/// 列表类型切换时：旧列表直接移除，新列表在出现时淡入，避免新旧两组重叠（D15）。
+private struct FadeIn: ViewModifier {
+    let enabled: Bool
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || !enabled ? 1 : 0)
+            .offset(x: shown || !enabled ? 0 : -6)
+            .onAppear { withAnimation(.easeOut(duration: 0.14)) { shown = true } }
     }
 }
 
@@ -243,6 +409,24 @@ private struct Keycap: View {
             Text(label).font(.system(size: 11))
         }
         .foregroundStyle(.secondary)
+    }
+}
+
+private struct KeyButton: View {
+    let key: String
+    let label: String
+    let action: () -> Void
+    @State private var hover = false
+    init(_ key: String, _ label: String, action: @escaping () -> Void) { self.key = key; self.label = label; self.action = action }
+
+    var body: some View {
+        Button(action: action) {
+            Keycap(key, label)
+                .padding(.horizontal, 4).padding(.vertical, 2)
+                .background(hover ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }
 

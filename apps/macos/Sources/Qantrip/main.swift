@@ -17,7 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        engine = Engine(userDir: Self.templatesDir.path)
+        let usage = Self.templatesDir.deletingLastPathComponent().appendingPathComponent("usage.json")
+        engine = Engine(userDir: Self.templatesDir.path, usagePath: usage.path)
         launcher = LauncherController(engine: engine)
 
         // 默认 ⌃Q（docs/decisions.md D5，待冲突实测定稿）
@@ -54,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ai.nekro.qantrip.debug.insert", #selector(debugInsert(_:))),
             ("ai.nekro.qantrip.debug.status", #selector(debugStatus(_:))),
             ("ai.nekro.qantrip.debug.type", #selector(debugType(_:))),
+            ("ai.nekro.qantrip.debug.confirm", #selector(debugConfirm(_:))),
+            ("ai.nekro.qantrip.debug.param", #selector(debugParam(_:))),
         ]
         for (name, sel) in hooks {
             center.addObserver(self, selector: sel, name: .init(name), object: nil,
@@ -81,11 +84,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func debugType(_ note: Notification) {
         let text = (note.userInfo?["text"] as? String) ?? ""
         if !launcher.isVisible { launcher.show(eventTime: ProcessInfo.processInfo.systemUptime, source: "debug") }
+        guard !text.isEmpty else { return }
         launcher.model.field.setText(text)
         launcher.model.textDidChange(text)
         if let n = Int((note.userInfo?["down"] as? String) ?? "0"), n > 0 {
             for _ in 0..<n { launcher.model.move(1) }
         }
+    }
+
+    /// 模拟回车（会记录使用）
+    @objc private func debugConfirm(_ note: Notification) {
+        launcher.model.confirm(expand: false)
+    }
+
+    /// 模拟点击参数标签：name + op（toggle / set:<v> / choice:<v> / clear / begin）
+    @objc private func debugParam(_ note: Notification) {
+        guard let name = note.userInfo?["name"] as? String, let op = note.userInfo?["op"] as? String else { return }
+        let edit: ParamEdit
+        if op == "toggle" { edit = .toggle }
+        else if op == "clear" { edit = .clear }
+        else if op == "begin" { edit = .begin }
+        else if op.hasPrefix("set:") { edit = .set(value: String(op.dropFirst(4))) }
+        else if op.hasPrefix("choice:") { edit = .toggleChoice(value: String(op.dropFirst(7))) }
+        else { return }
+        launcher.model.editParam(name, edit)
     }
 
     @objc private func debugStatus(_ note: Notification) {
@@ -129,6 +151,7 @@ extension AppDelegate: NSMenuDelegate {
         }
         menu.addItem(withTitle: "打开模板目录", action: #selector(openTemplates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "重新加载模板", action: #selector(reloadTemplates), keyEquivalent: "r").target = self
+        menu.addItem(withTitle: "清除使用记录", action: #selector(clearUsage), keyEquivalent: "").target = self
         menu.addItem(.separator())
 
         let hk = hotKey.isRegistered ? "全局快捷键：⌃Q 已注册" : "全局快捷键注册失败（\(hotKey.status)）"
@@ -158,6 +181,10 @@ extension AppDelegate: NSMenuDelegate {
 
     @objc private func openTemplates() {
         NSWorkspace.shared.open(Self.templatesDir)
+    }
+
+    @objc private func clearUsage() {
+        engine.clearUsage()
     }
 
     @objc private func reloadTemplates() {

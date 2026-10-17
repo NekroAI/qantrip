@@ -1,5 +1,14 @@
 use super::*;
 use crate::library::Library;
+use crate::usage::Usage;
+
+fn analyze(l: &Library, input: &str, selected: Option<&str>) -> Analysis {
+    super::analyze(l, &Usage::load(None), input, selected)
+}
+
+fn render_final(l: &Library, input: &str, selected: Option<&str>) -> Option<String> {
+    super::render_final(l, &Usage::load(None), input, selected)
+}
 
 fn lib() -> Library {
     Library::load(None)
@@ -218,4 +227,61 @@ fn render_final_requires_valid_input() {
     let l = lib();
     assert!(render_final(&l, "r --scope=nope", None).is_none());
     assert!(render_final(&l, "zh 你好", None).unwrap().ends_with("补充要求：你好"));
+}
+
+#[test]
+fn home_screen_sections() {
+    let l = lib();
+    let mut u = Usage::load(None);
+    // 新用户：试试看 + 分类
+    let a = super::analyze(&l, &u, "", None);
+    assert_eq!(a.candidates[0].section, "试试看");
+    assert_eq!(a.candidates[0].kind, CandidateKind::Invocation);
+    assert!(a.candidates.iter().any(|c| c.section == "编程"));
+    assert_eq!(a.enter, EnterAction::Insert);
+    // 有使用记录后：最近施放 + 常用，且不记录附加文本
+    record_use(&l, &mut u, "r security -s 重点检查认证", None, Some("term"));
+    record_use(&l, &mut u, "zh", None, Some("browser"));
+    u.begin_session(Some("term".into()), crate::usage::now());
+    let a = super::analyze(&l, &u, "", None);
+    let recent: Vec<_> = a.candidates.iter().filter(|c| c.section == "最近施放").map(|c| c.key.as_str()).collect();
+    assert_eq!(recent, vec!["review --focus=security --strict", "zh"]);
+    assert_eq!(a.candidates.iter().find(|c| c.section == "常用").unwrap().key, "review");
+    // 首屏选中最近施放 → 预览与插入使用该调用
+    let a = super::analyze(&l, &u, "", Some("review --focus=security --strict"));
+    assert_eq!(a.template.unwrap().name, "review");
+    assert!(super::render_final(&l, &u, "", Some("review --focus=security --strict")).unwrap().contains("严格模式"));
+    // 输入匹配时，常用模板在同层级内排在前面
+    record_use(&l, &mut u, "refactor", None, None);
+    record_use(&l, &mut u, "refactor", None, None);
+    u.begin_session(None, crate::usage::now());
+    assert_eq!(super::analyze(&l, &u, "re", None).candidates[0].key, "refactor");
+}
+
+#[test]
+fn mouse_param_edits() {
+    let l = lib();
+    let u = Usage::load(None);
+    let e = |input: &str, name: &str, edit: ParamEdit| edit_param(&l, &u, input, None, name, edit).unwrap().text;
+    assert_eq!(e("r ", "strict", ParamEdit::Toggle), "r --strict ");
+    assert_eq!(e("r --strict 注意并发", "strict", ParamEdit::Toggle), "r 注意并发");
+    assert_eq!(e("r security", "focus", ParamEdit::ToggleChoice { value: "tests".into() }), "r security tests ");
+    assert_eq!(e("r security tests", "focus", ParamEdit::ToggleChoice { value: "security".into() }), "r tests ");
+    assert_eq!(e("r", "scope", ParamEdit::Set { value: "staged".into() }), "r --scope=staged ");
+    assert_eq!(e("r --scope=staged x", "scope", ParamEdit::Clear), "r x");
+    // 附加文本以候选值开头时改用显式 --
+    assert_eq!(e("r -- security 是重点", "strict", ParamEdit::Toggle), "r --strict -- security 是重点");
+    // 首屏直接点参数：以高亮模板为起点
+    assert_eq!(edit_param(&l, &u, "", Some("review"), "strict", ParamEdit::Toggle).unwrap().text, "review --strict ");
+    // Begin：光标落在值的位置，附加文本保持在后
+    let r = edit_param(&l, &u, "test 登录模块", None, "framework", ParamEdit::Begin).unwrap();
+    assert_eq!(r.text, "test --framework= 登录模块");
+    assert_eq!(r.caret, "test --framework=".encode_utf16().count() as u32);
+}
+
+#[test]
+fn empty_value_message() {
+    let l = lib();
+    let a = analyze(&l, "r --scope=", None);
+    assert!(errors(&a)[0].starts_with("--scope 需要一个值，可选："), "{:?}", errors(&a));
 }

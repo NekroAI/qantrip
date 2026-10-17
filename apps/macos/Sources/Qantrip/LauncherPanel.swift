@@ -63,7 +63,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
             panel.contentView?.layoutSubtreeIfNeeded()
             panel.displayIfNeeded()
         }
-        model.reset()
+        model.begin(target: nil)
         panel.displayIfNeeded()
         panel.orderOut(nil)
         panel.alphaValue = 1
@@ -78,10 +78,10 @@ final class LauncherController: NSObject, NSWindowDelegate {
 
     func show(eventTime: TimeInterval, source: String) {
         let t1 = ProcessInfo.processInfo.systemUptime
-        model.target = NSWorkspace.shared.frontmostApplication
+        let target = NSWorkspace.shared.frontmostApplication
         inputSource.engage()
         let tIME = ProcessInfo.processInfo.systemUptime
-        model.reset()
+        model.begin(target: target)
         let tModel = ProcessInfo.processInfo.systemUptime
         position()
         panel.alphaValue = 0
@@ -93,12 +93,14 @@ final class LauncherController: NSObject, NSWindowDelegate {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
         }
+        springIn()
+        DispatchQueue.main.async { [self] in model.entered = true }
         let t2 = ProcessInfo.processInfo.systemUptime
         DispatchQueue.main.async { [self] in
             let t3 = ProcessInfo.processInfo.systemUptime
             SpikeLog.event("show", [
                 "source": source,
-                "target": model.target?.bundleIdentifier ?? "?",
+                "target": target?.bundleIdentifier ?? "?",
                 "event_to_handler_ms": SpikeLog.ms(t1 - eventTime),
                 "handler_to_shown_ms": SpikeLog.ms(t2 - t1),
                 "ime_ms": SpikeLog.ms(tIME - t1),
@@ -115,6 +117,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
     func hide() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+        model.entered = false
         inputSource.restore()
     }
 
@@ -149,7 +152,39 @@ final class LauncherController: NSObject, NSWindowDelegate {
 
     // MARK: 动效
 
-    /// "施法"：面板快照在独立的、永不成为 key 的窗口里上浮淡出，不阻塞粘贴。
+    /// 入场：从略小、略低处弹入（D15）。
+    private func springIn() {
+        guard !LauncherModel.reduceMotion, let layer = panel.contentView?.layer else { return }
+        let b = layer.bounds
+        var from = CATransform3DMakeTranslation(b.midX, b.midY, 0)
+        from = CATransform3DScale(from, 0.965, 0.965, 1)
+        from = CATransform3DTranslate(from, -b.midX, -b.midY - 8, 0)
+        let a = CASpringAnimation(keyPath: "transform")
+        a.fromValue = NSValue(caTransform3D: from)
+        a.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        a.mass = 1
+        a.stiffness = 420
+        a.damping = 26
+        a.duration = a.settlingDuration
+        layer.add(a, forKey: "springIn")
+    }
+
+    private static let sparkle: CGImage? = {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+        guard let symbol = NSImage(systemSymbolName: "sparkle", accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        else { return nil }
+        let size = symbol.size
+        let img = NSImage(size: size, flipped: false) { rect in
+            symbol.draw(in: rect)
+            NSColor.white.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        return img.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }()
+
+    /// "施法"：面板快照在独立的、永不成为 key 的窗口里上浮淡出，并从魔杖处迸出星光（D15）。
+    /// 该窗口忽略鼠标、不抢焦点，因此不影响随后发往目标应用的 ⌘V。
     private func castEffect() {
         guard let view = panel.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
@@ -157,26 +192,64 @@ final class LauncherController: NSObject, NSWindowDelegate {
         image.addRepresentation(rep)
 
         let frame = panel.frame
-        let ghost = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let pad: CGFloat = 60
+        let outer = frame.insetBy(dx: -pad, dy: -pad)
+        let ghost = NSPanel(contentRect: outer, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         ghost.isOpaque = false
         ghost.backgroundColor = .clear
         ghost.hasShadow = false
         ghost.ignoresMouseEvents = true
         ghost.level = .floating
         ghost.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        let iv = NSImageView(frame: NSRect(origin: .zero, size: frame.size))
+        let container = NSView(frame: NSRect(origin: .zero, size: outer.size))
+        container.wantsLayer = true
+        let iv = NSImageView(frame: NSRect(x: pad, y: pad, width: frame.width, height: frame.height))
         iv.image = image
         iv.imageScaling = .scaleAxesIndependently
-        ghost.contentView = iv
+        iv.wantsLayer = true
+        container.addSubview(iv)
+        ghost.contentView = container
         ghost.orderFrontRegardless()
 
-        let end = frame.insetBy(dx: frame.width * 0.03, dy: frame.height * 0.03).offsetBy(dx: 0, dy: 14)
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
+        let reduce = LauncherModel.reduceMotion
+        if !reduce, let star = Self.sparkle, let root = container.layer {
+            // 魔杖图标位于面板左上角
+            let emitter = CAEmitterLayer()
+            emitter.emitterPosition = CGPoint(x: pad + 30, y: pad + frame.height - 30)
+            emitter.emitterShape = .point
+            emitter.renderMode = .additive
+            let cell = CAEmitterCell()
+            cell.contents = star
+            cell.birthRate = 160
+            cell.lifetime = 0.55
+            cell.lifetimeRange = 0.2
+            cell.velocity = 260
+            cell.velocityRange = 120
+            cell.emissionLongitude = .pi / 5
+            cell.emissionRange = .pi / 2.2
+            cell.yAcceleration = -220
+            cell.scale = 0.9
+            cell.scaleRange = 0.5
+            cell.scaleSpeed = -1.2
+            cell.alphaSpeed = -1.6
+            cell.spin = 4
+            cell.spinRange = 6
+            cell.color = Theme.accent.usingColorSpace(.sRGB)?.cgColor
+            cell.redRange = 0.3
+            cell.greenRange = 0.2
+            emitter.emitterCells = [cell]
+            root.addSublayer(emitter)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { emitter.birthRate = 0 }
+        }
+
+        let end = iv.frame.insetBy(dx: frame.width * 0.03, dy: frame.height * 0.03).offsetBy(dx: 0, dy: 40)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = reduce ? 0.12 : 0.24
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            ghost.animator().alphaValue = 0
-            ghost.animator().setFrame(end, display: true)
-        }, completionHandler: { ghost.orderOut(nil) })
+            iv.animator().alphaValue = 0
+            if !reduce { iv.animator().frame = end }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reduce ? 0.15 : 0.75)) { ghost.orderOut(nil) }
     }
 
     /// 回车被阻止时让面板轻微抖动。

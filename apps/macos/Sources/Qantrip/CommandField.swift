@@ -33,12 +33,15 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
 
     private var editor: NSTextView? { currentEditor() as? NSTextView }
 
+    /// 最近一次设置的光标位置（重新获得焦点时恢复）
+    private(set) var caret = 0
+
     func setText(_ text: String, caret: Int? = nil) {
         stringValue = text
+        self.caret = caret ?? (text as NSString).length
         if let editor {
             editor.string = text
-            let at = caret ?? (text as NSString).length
-            editor.selectedRange = NSRange(location: at, length: 0)
+            editor.selectedRange = NSRange(location: self.caret, length: 0)
         }
     }
 
