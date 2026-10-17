@@ -175,6 +175,8 @@ pub fn parse(source: &str, builtin: bool) -> Result<Template, String> {
 
 /// 解析一个模板文件，错误信息使用 `loc`。
 pub fn parse_in(source: &str, builtin: bool, loc: Locale) -> Result<Template, String> {
+    // Windows 上的编辑器（如 PowerShell 5.1）常以 UTF-8 BOM 开头写文件
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let rest = source
         .strip_prefix("---\n")
         .or_else(|| source.strip_prefix("---\r\n"))
@@ -314,6 +316,16 @@ fn validate_params(params: &[ParamSpec], loc: Locale) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod bom_tests {
+    #[test]
+    fn utf8_bom_is_ignored() {
+        let t = super::parse("\u{feff}---\nname: bom\n---\nhi\n", false).unwrap();
+        assert_eq!(t.name, "bom");
+        assert!(!t.source.starts_with('\u{feff}'));
+    }
 }
 
 #[cfg(test)]
