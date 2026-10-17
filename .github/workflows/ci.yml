@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rust 工具链
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - name: 核心测试
+        run: cargo test --manifest-path core/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
+      - name: 构建 macOS 应用（开发签名）
+        run: scripts/build-macos.sh
