@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { Link } from 'react-router'
 import { downloadsPublic, latestRelease, type LatestRelease } from '../../server/releases.js'
+import { REPO_URL } from '../lib/site'
 import type { Route } from './+types/download'
 
 export const meta: Route.MetaFunction = () => [{ title: '下载 · Nekro Qantrip' }]
@@ -20,13 +21,12 @@ export default function Download({ loaderData }: Route.ComponentProps) {
   const { release, open } = loaderData
   return (
     <section className="wrap page">
-      <div className="section-head">
-        <span className="eyebrow">下载</span>
-        <h1 className="display">Nekro Qantrip for macOS</h1>
-        <p className="lead">需要 macOS 14 或更新版本。Apple 芯片与 Intel 芯片分别提供安装包。</p>
-      </div>
+      <header>
+        <h1>下载 Qantrip for macOS</h1>
+        <p>需要 macOS 14 或更新版本。Apple 芯片与 Intel 芯片分别提供安装包。</p>
+      </header>
       {release ? (
-        <div className="panel">
+        <div className="card">
           <div className="row">
             <strong>版本 {release.version}</strong>
             <a href={release.notes_url}>更新说明</a>
@@ -46,8 +46,10 @@ export default function Download({ loaderData }: Route.ComponentProps) {
         </div>
       ) : (
         <div className="callout">
-          <strong>{open ? '暂无可下载的版本' : '下载即将开放'}</strong>
-          <span className="muted">Qantrip 目前处于内部测试阶段，公开下载会在开源时开放。Windows 与 Linux 版本正在筹备。</span>
+          <strong>{open ? '暂无可下载的版本' : '公开下载尚未开放'}</strong>
+          <span className="muted">
+            Qantrip 目前处于内部测试阶段。你可以先从 <a href={REPO_URL}>源代码</a> 构建；Windows 与 Linux 版本正在开发。
+          </span>
         </div>
       )}
       <div className="prose">

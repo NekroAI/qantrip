@@ -45,12 +45,11 @@ export default function Account({ loaderData }: Route.ComponentProps) {
   if (!user) {
     return (
       <section className="wrap page">
-        <div className="section-head">
-          <span className="eyebrow">账号</span>
-          <h1 className="display">登录 Qantrip</h1>
-          <p className="lead">账号用于在多台设备之间同步模板。同步内容端到端加密，登录本身不能解密任何数据。</p>
-        </div>
-        {status === 'failed' && <div className="callout warn">登录没有完成，请重试。</div>}
+        <header>
+          <h1>登录 Qantrip</h1>
+          <p>账号用于在多台设备之间同步模板。同步内容端到端加密，登录本身不能解密任何数据。</p>
+        </header>
+        {status === 'failed' && <div className="callout">登录没有完成，请重试。</div>}
         {loginOpen ? (
           <p>
             <a className="btn primary" href="/auth/github?return=/account">
@@ -73,7 +72,7 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         <div className="row" style={{ justifyContent: 'flex-start' }}>
           {user.avatar && <img className="avatar" src={user.avatar} alt="" width={44} height={44} />}
           <div>
-            <h1 className="display" style={{ fontSize: '2rem' }}>
+            <h1 style={{ fontSize: '1.6rem' }}>
               {user.login}
             </h1>
             <span className="muted">GitHub 账号</span>
@@ -86,8 +85,8 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         </form>
       </div>
 
-      <div className="panel">
-        <h2 className="display" style={{ fontSize: '1.4rem' }}>
+      <div className="card">
+        <h2>
           同步保险库
         </h2>
         {vault ? (
@@ -111,8 +110,8 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         <p className="muted">这里只能看到数量与大小：内容由你的设备加密，服务端无法读取。</p>
       </div>
 
-      <div className="panel">
-        <h2 className="display" style={{ fontSize: '1.4rem' }}>
+      <div className="card">
+        <h2>
           已登录的设备
         </h2>
         {grants.length === 0 ? (
@@ -139,8 +138,8 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         <p className="muted">设备名称加密存储，这里只显示设备标识。退出设备只收回它的访问权；要把它移出保险库并轮换密钥，请在另一台已登录的设备上操作。</p>
       </div>
 
-      <div className="panel">
-        <h2 className="display" style={{ fontSize: '1.4rem' }}>
+      <div className="card">
+        <h2>
           危险操作
         </h2>
         <Danger
@@ -172,7 +171,7 @@ function Danger({ intent, login, title, body, busy }: { intent: string; login: s
         <label className="muted" htmlFor={`${intent}-confirm`}>
           输入 {login} 确认
         </label>
-        <input id={`${intent}-confirm`} name="confirm" required pattern={login.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} autoComplete="off" style={{ background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }} />
+        <input id={`${intent}-confirm`} name="confirm" required pattern={login.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} autoComplete="off" className="input" />
         <button className="btn small danger" type="submit" disabled={busy}>
           {title}
         </button>

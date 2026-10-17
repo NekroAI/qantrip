@@ -60,6 +60,10 @@ pub struct Usage {
 }
 
 pub fn now() -> i64 {
+    // wasm32-unknown-unknown 没有系统时钟（SystemTime::now 会 panic）；浏览器演示不记录使用
+    #[cfg(target_arch = "wasm32")]
+    return 0;
+    #[cfg(not(target_arch = "wasm32"))]
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 

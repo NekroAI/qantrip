@@ -4,6 +4,7 @@
 //! 字符串中的 UTF-16 偏移，便于 Swift 直接构造 `NSRange`。
 
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use crate::library::Library;
@@ -12,14 +13,16 @@ use crate::usage::Usage;
 
 // MARK: - 对外类型
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MatchTier {
     Exact,
     Prefix,
     Fuzzy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TokenKind {
     Command,
     CommandUnknown,
@@ -32,7 +35,7 @@ pub enum TokenKind {
     Invalid,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Token {
     pub kind: TokenKind,
     pub start: u32,
@@ -40,20 +43,21 @@ pub struct Token {
 }
 
 /// 对输入的一次替换：把 `[start, end)` 换成 `text`。
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Edit {
     pub start: u32,
     pub end: u32,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Severity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub message: String,
@@ -65,7 +69,8 @@ pub struct Diagnostic {
     pub fix: Option<Edit>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CandidateKind {
     Template,
     Param,
@@ -74,7 +79,7 @@ pub enum CandidateKind {
     Invocation,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Candidate {
     pub kind: CandidateKind,
     /// 模板名 / 参数名 / 候选值
@@ -91,14 +96,14 @@ pub struct Candidate {
     pub section: String,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct ChoiceState {
     pub value: String,
     pub label: String,
     pub on: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct ParamState {
     pub name: String,
     pub kind: ParamKind,
@@ -111,20 +116,21 @@ pub struct ParamState {
     pub choices: Vec<ChoiceState>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HighlightKind {
     Param,
     Extra,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Highlight {
     pub kind: HighlightKind,
     pub start: u32,
     pub end: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Preview {
     pub text: String,
     pub highlights: Vec<Highlight>,
@@ -134,7 +140,7 @@ pub struct Preview {
     pub collapses_in_claude_code: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct TemplateInfo {
     pub name: String,
     pub aliases: Vec<String>,
@@ -143,14 +149,16 @@ pub struct TemplateInfo {
     pub builtin: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Phase {
     Command,
     Params,
     Extra,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EnterAction {
     Insert,
     /// 先修改输入（模糊匹配补全命令词 / 补上缺失的必填参数），不插入
@@ -159,7 +167,8 @@ pub enum EnterAction {
 }
 
 /// 鼠标对参数的操作（docs/decisions.md D16）
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParamEdit {
     /// 开关参数取反
     Toggle,
@@ -173,14 +182,14 @@ pub enum ParamEdit {
     Begin,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct EditResult {
     pub text: String,
     /// 新光标位置（UTF-16）
     pub caret: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct Analysis {
     pub tokens: Vec<Token>,
     pub phase: Phase,
@@ -855,7 +864,12 @@ fn preview(lib: &Library, t: &Template, values: &BTreeMap<String, Value>, extra:
 
     // 与默认渲染逐字比较，标出参数带来的变化；相隔很近的片段合并，避免碎片化
     let mut spans: Vec<(usize, usize)> = Vec::new();
-    let diff = similar::TextDiff::configure().timeout(Duration::from_millis(20)).diff_chars(&base, &text);
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+    let mut config = similar::TextDiff::configure();
+    // wasm32-unknown-unknown 没有系统时钟（Instant::now 会 panic），浏览器中不设置超时
+    #[cfg(not(target_arch = "wasm32"))]
+    config.timeout(Duration::from_millis(20));
+    let diff = config.diff_chars(&base, &text);
     for op in diff.ops() {
         let r = op.new_range();
         if op.tag() != similar::DiffTag::Equal && !r.is_empty() {

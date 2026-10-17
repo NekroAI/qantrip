@@ -1,3 +1,4 @@
+import { REPO_URL } from '../lib/site'
 import type { Route } from './+types/security'
 
 export const meta: Route.MetaFunction = () => [
@@ -16,11 +17,10 @@ const VISIBLE = [
 export default function Security() {
   return (
     <section className="wrap page">
-      <div className="section-head">
-        <span className="eyebrow">安全设计</span>
-        <h1 className="display">服务端只看得到密文</h1>
-        <p className="lead">同步功能即将推出。这里先公开它的设计：加密只在你的设备上完成，服务端不持有任何能解密的密钥。服务端代码与客户端一起开源，你也可以部署自己的后端。</p>
-      </div>
+      <header>
+        <h1>同步的安全设计</h1>
+        <p>同步功能正在开发。这里先公开它的设计：加密只在你的设备上完成，服务端不持有任何能解密的密钥。服务端代码与客户端在同一个仓库中开源，你也可以部署自己的后端。</p>
+      </header>
       <div className="prose">
         <h2>密钥在哪里</h2>
         <ul>
@@ -34,7 +34,7 @@ export default function Security() {
             <strong>恢复短语</strong>：24 个词，只在你的设备上生成和显示。所有设备都丢失时，用它找回数据。
           </li>
         </ul>
-        <div className="callout warn">
+        <div className="callout">
           <strong>没有后门</strong>
           <span>如果所有设备和恢复短语都丢失，任何人（包括我们）都无法恢复你的同步数据。本地模板文件不受影响。</span>
         </div>
@@ -74,7 +74,10 @@ export default function Security() {
           <li>服务端伪造设备或塞入自己的密钥：设备花名册由你的设备签名，密钥带有承诺，伪造会被发现。</li>
           <li>被撤销的设备：撤销后立即轮换密钥并重新加密，它拿不到之后的数据。</li>
         </ul>
-        <p className="muted">服务端仍然可以拒绝服务或删除数据；本地数据始终完整，随时可以重新上传。完整设计见仓库中的 docs/sync-design.md。</p>
+        <p className="muted">
+          服务端仍然可以拒绝服务或删除数据；本地数据始终完整，随时可以重新上传。完整设计见仓库中的{' '}
+          <a href={`${REPO_URL}/blob/main/docs/sync-design.md`}>docs/sync-design.md</a>，包括威胁模型、协议细节与对抗性审查记录。
+        </p>
       </div>
     </section>
   )

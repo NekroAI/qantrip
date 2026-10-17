@@ -5,11 +5,10 @@ export const meta: Route.MetaFunction = () => [{ title: '文档 · Nekro Qantrip
 export default function Docs() {
   return (
     <section className="wrap page">
-      <div className="section-head">
-        <span className="eyebrow">文档</span>
-        <h1 className="display">使用 Qantrip</h1>
-        <p className="lead">安装、输入语法与模板格式。</p>
-      </div>
+      <header>
+        <h1>使用 Qantrip</h1>
+        <p>安装、输入语法与模板格式。更多设计文档见仓库中的 docs 目录。</p>
+      </header>
       <div className="prose">
         <h2 id="install">安装（macOS）</h2>
         <ol>
@@ -27,12 +26,12 @@ export default function Docs() {
         <p>更新时下载新版本覆盖即可。所有版本使用同一张签名证书，权限、模板与设置都会保留。</p>
 
         <h2 id="grammar">输入语法</h2>
-        <div className="codeblock">{`r security --scope=staged -s 重点看认证和权限
+        <pre className="code">{`r security --scope=staged -s 重点看认证和权限
 │ │        │              │  └ 附加要求：第一个不是参数的词起，原文保留
 │ │        │              └ 短参数：开关的单字母简写
 │ │        └ 长参数：--名称=值，多选用逗号分隔
 │ └ 位置参数：直接输入候选值
-└ 命令：模板名或别名`}</div>
+└ 命令：模板名或别名`}</pre>
         <ul>
           <li>
             匹配分三层：精确、前缀、模糊。模糊匹配时第一次回车只补全名称，第二次才插入，拼错不会误插入。
@@ -55,7 +54,7 @@ export default function Docs() {
         <p>
           每个模板是一个 Markdown 文件，放在 <code>~/Library/Application Support/Qantrip/templates/</code>。头部用 YAML 声明名称、别名与参数，正文是 MiniJinja 模板：
         </p>
-        <div className="codeblock">{`---
+        <pre className="code">{`---
 name: review
 aliases: [r]
 description: 代码审查
@@ -66,7 +65,7 @@ params:
 ---
 请审查{% if scope == "staged" %}暂存区的{% endif %}改动。
 {% if strict %}严格模式：不确定的地方也列出来。{% endif %}
-{% include "_extra" %}`}</div>
+{% include "_extra" %}`}</pre>
         <ul>
           <li>
             参数类型：<code>bool</code>、<code>enum</code>、<code>multi</code>、<code>string</code>、<code>number</code>、<code>text</code>；可设默认值、必填、短名、取值范围与位置参数。

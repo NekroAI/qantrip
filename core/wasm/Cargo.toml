@@ -1,0 +1,22 @@
+[package]
+name = "qantrip-wasm"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "Qantrip 核心的 WebAssembly 绑定，供官网的在线演示使用"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qantrip-core = { path = ".." }
+serde_json = "1"
+wasm-bindgen = "=0.2.129"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

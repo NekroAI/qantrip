@@ -38,16 +38,15 @@ export default function Authorize({ loaderData }: Route.ComponentProps) {
   const { error, device, login } = loaderData
   return (
     <section className="wrap page" style={{ maxWidth: 560 }}>
-      <span className="eyebrow">授权</span>
       {error ? (
         <>
-          <h1 className="display">无法授权</h1>
-          <p className="lead">{error}</p>
+          <h1>无法授权</h1>
+          <p className="muted">{error}</p>
         </>
       ) : (
         <>
-          <h1 className="display">登录 Qantrip 桌面端</h1>
-          <p className="lead">
+          <h1>登录 Qantrip 桌面端</h1>
+          <p className="muted">
             以 <strong>{login}</strong> 的身份登录这台设备（<span className="mono">{device?.slice(0, 4)}…{device?.slice(-4)}</span>）。
           </p>
           <div className="callout">

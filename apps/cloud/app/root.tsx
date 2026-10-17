@@ -1,16 +1,12 @@
 import { isRouteErrorResponse, Link, Links, Meta, NavLink, Outlet, Scripts, ScrollRestoration } from 'react-router'
 import type { Route } from './+types/root'
 import './app.css'
+import { GitHubIcon } from './components/GitHubIcon'
+import { REPO_URL } from './lib/site'
 
 export const links: Route.LinksFunction = () => [
   { rel: 'icon', href: '/favicon.png', type: 'image/png' },
   { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
-  { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-  { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' },
-  {
-    rel: 'stylesheet',
-    href: 'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,400..700,100,1;1,9..144,400..700,100,1&display=swap',
-  },
   { rel: 'preload', href: '/fonts/MonaspaceNeon-latin.woff2', as: 'font', type: 'font/woff2', crossOrigin: 'anonymous' },
 ]
 
@@ -27,7 +23,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#0d0a15" />
+        <meta name="theme-color" content="#0b0b0c" />
         <Meta />
         <Links />
       </head>
@@ -35,7 +31,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <header className="nav">
           <div className="wrap">
             <Link to="/" className="brand" aria-label="Nekro Qantrip 首页">
-              <img src="/media/icon-256.png" alt="" width={28} height={28} />
+              <img src="/media/icon-256.png" alt="" width={24} height={24} />
               Qantrip
             </Link>
             <nav className="nav-links" aria-label="主导航">
@@ -44,6 +40,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   {n.label}
                 </NavLink>
               ))}
+              <a className="gh" href={REPO_URL} rel="noopener">
+                <GitHubIcon /> GitHub
+              </a>
             </nav>
           </div>
         </header>
@@ -51,11 +50,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <footer className="footer">
           <div className="wrap">
             <div>
-              Nekro Qantrip · 按 Q 施放一个戏法
+              Nekro Qantrip，由 NekroAI 开发的开源项目。
               <br />
-              客户端 GPL-3.0-or-later · 服务端 AGPL-3.0-or-later · NekroAI
+              客户端 GPL-3.0-or-later，服务端 AGPL-3.0-or-later。
             </div>
             <nav aria-label="页脚">
+              <a href={REPO_URL}>源代码</a>
+              <a href={`${REPO_URL}/issues`}>问题反馈</a>
               <Link to="/docs">文档</Link>
               <Link to="/security">安全设计</Link>
               <Link to="/download">下载</Link>
@@ -78,8 +79,10 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const detail = isRouteErrorResponse(error) && typeof error.data === 'string' ? error.data : '请稍后重试，或返回首页。'
   return (
     <section className="wrap page">
-      <h1 className="display">{title}</h1>
-      <p className="lead">{detail}</p>
+      <header>
+        <h1>{title}</h1>
+        <p>{detail}</p>
+      </header>
       <p>
         <Link className="btn" to="/">
           返回首页
