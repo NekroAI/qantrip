@@ -1,0 +1,15 @@
+# 构建产物
+/target/
+/core/target/
+.build/
+/dist/
+/apps/macos/Generated/
+*.dSYM/
+
+# 本地环境与敏感内容
+.DS_Store
+*.p12
+*.pem
+*.keychain-db
+.env*
+/spike-logs/
