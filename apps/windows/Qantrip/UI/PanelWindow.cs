@@ -15,6 +15,7 @@ using Windows.Graphics;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.Core;
+using System.Numerics;
 using static Qantrip.Platform.Win32;
 
 namespace Qantrip.UI;
@@ -51,6 +52,18 @@ internal sealed class PanelWindow : Window
     /// 输入框当前文本（模型已知的版本）
     private string fieldText = "";
     private bool composing;
+
+    // 动效状态（D15）
+    /// 下一次构建候选列表时播放错落入场（面板刚唤起）
+    private bool entering;
+    private string listKind = "";
+    private HashSet<string> rowIds = new();
+    private bool wasLocked;
+    private string? previewTemplate;
+    private HashSet<string> previewHighlights = new();
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? flashTimer;
+    /// 底栏按键提示对应的状态（指令模式、展开粘贴、语言）；变化时重建
+    private string keysState = "";
 
     public PanelWindow(LauncherModel model)
     {
@@ -110,8 +123,12 @@ internal sealed class PanelWindow : Window
     }
 
     /// 显示并激活，焦点放到输入框。返回是否成功成为前台窗口。
+    /// 唤起前调用：下一次刷新时候选错落出现。
+    public void PrepareEntrance() => entering = Motion.Enabled;
+
     public bool ShowActivated(out string method)
     {
+        Anim.Entrance(root);
         AppWindow.Show(true);
         bool ok = Foreground.Activate(Hwnd, out method);
         FocusField();
@@ -288,9 +305,9 @@ internal sealed class PanelWindow : Window
     /// 输入法策略（D9）：通过输入范围（InputScope）提示输入法本控件输入的是字母数字，
     /// 中文输入法据此在面板中默认使用英文模式，用户仍可手动切换。只影响本控件，关闭面板后无需恢复。
     /// </summary>
-    private void ApplyInputScope()
+    public void ApplyInputScope()
     {
-        if (!Settings.ForceAsciiInput) return;
+        if (!Settings.ForceAsciiInput) { field.InputScope = null; return; }
         var name = Environment.GetEnvironmentVariable("QANTRIP_IME_SCOPE") is { Length: > 0 } s && Enum.TryParse<Microsoft.UI.Xaml.Input.InputScopeNameValue>(s, out var v)
             ? v : Microsoft.UI.Xaml.Input.InputScopeNameValue.Url;
         var scope = new Microsoft.UI.Xaml.Input.InputScope();
@@ -327,6 +344,14 @@ internal sealed class PanelWindow : Window
         field.Resources["TextControlPlaceholderForeground"] = Theme.B(theme.Tertiary);
         field.Resources["TextControlPlaceholderForegroundFocused"] = Theme.B(theme.Tertiary);
         field.Resources["TextControlPlaceholderForegroundPointerOver"] = Theme.B(theme.Tertiary);
+    }
+
+    /// 界面语言或底栏相关设置变化后刷新静态文字。
+    public void ApplyLanguage()
+    {
+        ApplyFieldColors();
+        keysState = "";
+        Refresh();
     }
 
     // MARK: 输入框
@@ -467,6 +492,18 @@ internal sealed class PanelWindow : Window
         BuildList();
         BuildCard();
         BuildStatus();
+        var ks = $"{Model.IsCommandMode}|{Settings.ExpandPasteEnabled}|{Loc.En}";
+        if (ks != keysState) { keysState = ks; BuildKeys(); }
+        if (a.Locked && !wasLocked) Anim.Pop(wand);
+        wasLocked = a.Locked;
+    }
+
+    /// 候选列表的"类型"：首屏 / 模板 / 参数 / 取值。类型切换时整组淡入，同类内只有新出现的项淡入（D15）。
+    private string ListKind(Analysis a)
+    {
+        if (a.Candidates.Count == 0) return "empty";
+        if (string.IsNullOrWhiteSpace(Model.Query)) return "home";
+        return a.Locked ? "locked-" + a.Candidates[0].Kind : "command";
     }
 
     private void BuildList()
@@ -478,23 +515,38 @@ internal sealed class PanelWindow : Window
         listEmpty.Text = a.Phase == "extra" ? Loc.T("正在输入附加要求", "Entering extra instructions") : Loc.T("没有可补全的内容", "Nothing to complete");
         string? section = null;
         FrameworkElement? selected = null;
+        var kind = ListKind(a);
+        bool kindChanged = kind != listKind;
+        var ids = new HashSet<string>();
         for (int i = 0; i < a.Candidates.Count; i++)
         {
             var c = a.Candidates[i];
             if (!string.IsNullOrEmpty(c.Section) && c.Section != section)
             {
                 section = c.Section;
-                list.Children.Add(new TextBlock
+                var header = new TextBlock
                 {
                     Text = c.Section, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Theme.B(theme.Tertiary),
                     Margin = new Thickness(10, list.Children.Count == 0 ? 2 : 10, 10, 2),
-                });
+                };
+                if (entering) Anim.FadeSlideIn(header, new Vector3(0, 8, 0), 280, Math.Min(list.Children.Count, 12) * 16);
+                list.Children.Add(header);
             }
             var row = CandidateRow(c, i, i == Model.SelectedIndex);
+            var id = $"{c.Section}|{c.Kind}|{c.Key}";
+            ids.Add(id);
+            // 入场：错落出现；同类列表中新出现的项：淡入并轻微上移
+            if (entering) Anim.FadeSlideIn(row, new Vector3(0, 8, 0), 280, Math.Min(list.Children.Count, 12) * 16);
+            else if (!kindChanged && !rowIds.Contains(id)) Anim.FadeSlideIn(row, new Vector3(0, 6, 0), 160);
             list.Children.Add(row);
             rowElements.Add(row);
             if (i == Model.SelectedIndex) selected = row;
         }
+        // 类型切换：整组从左侧淡入（旧列表直接移除，避免新旧两组重叠）
+        if (kindChanged && !entering && listKind != "") Anim.FadeSlideIn(list, new Vector3(-6, 0, 0), 140);
+        entering = false;
+        listKind = kind;
+        rowIds = ids;
         if (selected != null)
             DispatcherQueue.TryEnqueue(() => selected.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false }));
     }
@@ -585,8 +637,21 @@ internal sealed class PanelWindow : Window
     {
         card.Children.Clear();
         var a = Model.Analysis;
+        if (a.Template is null && Model.IsCommandMode && a.Preview is Preview help)
+        {
+            // 指令模式：还没确定指令时显示用法说明
+            previewTemplate = null;
+            card.Children.Add(new TextBlock { Text = Loc.T("指令", "Commands"), FontFamily = Theme.Display, FontSize = 22, Foreground = Theme.B(theme.Accent) });
+            card.Children.Add(new TextBlock
+            {
+                Text = help.Text, FontFamily = Theme.Mono, FontSize = 12, LineHeight = 20, Foreground = Theme.B(theme.Secondary),
+                TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true,
+            });
+            return;
+        }
         if (a.Template is not TemplateInfo t)
         {
+            previewTemplate = null;
             card.Children.Add(new TextBlock
             {
                 Text = Loc.T("没有匹配的模板", "No matching templates"), Foreground = Theme.B(theme.Tertiary),
@@ -598,7 +663,10 @@ internal sealed class PanelWindow : Window
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.Children.Add(new TextBlock { Text = t.Name, FontFamily = Theme.Display, FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = Theme.B(theme.Accent) });
+        var title = new TextBlock { Text = t.Name, FontFamily = Theme.Display, FontSize = 22, Foreground = Theme.B(theme.Accent) };
+        head.Children.Add(title);
+        // 模板切换：标题从左侧滑入
+        if (t.Name != previewTemplate) Anim.FadeSlideIn(head, new Vector3(-10, 0, 0), 180);
         var desc = new TextBlock { Text = t.Description, FontSize = 13, Foreground = Theme.B(theme.Secondary), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(desc, 1);
         head.Children.Add(desc);
@@ -616,7 +684,8 @@ internal sealed class PanelWindow : Window
             foreach (var p in a.Params) chips.Children.Add(Chip(p));
             card.Children.Add(chips);
         }
-        if (a.Preview is Preview pv) card.Children.Add(PreviewBox(pv));
+        if (a.Preview is Preview pv) card.Children.Add(PreviewBox(pv, t.Name));
+        else previewTemplate = t.Name;
     }
 
     /// 参数标签：显示当前取值，点击可修改（D16）。
@@ -670,7 +739,7 @@ internal sealed class PanelWindow : Window
         return chip;
     }
 
-    private FrameworkElement PreviewBox(Preview p)
+    private FrameworkElement PreviewBox(Preview p, string template)
     {
         var box = new StackPanel { Spacing = 6 };
         var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -694,14 +763,54 @@ internal sealed class PanelWindow : Window
         }
         text.TextHighlighters.Add(param);
         text.TextHighlighters.Add(extra);
+        // 预览闪光：同一模板下新出现的高亮片段先亮起，再淡成常驻高亮（D15）
+        var keys = p.Highlights.Select(h => $"{h.Kind}-{h.Start}-{h.End}").ToHashSet();
+        if (template == previewTemplate && Motion.Enabled)
+        {
+            var fresh = p.Highlights.Where(h => !previewHighlights.Contains($"{h.Kind}-{h.Start}-{h.End}") && h.End <= p.Text.Length && h.End > h.Start).ToList();
+            if (fresh.Count > 0)
+            {
+                var brush = new SolidColorBrush(Theme.WithAlpha(theme.Accent, 0.76));
+                var flash = new TextHighlighter { Background = brush };
+                foreach (var h in fresh) flash.Ranges.Add(new TextRange { StartIndex = h.Start, Length = h.End - h.Start });
+                text.TextHighlighters.Add(flash);
+                StartFlash(brush, theme.Accent);
+            }
+        }
+        previewTemplate = template;
+        previewHighlights = keys;
         box.Children.Add(new Border { Child = text, Padding = new Thickness(12), CornerRadius = new CornerRadius(10), Background = Theme.B(theme.Panel) });
         return box;
+    }
+
+    /// 闪光强度 1 → 0（450ms，先慢后快），叠加在常驻高亮（0.26）之上。
+    private void StartFlash(SolidColorBrush brush, Color accent)
+    {
+        flashTimer?.Stop();
+        var start = DateTime.UtcNow;
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(16);
+        timer.Tick += (_, _) =>
+        {
+            double p = (DateTime.UtcNow - start).TotalMilliseconds / 450;
+            double level = Math.Max(0, 1 - p * p);
+            // 闪光层叠在常驻高亮之上：只画超出常驻高亮的部分
+            brush.Color = Theme.WithAlpha(accent, 0.5 * level);
+            if (p >= 1) timer.Stop();
+        };
+        flashTimer = timer;
+        timer.Start();
     }
 
     private void BuildStatus()
     {
         var a = Model.Analysis;
-        if (Model.FirstError is Diagnostic e)
+        if (Model.ArmedCommand != null)
+        {
+            statusText.Text = "⚠ " + Loc.T("再按一次 ↩ 确认", "Press Enter again to confirm");
+            statusText.Foreground = Theme.B(theme.Warning);
+        }
+        else if (Model.FirstError is Diagnostic e)
         {
             statusText.Text = "ⓘ " + e.Message;
             statusText.Foreground = Theme.B(e.AtCursor ? theme.Secondary : theme.Error);
@@ -725,8 +834,9 @@ internal sealed class PanelWindow : Window
     private void BuildKeys()
     {
         keys.Children.Clear();
-        keys.Children.Add(Keycap("↩", Loc.T("插入", "Insert"), () => Model.Confirm(false)));
-        if (Settings.ExpandPasteEnabled) keys.Children.Add(Keycap("Ctrl+↩", Loc.T("展开粘贴", "Expand paste"), () => Model.Confirm(true)));
+        bool command = Model.IsCommandMode;
+        keys.Children.Add(Keycap("↩", command ? Loc.T("执行", "Run") : Loc.T("插入", "Insert"), () => Model.Confirm(false)));
+        if (Settings.ExpandPasteEnabled && !command) keys.Children.Add(Keycap("Ctrl+↩", Loc.T("展开粘贴", "Expand paste"), () => Model.Confirm(true)));
         keys.Children.Add(Keycap("Tab", Loc.T("补全", "Complete"), null));
         keys.Children.Add(Keycap("↑↓", Loc.T("选择", "Select"), null));
         keys.Children.Add(Keycap("Esc", Loc.T("关闭", "Close"), () => Model.OnCancel?.Invoke()));
@@ -751,9 +861,10 @@ internal sealed class PanelWindow : Window
         return b;
     }
 
-    /// 回车被阻止：图标短暂变红（只做视觉反馈，不发声）。
+    /// 回车被阻止：面板抖动、图标短暂变红（只做视觉反馈，不发声）。
     private void FlashReject()
     {
+        Anim.Shake(root);
         wand.Foreground = Theme.B(theme.Error);
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(320);

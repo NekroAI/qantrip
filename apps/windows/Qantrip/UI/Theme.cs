@@ -32,9 +32,12 @@ internal sealed class Theme
     public static Color WithAlpha(Color c, double a) => Color.FromArgb((byte)Math.Clamp(a * 255, 0, 255), c.R, c.G, c.B);
     public static SolidColorBrush B(Color c) => new(c);
 
-    public static readonly FontFamily Mono = new("Cascadia Mono, Consolas");
+    // 字体（D17）：命令行与代码元素用 Monaspace Neon，展示性大字用 Fraunces，正文与界面小字用系统字体。
+    // 两款字体随应用分发（Assets/Fonts，SIL OFL 1.1）；Fraunces 为固定 SOFT=100 / WONK=1 / wght=600 / opsz=24 的静态实例
+    // （XAML 无法设置自定义变量轴，取值与 macOS Theme.display 一致），中文等字形由系统字体回退。
+    public static readonly FontFamily Mono = new("ms-appx:///Assets/Fonts/MonaspaceNeonVar.ttf#Monaspace Neon Var, Cascadia Mono, Consolas, Microsoft YaHei UI");
     public static readonly FontFamily Ui = new("Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI");
-    public static readonly FontFamily Display = new("Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI");
+    public static readonly FontFamily Display = new("ms-appx:///Assets/Fonts/FrauncesDisplay.ttf#Fraunces Display, Segoe UI Variable Display, Microsoft YaHei UI");
     public static readonly FontFamily Icons = new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
     public const double CommandSize = 19;

@@ -18,6 +18,10 @@ internal sealed class LauncherModel
     /// 提交：(最终文本, 是否展开粘贴)
     public Action<string, bool>? OnSubmit;
     public Action? OnCancel;
+    /// 指令执行完成（D31）
+    public Action<CommandOutcome>? OnCommand;
+    /// 读取剪贴板文字（`/new 名称` 不写正文时使用）
+    public Func<string?>? ReadClipboard;
     /// 分析结果或选择变化（界面刷新）
     public event Action? Changed;
     /// 需要把输入框改为指定文本与光标位置
@@ -25,8 +29,12 @@ internal sealed class LauncherModel
     /// 回车被阻止（抖动反馈）
     public event Action? Rejected;
 
+    /// 需要再按一次回车确认的指令（如 /rm）；输入改变后失效
+    public string? ArmedCommand { get; private set; }
+
     private string? selectedKey;
     private string commandWord = "";
+    private bool clipboardLoaded;
 
     public LauncherModel(Engine engine)
     {
@@ -48,13 +56,27 @@ internal sealed class LauncherModel
         Engine.BeginSession(string.IsNullOrEmpty(target?.Exe) ? null : target!.Exe);
         selectedKey = null;
         commandWord = "";
+        clipboardLoaded = false;
+        Engine.SetClipboard(null);
         SetField?.Invoke("", 0);
         TextDidChange("");
+    }
+
+    /// 是否处于指令模式（输入以 / 或全角 ／ 开头）
+    public bool IsCommandMode
+    {
+        get
+        {
+            var t = Query.TrimStart();
+            return t.StartsWith('/') || t.StartsWith('／');
+        }
     }
 
     public void TextDidChange(string text)
     {
         Query = text;
+        ArmedCommand = null;
+        LoadClipboardIfNeeded(text);
         var cmd = FirstWord(text);
         if (cmd != commandWord)
         {
@@ -64,9 +86,33 @@ internal sealed class LauncherModel
         Reanalyze(resetSelection: true);
     }
 
+    /// `/new 名称` 不写正文时用剪贴板文字：只在输入 /new 时读取剪贴板，且每次唤起只读一次。
+    private void LoadClipboardIfNeeded(string text)
+    {
+        if (clipboardLoaded || !text.TrimStart().StartsWith("/new ")) return;
+        clipboardLoaded = true;
+        Engine.SetClipboard(ReadClipboard?.Invoke());
+    }
+
+    /// 核心的指令说明沿用 macOS 的"废纸篓 / Trash"，在 Windows 上改称"回收站 / Recycle Bin"。
+    /// 只替换不带位置信息的文字（提示、候选说明、诊断信息、指令帮助）。
+    private static void UseWindowsTerms(Analysis a)
+    {
+        static string All(string s) => s.Replace("废纸篓", "回收站").Replace("Trash", "Recycle Bin");
+        a.Hint = All(a.Hint);
+        foreach (var c in a.Candidates) { c.Subtitle = All(c.Subtitle); c.Detail = All(c.Detail); }
+        foreach (var d in a.Diagnostics) d.Message = All(d.Message);
+        // 预览只在显示指令帮助（还没有模板）时替换，不改动模板源码的展示
+        if (a.Template is null && a.Preview is Preview p && p.Highlights.Count == 0) p.Text = All(p.Text);
+    }
+
+    /// 重新解析当前输入（语言或模板库变化后）。
+    public void Refresh() => Reanalyze(resetSelection: false);
+
     private void Reanalyze(bool resetSelection)
     {
         Analysis = Engine.Analyze(Query, selectedKey);
+        if (IsCommandMode) UseWindowsTerms(Analysis);
         if (resetSelection) SelectedIndex = 0;
         SelectedIndex = Math.Min(SelectedIndex, Math.Max(Candidates.Count - 1, 0));
         Changed?.Invoke();
@@ -122,6 +168,22 @@ internal sealed class LauncherModel
             case "complete" when Analysis.Enter.Edit is Edit edit:
                 if (!Analysis.Locked) selectedKey = Analysis.Template?.Name;
                 Apply(edit);
+                break;
+            case "run":
+                if (Analysis.Enter.Confirm && ArmedCommand != Query)
+                {
+                    ArmedCommand = Query;
+                    Changed?.Invoke();
+                    return;
+                }
+                ArmedCommand = null;
+                var r = Engine.RunCommand(Query);
+                if (r.Ok && r.Outcome is CommandOutcome o) OnCommand?.Invoke(o);
+                else
+                {
+                    Log.Event("command_failed", new() { ["error"] = r.Error });
+                    Reject();
+                }
                 break;
             default:
                 Reject();
@@ -183,6 +245,8 @@ internal sealed class LauncherModel
         SetField?.Invoke(text, caret);
         commandWord = FirstWord(text);
         Query = text;
+        ArmedCommand = null;
+        LoadClipboardIfNeeded(text);
         Reanalyze(resetSelection: true);
     }
 }

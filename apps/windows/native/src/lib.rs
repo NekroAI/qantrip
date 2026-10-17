@@ -152,6 +152,36 @@ pub extern "C" fn qt_problems(e: *const Engine) -> *mut c_char {
     guard(std::ptr::null_mut(), || out(json(&e.problems())))
 }
 
+/// 清除使用记录。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_clear_usage(e: *const Engine) {
+    if let Some(e) = engine(e) {
+        guard((), || e.clear_usage());
+    }
+}
+
+/// 指令模式 `/new 名称` 不写正文时使用的剪贴板文字；空指针表示没有文字。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_set_clipboard(e: *const Engine, text: *const c_char) {
+    if let Some(e) = engine(e) {
+        guard((), || e.set_clipboard(opt_str(text)));
+    }
+}
+
+/// 执行指令（输入以 `/` 开头，docs/decisions.md D31）。
+/// 返回 `{"ok":true,"outcome":CommandOutcome}` 或 `{"ok":false,"error":"…"}` 的 JSON。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_run_command(e: *const Engine, input: *const c_char) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || {
+        let v = match e.run_command(str_or_empty(input)) {
+            Ok(o) => serde_json::json!({ "ok": true, "outcome": o }),
+            Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
+        };
+        out(Some(v.to_string()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +212,38 @@ mod tests {
         assert!(r.unwrap().contains("--strict"));
         assert!(take(qt_templates(e)).unwrap().starts_with('['));
         qt_engine_free(e);
+    }
+
+    #[test]
+    fn commands() {
+        let dir = std::env::temp_dir().join(format!("qantrip-ffi-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = s(dir.to_str().unwrap());
+        let e = qt_engine_new(d.as_ptr(), std::ptr::null());
+        qt_set_locale(e, s("en").as_ptr(), s("en").as_ptr());
+        // 还没选指令：帮助文字作为预览，没有模板
+        let v: serde_json::Value = serde_json::from_str(&take(qt_analyze(e, s("/").as_ptr(), std::ptr::null())).unwrap()).unwrap();
+        assert!(v["template"].is_null());
+        assert!(v["preview"]["text"].as_str().unwrap().contains("/new"));
+        // /new 不写正文时使用剪贴板
+        qt_set_clipboard(e, s("Explain {topic} simply").as_ptr());
+        let v: serde_json::Value = serde_json::from_str(&take(qt_analyze(e, s("/new explainer").as_ptr(), std::ptr::null())).unwrap()).unwrap();
+        assert_eq!(v["enter"]["kind"], "run");
+        assert_eq!(v["enter"]["confirm"], false);
+        let r: serde_json::Value = serde_json::from_str(&take(qt_run_command(e, s("/new explainer").as_ptr())).unwrap()).unwrap();
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(dir.join("explainer.md").exists());
+        // /rm 需要确认，返回待移到回收站的路径
+        let v: serde_json::Value = serde_json::from_str(&take(qt_analyze(e, s("/rm explainer").as_ptr(), std::ptr::null())).unwrap()).unwrap();
+        assert_eq!(v["enter"]["confirm"], true);
+        let r: serde_json::Value = serde_json::from_str(&take(qt_run_command(e, s("/rm explainer").as_ptr())).unwrap()).unwrap();
+        assert!(r["outcome"]["trash_path"].as_str().unwrap().ends_with("explainer.md"));
+        let r: serde_json::Value = serde_json::from_str(&take(qt_run_command(e, s("/rm nope").as_ptr())).unwrap()).unwrap();
+        assert_eq!(r["ok"], false);
+        assert!(r["error"].as_str().is_some());
+        qt_clear_usage(e);
+        qt_engine_free(e);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

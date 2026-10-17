@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>Qantrip</RootNamespace>
     <AssemblyName>Qantrip</AssemblyName>
@@ -21,7 +21,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <LangVersion>12</LangVersion>
+    <LangVersion>14</LangVersion>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
     <!-- Rust 核心的 C ABI 动态库（apps/windows/native），由 build.ps1 先行构建 -->
@@ -30,12 +30,16 @@
 
   <ItemGroup>
     <!-- 只引用用到的组件包，不用 Microsoft.WindowsAppSDK 元包：元包会带上 AI / ML（onnxruntime、DirectML 约 40MB）与 Widgets -->
-    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
-    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="1.8.25122902" />    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.9" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\Qantrip.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 内置字体与许可证（D17，SIL OFL 1.1） -->
+    <Content Include="Assets\Fonts\*.ttf;Assets\Fonts\*.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="$(QantripNativeDll)" Link="qantrip_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(QantripNativeDll)')" />
   </ItemGroup>
 </Project>

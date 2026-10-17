@@ -92,9 +92,30 @@ public sealed class TemplateInfo
 
 public sealed class EnterAction
 {
-    /// insert / complete / blocked
+    /// insert / complete / blocked / run（指令模式，D31）
     public string Kind { get; set; } = "blocked";
     public Edit? Edit { get; set; }
+    /// run：需要再按一次回车确认（如 /rm）
+    public bool Confirm { get; set; }
+}
+
+/// 指令执行结果（core command::CommandOutcome）。
+public sealed class CommandOutcome
+{
+    /// 完成提示
+    public string Message { get; set; } = "";
+    /// 需要在模板库中打开的模板
+    public string? OpenEditor { get; set; }
+    /// 需要移到回收站的文件（/rm）
+    public string? TrashPath { get; set; }
+}
+
+/// qt_run_command 的返回值：成功时带 outcome，失败时带 error。
+public sealed class CommandResult
+{
+    public bool Ok { get; set; }
+    public CommandOutcome? Outcome { get; set; }
+    public string? Error { get; set; }
 }
 
 public sealed class Analysis

@@ -20,7 +20,11 @@ public partial class App : Application
     private HotKey? hotKey;
     private TrayIcon? tray;
     private Inserter? inserter;
+    private SettingsWindow? settingsWindow;
+    private Hud? hud;
     private bool submitting;
+
+    public Engine? Engine => engine;
 
     public App()
     {
@@ -34,14 +38,16 @@ public partial class App : Application
         var ui = Settings.UiLocale;
         Loc.En = ui == "en";
         Directory.CreateDirectory(Settings.DataDir);
-        engine = new Engine(Path.Combine(Settings.DataDir, "templates"), Path.Combine(Settings.DataDir, "usage.json"));
-        engine.SetLocale(ui, ui);
+        engine = new Engine(Settings.TemplatesDir, Path.Combine(Settings.DataDir, "usage.json"));
+        engine.SetLocale(ui, Settings.TemplateLocale);
         var tEngine = sw.ElapsedMilliseconds;
 
         model = new LauncherModel(engine);
         panel = new PanelWindow(model);
         model.OnSubmit = (text, expand) => _ = Submit(text, expand);
         model.OnCancel = () => Hide(restoreFocus: true);
+        model.OnCommand = FinishCommand;
+        model.ReadClipboard = () => messages is null ? null : ClipboardStore.ReadText(messages.Handle);
         panel.Activated += (_, e) =>
         {
             // 点击面板外部（面板失去激活）时关闭，行为与 Spotlight / PowerToys Run 一致
@@ -52,23 +58,27 @@ public partial class App : Application
         messages = new MessageWindow();
         inserter = new Inserter(messages.Handle);
         messages.ShowRequested += () => Show("second_instance", -1);
+        messages.SettingsRequested += ShowSettings;
         hotKey = new HotKey(messages);
         hotKey.Pressed += time =>
         {
             int delay = Environment.TickCount - time; // GetMessageTime 与 TickCount 同一时间基准
             if (panel.IsShown) Hide(restoreFocus: true); else Show("hotkey", delay);
         };
-        var (mods, vk) = ParseHotKey(Settings.HotKey);
+        var (mods, vk) = HotKeySpec.Parse(Settings.HotKey);
         hotKey.Register(mods, vk);
 
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "Qantrip.ico");
         tray = new TrayIcon(messages, icon, $"Nekro Qantrip · {hotKey.Describe()}")
         {
-            OpenLabel = () => Loc.T("打开面板", "Open panel") + $"\t{hotKey.Describe()}",
+            OpenLabel = () => Loc.T("打开面板", "Open panel") + (hotKey.IsRegistered ? $"\t{hotKey.Describe()}" : ""),
+            SettingsLabel = () => Loc.T("设置…", "Settings…"),
             QuitLabel = () => Loc.T("退出 Nekro Qantrip", "Quit Nekro Qantrip"),
         };
         tray.Open += () => Show("tray", -1);
+        tray.OpenSettings += ShowSettings;
         tray.Quit += Quit;
+        Settings.Changed += OnSettingChanged;
         if (!hotKey.IsRegistered)
             tray.Notify("Nekro Qantrip", Loc.T($"快捷键 {hotKey.Describe()} 已被其他程序占用（错误 {hotKey.LastError}），可从托盘图标打开面板",
                 $"Shortcut {hotKey.Describe()} is taken by another program (error {hotKey.LastError}). Open the panel from the tray icon."));
@@ -86,8 +96,11 @@ public partial class App : Application
             ["problems"] = engine.Problems().Count,
             ["elevated"] = Foreground.SelfElevated,
             ["tray"] = tray.Added,
+            ["settings"] = Settings.Snapshot(),
+            ["motion"] = Motion.Enabled,
         });
         Prewarm();
+        if (Program.OpenSettingsOnLaunch) ShowSettings();
     }
 
     /// 启动后离屏完整走一遍显示流程，消除首次唤起时的冷启动开销（对应 macOS prewarm）。
@@ -121,6 +134,7 @@ public partial class App : Application
         var sw = Stopwatch.StartNew();
         var target = Foreground.Capture();
         if (target != null && (target.Hwnd == panel.Hwnd || target.Hwnd == messages?.Handle)) target = null;
+        panel.PrepareEntrance();
         model.Begin(target);
         var tModel = sw.Elapsed.TotalMilliseconds;
         panel.PlaceOn(target?.Hwnd ?? IntPtr.Zero);
@@ -192,31 +206,96 @@ public partial class App : Application
         tray?.Dispose();
         hotKey?.Dispose();
         messages?.Dispose();
+        settingsWindow?.Close();
+        hud?.Close();
         panel?.Close();
         engine?.Dispose();
         Exit();
     }
 
-    /// "Alt+Q" / "Ctrl+Shift+Space" / "Win+F2" → (修饰键, 虚拟键码)
-    internal static (uint mods, uint vk) ParseHotKey(string spec)
+    // MARK: 指令模式（D31）
+
+    /// 指令完成：关闭面板，删除的文件移到回收站，最后提示（模板库窗口尚未实现，/edit 只提示）。
+    private void FinishCommand(CommandOutcome outcome)
     {
-        uint mods = 0, vk = 'Q';
-        foreach (var raw in spec.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        Hide(restoreFocus: true);
+        // 核心的提示沿用 macOS 的"废纸篓"（与"回收站"等长，替换不影响高亮位置）
+        var message = outcome.Message.Replace("废纸篓", "回收站").Replace("the Trash", "the Recycle Bin");
+        bool trashed = true;
+        if (outcome.TrashPath is string path)
         {
-            var p = raw.ToLowerInvariant();
-            switch (p)
-            {
-                case "ctrl" or "control": mods |= Win32.MOD_CONTROL; break;
-                case "alt": mods |= Win32.MOD_ALT; break;
-                case "shift": mods |= Win32.MOD_SHIFT; break;
-                case "win": mods |= Win32.MOD_WIN; break;
-                case "space": vk = 0x20; break;
-                default:
-                    if (p.Length == 1 && char.IsLetterOrDigit(p[0])) vk = char.ToUpperInvariant(p[0]);
-                    else if (p.StartsWith('f') && int.TryParse(p[1..], out int f) && f is >= 1 and <= 24) vk = (uint)(0x70 + f - 1);
-                    break;
-            }
+            trashed = RecycleBin.Move(path);
+            engine?.Reload();
+            if (!trashed) message = Loc.T($"无法移到回收站：{Path.GetFileName(path)}", $"Could not move {Path.GetFileName(path)} to the Recycle Bin");
         }
-        return (mods == 0 ? Win32.MOD_ALT : mods, vk);
+        if (outcome.OpenEditor is string name && string.IsNullOrEmpty(message))
+            message = Loc.T($"Windows 版还没有模板库窗口，{name} 可在模板文件夹中编辑", $"The template library is not available on Windows yet. Edit {name} in the templates folder");
+        Log.Event("command", new() { ["open_editor"] = outcome.OpenEditor is not null, ["trash"] = outcome.TrashPath is not null, ["trashed"] = trashed });
+        if (Settings.DebugHooks) Log.Event("debug_command", new() { ["message"] = message, ["trash_path"] = outcome.TrashPath, ["open_editor"] = outcome.OpenEditor });
+        if (!string.IsNullOrEmpty(message)) (hud ??= new Hud()).Show(message);
+    }
+
+    // MARK: 设置
+
+    private void ShowSettings()
+    {
+        if (settingsWindow is null)
+        {
+            settingsWindow = new SettingsWindow(this);
+            settingsWindow.Closed += (_, _) => settingsWindow = null;
+        }
+        settingsWindow.ShowAndActivate();
+    }
+
+    private void OnSettingChanged(string key)
+    {
+        switch (key)
+        {
+            case "language" or "templateLanguage":
+                Loc.En = Settings.UiLocale == "en";
+                engine?.SetLocale(Settings.UiLocale, Settings.TemplateLocale);
+                model?.Refresh();
+                panel?.ApplyLanguage();
+                settingsWindow?.Rebuild();
+                break;
+            case "forceAsciiInput":
+                panel?.ApplyInputScope();
+                break;
+            case "expandPasteEnabled":
+                panel?.ApplyLanguage();
+                break;
+        }
+        Log.Event("setting", new() { ["key"] = key });
+    }
+
+    public bool HotKeyRegistered => hotKey?.IsRegistered ?? false;
+    public int HotKeyError => hotKey?.LastError ?? 0;
+    public string HotKeyText => hotKey?.Describe() ?? Settings.HotKey;
+
+    /// 录制新快捷键期间暂停全局热键（否则按下当前组合会唤起面板）。
+    public void SuspendHotKey() => hotKey?.Unregister();
+
+    public void ResumeHotKey()
+    {
+        if (hotKey is null || hotKey.IsRegistered) return;
+        var (mods, vk) = HotKeySpec.Parse(Settings.HotKey);
+        hotKey.Register(mods, vk);
+    }
+
+    /// 改用新的快捷键：注册成功才保存；失败（被其他程序占用）时恢复原快捷键并返回错误码。
+    public bool TrySetHotKey(uint mods, uint vk, out int error)
+    {
+        error = 0;
+        if (hotKey is null) return false;
+        if (hotKey.Register(mods, vk))
+        {
+            Settings.HotKey = HotKeySpec.Format(mods, vk);
+            tray?.SetTip($"Nekro Qantrip · {hotKey.Describe()}");
+            return true;
+        }
+        error = hotKey.LastError;
+        var (m, k) = HotKeySpec.Parse(Settings.HotKey);
+        hotKey.Register(m, k);
+        return false;
     }
 }
