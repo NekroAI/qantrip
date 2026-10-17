@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import snapshot from '../lib/demo-snapshot.json'
 
 // 官网在线演示（docs/decisions.md D27）：浏览器中运行 Qantrip 的真实核心（Rust → WebAssembly），
@@ -138,18 +138,23 @@ export function LiveDemo() {
     if (!touched) setTouched(true)
   }
 
+  /** 程序改写输入后要放置的光标位置；在 DOM 更新后、处理下一个按键之前同步设置，
+   *  避免快速输入时光标被异步挪动导致字符插错位置 */
+  const pendingCaret = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const el = field.current
+    if (pendingCaret.current === null || !el) return
+    el.focus()
+    el.setSelectionRange(pendingCaret.current, pendingCaret.current)
+    if (overlay.current) overlay.current.scrollLeft = el.scrollLeft
+    pendingCaret.current = null
+  }, [input])
+
   const setText = (text: string, caret?: number) => {
     setSelectedKey(undefined)
     setIndex(0)
+    pendingCaret.current = caret ?? text.length
     analyze(text)
-    requestAnimationFrame(() => {
-      const el = field.current
-      if (!el) return
-      el.focus()
-      const at = caret ?? text.length
-      el.setSelectionRange(at, at)
-      if (overlay.current) overlay.current.scrollLeft = el.scrollLeft
-    })
   }
 
   const select = (i: number) => {
