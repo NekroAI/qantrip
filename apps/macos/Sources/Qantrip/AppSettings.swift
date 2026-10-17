@@ -39,6 +39,9 @@ final class AppSettings {
     var copyOnly: Bool { didSet { d.set(copyOnly, forKey: "copyOnly") } }
     var recordUsage: Bool { didSet { d.set(recordUsage, forKey: "recordUsage") } }
     var onboardingDone: Bool { didSet { d.set(onboardingDone, forKey: "onboardingDone") } }
+    /// 同步服务端地址（可改为自托管地址）
+    var syncServer: String { didSet { d.set(syncServer, forKey: "syncServer") } }
+    static let defaultSyncServer = "https://qantrip.nekro.ai"
 
     var interfaceLanguage: LanguageChoice {
         didSet { d.set(interfaceLanguage.rawValue, forKey: "interfaceLanguage"); onLanguageChange?() }
@@ -92,6 +95,7 @@ final class AppSettings {
         copyOnly = bool("copyOnly", false)
         recordUsage = bool("recordUsage", true)
         onboardingDone = bool("onboardingDone", false)
+        syncServer = ud.string(forKey: "syncServer") ?? Self.defaultSyncServer
         interfaceLanguage = LanguageChoice(rawValue: ud.string(forKey: "interfaceLanguage") ?? "") ?? .auto
         templateLanguage = LanguageChoice(rawValue: ud.string(forKey: "templateLanguage") ?? "") ?? .auto
     }

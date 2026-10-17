@@ -14,6 +14,8 @@ CORE="$ROOT/core"
 MAC="$ROOT/apps/macos"
 DIST="${DIST:-$ROOT/dist}"
 export PATH="$HOME/.cargo/bin:$PATH"
+# 与 Info.plist 的 LSMinimumSystemVersion 一致；否则依赖中的 C 代码会按本机系统版本编译
+export MACOSX_DEPLOYMENT_TARGET=14.0
 
 HOST_ARCH="$(uname -m)"
 ARCH="${ARCH:-$HOST_ARCH}"

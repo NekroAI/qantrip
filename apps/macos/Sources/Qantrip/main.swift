@@ -41,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         watchTemplates()
+        SyncService.shared.onChange = { [weak self] in
+            self?.engine.reload()
+            LibraryWindow.model.reload()
+        }
+        SyncService.shared.start()
         #if QANTRIP_DEBUG_HOOKS
         setupDebugHooks()
         #endif
@@ -82,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let work = DispatchWorkItem { [weak self] in
             self?.engine.reload()
             LibraryWindow.model.reload()
+            MainActor.assumeIsolated { SyncService.shared.scheduleSync() }
         }
         reloadWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -102,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ai.nekro.qantrip.debug.param", #selector(debugParam(_:))),
             ("ai.nekro.qantrip.debug.window", #selector(debugWindow(_:))),
             ("ai.nekro.qantrip.debug.editor", #selector(debugEditor(_:))),
+            ("ai.nekro.qantrip.debug.sync", #selector(debugSync(_:))),
         ]
         for (name, sel) in hooks {
             center.addObserver(self, selector: sel, name: .init(name), object: nil, suspensionBehavior: .deliverImmediately)
@@ -154,9 +161,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 打开窗口：name = settings / library[:模板名] / onboarding
+    /// 驱动同步界面：op = signin / create / join / confirm:<码> / approve:<码> / sync / reverify
+    @objc private func debugSync(_ note: Notification) {
+        let op = (note.userInfo?["op"] as? String) ?? ""
+        MainActor.assumeIsolated { Self.runDebugSync(op) }
+    }
+
+    @MainActor private static func runDebugSync(_ op: String) {
+        let s = SyncService.shared
+        let arg = op.split(separator: ":", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+        switch op.split(separator: ":").first.map(String.init) ?? "" {
+        case "signin": s.signIn()
+        case "create": s.createVault()
+        case "join": s.startJoin()
+        case "confirm": s.confirmJoin(arg)
+        case "approve": if let r = s.joinRequests.first(where: { $0.status == .readyForCode }) { s.approve(r.joinId, code: arg) }
+        case "sync": s.syncNow()
+        case "reverify": s.reverify()
+        case "refresh": s.refresh()
+        case "status":
+            let st = s.status
+            SpikeLog.event("sync_status", [
+                "signed_in": st?.signedIn ?? false, "has_vault": st?.hasVault ?? false, "enrolled": st?.enrolled ?? false,
+                "remote_vault": s.remoteVault.map { "\($0)" } ?? "nil", "join_stage": s.join.map { "\($0.stage)" } ?? "nil",
+                "sas": s.join?.sas ?? "", "confirm_codes": s.confirmCodes.values.joined(separator: ","),
+                "requests": s.joinRequests.map { "\($0.status)" }.joined(separator: ","), "devices": s.devices.count,
+                "working": s.working ?? "", "error": s.error ?? "", "last_sync": st?.lastSync ?? 0,
+                "pulled": s.lastReport?.pulled ?? 0, "alerts": st?.alerts.count ?? 0,
+            ])
+        default: break
+        }
+    }
+
     @objc private func debugWindow(_ note: Notification) {
         let name = (note.userInfo?["name"] as? String) ?? ""
         if name == "settings" { openSettings() }
+        else if name == "settings:sync" { openSyncSettings() }
         else if name == "onboarding" { Onboarding.show() }
         else if name.hasPrefix("library") { LibraryWindow.show(select: name.split(separator: ":").dropFirst().first.map(String.init)) }
     }
@@ -210,14 +250,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return kr == KERN_SUCCESS ? (Double(info.phys_footprint) / 1_048_576 * 10).rounded() / 10 : -1
     }
 
+    @objc func openSyncSettings() {
+        UserDefaults.standard.set("sync", forKey: "settingsTab")
+        openSettings()
+    }
+
     @objc func openSettings() {
-        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 560, height: 400)) { SettingsView() }
+        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 580, height: 520)) { SettingsView() }
     }
 }
 
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if SyncService.shared.pendingJoinCount > 0 {
+            menu.addItem(withTitle: L("有设备请求加入同步…", "A Mac wants to join sync…"), action: #selector(openSyncSettings), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: L("打开面板（\(hotKey.spec.display)）", "Open Panel (\(hotKey.spec.display))"), action: #selector(openPanel), keyEquivalent: "").target = self
         menu.addItem(withTitle: L("模板库…", "Template Library…"), action: #selector(openLibrary), keyEquivalent: "l").target = self
         menu.addItem(withTitle: L("设置…", "Settings…"), action: #selector(openSettings), keyEquivalent: ",").target = self

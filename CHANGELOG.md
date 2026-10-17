@@ -6,11 +6,16 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 - Website at [qantrip.nekro.ai](https://qantrip.nekro.ai) with an interactive demo running the real core compiled to WebAssembly.
-- Sync server (`apps/cloud/`): GitHub sign-in, desktop sign-in with PKCE, and the end-to-end encrypted sync API (vaults, records with compare-and-swap, signed roster, key envelopes, device-join relay). The server stores ciphertext only; the sync client is in progress.
-- Sync security design v0.2 ([`docs/sync-design.md`](docs/sync-design.md)), revised after an adversarial review.
+- Sync server (`apps/cloud/`): GitHub sign-in, desktop sign-in with PKCE, and the end-to-end encrypted sync API (vaults, records with compare-and-swap, signed roster, key envelopes, device-join relay). The server stores ciphertext only.
+- End-to-end encrypted sync in the macOS app (Settings › Sync): sign in with GitHub, create a vault with a 24-word recovery phrase, add a Mac by typing a code on each side, recover with the phrase, remove devices with key rotation. Syncs every 5 minutes and after template changes; the panel never waits on the network.
+- English interface and English built-in templates. Interface and template language follow the system by default and can be set separately.
+- Sync security design v0.3 ([`docs/sync-design.md`](docs/sync-design.md)): bidirectional join confirmation and signed records, after a second adversarial review.
+- `llms.txt`, sitemap and structured data on the website; Chinese pages under `/zh`.
 
 ### Changed
 - Repository renamed from `NekroAI/nekro-qantrip` to `NekroAI/qantrip`.
+- Built-in templates are grouped by workflow (understand, write, review, ship, translate).
+- Release DMGs are also published as `Qantrip-macOS-arm64.dmg` / `Qantrip-macOS-x86_64.dmg`, so `releases/latest/download/…` links always point to the newest version.
 
 ## [0.1.0] — 2026-10-17
 

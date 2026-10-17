@@ -3,15 +3,19 @@ import QantripCore
 import SwiftUI
 
 struct SettingsView: View {
+    /// 当前标签页；菜单中的同步提示会直接打开"同步"页
+    @AppStorage("settingsTab") private var tab = "general"
+
     var body: some View {
-        TabView {
-            GeneralSettings().tabItem { Label(L("通用", "General"), systemImage: "gearshape") }
-            InsertSettings().tabItem { Label(L("插入", "Insert"), systemImage: "text.insert") }
-            TemplateSettings().tabItem { Label(L("模板", "Templates"), systemImage: "books.vertical") }
-            PrivacySettings().tabItem { Label(L("隐私", "Privacy"), systemImage: "hand.raised") }
-            AboutView().tabItem { Label(L("关于", "About"), systemImage: "info.circle") }
+        TabView(selection: $tab) {
+            GeneralSettings().tabItem { Label(L("通用", "General"), systemImage: "gearshape") }.tag("general")
+            InsertSettings().tabItem { Label(L("插入", "Insert"), systemImage: "text.insert") }.tag("insert")
+            TemplateSettings().tabItem { Label(L("模板", "Templates"), systemImage: "books.vertical") }.tag("templates")
+            SyncSettings().tabItem { Label(L("同步", "Sync"), systemImage: "arrow.triangle.2.circlepath") }.tag("sync")
+            PrivacySettings().tabItem { Label(L("隐私", "Privacy"), systemImage: "hand.raised") }.tag("privacy")
+            AboutView().tabItem { Label(L("关于", "About"), systemImage: "info.circle") }.tag("about")
         }
-        .frame(width: 560, height: 400)
+        .frame(width: 580, height: 520)
     }
 }
 

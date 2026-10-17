@@ -1,0 +1,149 @@
+//! 同步联调工具：在命令行里扮演一台设备，对真实服务端（如 staging）测试登录、创建、加入、同步。
+//! 密钥以明文 JSON 存在 `<dir>/secrets.json`，仅供测试，不要用于真实数据。
+//!
+//! cargo run --example sync_cli -- <server> <dir> <command> [args]
+//! 命令：signin | status | exists | create | join [codefile] | requests | approve <join_id> <code> | approve-auto <codefile>
+//!       | confirm <code> | sync | devices | revoke <device_id> [phrase] | reverify | recover <phrase…>
+
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use qantrip_core::sync::{JoinStage, PhraseLanguage, SecretStore, SecretStoreError, SyncClient};
+
+struct FileStore {
+    path: PathBuf,
+    data: Mutex<BTreeMap<String, String>>,
+}
+
+impl FileStore {
+    fn open(path: PathBuf) -> FileStore {
+        let data = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        FileStore { path, data: Mutex::new(data) }
+    }
+    fn save(&self, data: &BTreeMap<String, String>) {
+        std::fs::write(&self.path, serde_json::to_string_pretty(data).unwrap()).unwrap();
+    }
+}
+
+impl SecretStore for FileStore {
+    fn get(&self, key: String) -> Result<Option<Vec<u8>>, SecretStoreError> {
+        Ok(self.data.lock().unwrap().get(&key).map(|v| hex_decode(v)))
+    }
+    fn set(&self, key: String, value: Vec<u8>) -> Result<(), SecretStoreError> {
+        let mut d = self.data.lock().unwrap();
+        d.insert(key, value.iter().map(|b| format!("{b:02x}")).collect());
+        self.save(&d);
+        Ok(())
+    }
+    fn delete(&self, key: String) -> Result<(), SecretStoreError> {
+        let mut d = self.data.lock().unwrap();
+        d.remove(&key);
+        self.save(&d);
+        Ok(())
+    }
+}
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let [server, dir, cmd, rest @ ..] = args.as_slice() else {
+        eprintln!("usage: sync_cli <server> <dir> <command> [args]");
+        std::process::exit(2);
+    };
+    let dir = PathBuf::from(dir);
+    let templates = dir.join("templates");
+    std::fs::create_dir_all(&templates).unwrap();
+    let store = Arc::new(FileStore::open(dir.join("secrets.json")));
+    let client = SyncClient::new(server.clone(), dir.join("data").to_string_lossy().into(), templates.to_string_lossy().into(), store);
+
+    let result: Result<String, qantrip_core::sync::SyncError> = (|| match cmd.as_str() {
+        "signin" => {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr().unwrap().port());
+            let url = client.begin_sign_in(redirect)?;
+            println!("open: {url}");
+            if std::env::var_os("QANTRIP_NO_OPEN").is_none() {
+                let _ = std::process::Command::new("open").arg(&url).status();
+            }
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = conn.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let target = req.split_whitespace().nth(1).unwrap_or("").to_string();
+            let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nok, close this tab");
+            let query = target.split_once('?').map(|x| x.1).unwrap_or("");
+            let get = |k: &str| query.split('&').find_map(|p| p.strip_prefix(&format!("{k}="))).unwrap_or("").to_string();
+            client.finish_sign_in(get("code"), get("state"))
+        }
+        "status" => Ok(format!("{:#?}", client.status())),
+        "exists" => client.remote_vault_exists().map(|b| b.to_string()),
+        "create" => client.create_vault(PhraseLanguage::English),
+        "join" => {
+            let p = client.start_join()?;
+            println!("join_id {}", p.join_id);
+            let mut shown = false;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let p = client.poll_join()?;
+                match p.stage {
+                    JoinStage::EnterCodeOnOtherDevice if !shown => {
+                        let sas = p.sas.unwrap_or_default();
+                        println!("SAS {sas}");
+                        if let Some(f) = rest.first() {
+                            std::fs::write(f, &sas).unwrap();
+                        }
+                        shown = true;
+                    }
+                    JoinStage::EnterCodeHere => {
+                        let Some(f) = rest.first() else { return Ok("enter confirm code with `confirm`".into()) };
+                        let path = format!("{f}.confirm");
+                        while !std::path::Path::new(&path).exists() {
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        }
+                        let code = std::fs::read_to_string(&path).unwrap();
+                        let code = std::env::var("QANTRIP_WRONG_CONFIRM").unwrap_or(code);
+                        client.confirm_join(code.trim().to_string())?;
+                    }
+                    JoinStage::Completed => return client.sync_now().map(|r| format!("joined; {r:?}")),
+                    JoinStage::Expired => return Ok("expired".into()),
+                    _ => {}
+                }
+            }
+        }
+        "requests" => client.list_join_requests().map(|r| format!("{r:#?}")),
+        "approve" => client.approve_join(rest[0].clone(), rest[1].clone()).map(|_| "approved".into()),
+        // 在同一进程里回复并等待校验码：反复列出请求，校验码文件出现后批准
+        "approve-auto" => loop {
+            let reqs = client.list_join_requests()?;
+            if let Some(r) = reqs.iter().find(|r| r.status == qantrip_core::sync::JoinRequestStatus::ReadyForCode)
+                && let Ok(code) = std::fs::read_to_string(&rest[0])
+            {
+                let confirm = client.approve_join(r.join_id.clone(), code.trim().to_string())?;
+                // 确认码写到校验码文件旁边，供新设备读取
+                std::fs::write(format!("{}.confirm", rest[0]), &confirm).unwrap();
+                break Ok(format!("approved, confirm code {confirm}"));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        },
+        "sync" => client.sync_now().map(|r| format!("{r:#?}")),
+        "devices" => client.devices().map(|d| format!("{d:#?}")),
+        "confirm" => client.confirm_join(rest[0].clone()).map(|_| "confirmed".into()),
+        "revoke" => client.revoke_device(rest[0].clone(), rest.get(1).cloned()).map(|r| format!("{r:?}")),
+        "reverify" => client.reverify().map(|s| format!("{s:?}")),
+        "recover" => client.recover(rest.join(" ")).map(|_| "recovered".into()),
+        other => Ok(format!("unknown command {other}")),
+    })();
+    match result {
+        Ok(s) => println!("{s}"),
+        Err(e) => {
+            eprintln!("error: {e:?}");
+            std::process::exit(1);
+        }
+    }
+}

@@ -4,7 +4,9 @@
 
 ## 当前阶段
 
-**macOS Demo 0.1.0 已发布（预发布，私有仓库 Release）。** 技术路线为 Rust 核心 + UniFFI + 各平台原生外壳（D6）。macOS P0 已完成：面板、语法、17 个内置模板、设置、模板库与编辑器、导入导出、引导、图标（D7–D21）。打包与发布流程见 D22。云服务（`apps/cloud/`，D23 / D24）：官网与同步服务端（C0、C1）已上线 `qantrip.nekro.ai`（staging：`qantrip-staging.nekro.ai`），安全设计见 `docs/sync-design.md` v0.2。下一步：C2 端到端加密客户端（Rust 核心）与 C3 macOS 同步界面；负责人在 MacBook 上日常使用反馈；之后 Windows 可行性验证。
+**macOS Demo 0.1.0 已发布（预发布，私有仓库 Release）。** 技术路线为 Rust 核心 + UniFFI + 各平台原生外壳（D6）。macOS P0 已完成：面板、语法、17 个内置模板、设置、模板库与编辑器、导入导出、引导、图标（D7–D21）。打包与发布流程见 D22。云服务（`apps/cloud/`，D23 / D24）：官网与同步服务端（C0、C1）已上线 `qantrip.nekro.ai`（staging：`qantrip-staging.nekro.ai`），安全设计见 `docs/sync-design.md` v0.3。C2 同步客户端（`core/src/sync/`）与 C3 macOS 同步界面（设置 › 同步）已完成，待负责人整体测试；官网与应用已中英双语（D29）。之后 Windows 可行性验证。
+
+- 同步联调：`cargo run --example sync_cli -- <server> <dir> <命令>` 在命令行扮演一台设备（见文件头注释）
 
 - 开发构建：`scripts/build-macos.sh`（产物在 `dist/`，本机开发证书签名）
 - 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布
@@ -20,7 +22,7 @@
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
 | `docs/install-macos.md` | macOS 安装说明（同时用作 Release 说明） |
-| `docs/sync-design.md` | 同步与端到端加密安全设计 v0.2（含成本模型、审查记录） |
+| `docs/sync-design.md` | 同步与端到端加密安全设计 v0.3（含成本模型、两轮审查记录） |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。
 
