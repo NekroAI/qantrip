@@ -124,12 +124,16 @@ final class Inserter {
         }
     }
 
+    /// 恢复原剪贴板。附加 TransientType：这次写入只是"还原"，不是用户的新复制，
+    /// 剪贴板管理器据此不会重复记录或把原内容顶到最前（不加 ConcealedType，原内容本身并非机密）。
     private func restore(_ snapshot: [[NSPasteboard.PasteboardType: Data]]) {
         pb.clearContents()
         guard !snapshot.isEmpty else { return }
+        let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
         let items = snapshot.map { dict -> NSPasteboardItem in
             let item = NSPasteboardItem()
             for (type, data) in dict { item.setData(data, forType: type) }
+            if dict[transient] == nil { item.setData(Data(), forType: transient) }
             return item
         }
         pb.writeObjects(items)

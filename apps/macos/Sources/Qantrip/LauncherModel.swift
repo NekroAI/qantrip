@@ -122,9 +122,9 @@ final class LauncherModel {
         }
     }
 
+    /// 回车被阻止：只做视觉反馈（抖动 + 图标），不发提示音。
     private func reject() {
         rejectCount += 1
-        NSSound.beep()
     }
 
     // MARK: 鼠标

@@ -143,7 +143,7 @@ struct LauncherView: View {
         VStack(alignment: .leading, spacing: 12) {
             if let t = model.analysis.template {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(t.name).font(.system(size: 17, weight: .semibold, design: .monospaced))
+                    Text(t.name).font(.qDisplay(22))
                         .foregroundStyle(Color.qAccent)
                     Text(t.description).font(.system(size: 13)).foregroundStyle(.secondary)
                     Spacer()
@@ -240,7 +240,7 @@ struct LauncherView: View {
         } else if let w = model.analysis.diagnostics.first(where: { $0.severity == .warning }) {
             Label(w.message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(1)
         } else if let c = model.analysis.canonical, model.analysis.locked {
-            Text(c).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
+            Text(c).font(.qMono(11)).foregroundStyle(.tertiary).lineLimit(1)
                 .truncationMode(.middle)
         }
     }
@@ -286,10 +286,10 @@ private struct CandidateRow: View {
                 Image(systemName: candidate.section == "试试看" ? "lightbulb" : "clock.arrow.circlepath")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
                 Text(colorizedInvocation(candidate.title))
-                    .font(.system(size: 13, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+                    .font(.qMono(13)).lineLimit(1).truncationMode(.tail)
             } else {
                 Text(candidate.title)
-                    .font(.system(size: 14, weight: candidate.kind == .template ? .semibold : .regular, design: .monospaced))
+                    .font(.qMono(14, weight: candidate.kind == .template ? 600 : 400))
                     .foregroundStyle(titleColor)
                 if !candidate.subtitle.isEmpty {
                     Text(candidate.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
@@ -363,7 +363,7 @@ private struct ParamChip: View {
 
     private var label: some View {
         HStack(spacing: 4) {
-            Text(param.name).font(.system(size: 11, design: .monospaced))
+            Text(param.name).font(.qMono(11))
                 .foregroundStyle(param.isSet ? Color.qOption : .secondary)
             Text(param.display).font(.system(size: 11, weight: param.isSet ? .semibold : .regular))
                 .foregroundStyle(param.isSet ? .primary : .tertiary)

@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import QantripCore
 import SwiftUI
 
@@ -8,7 +9,7 @@ import SwiftUI
 /// ⌘↩ 不是文本命令，在 `performKeyEquivalent` 中处理。
 final class CommandField: NSTextField, NSTextFieldDelegate {
     weak var model: LauncherModel?
-    private let ghost = NSTextField(labelWithString: "")
+    private let ghost = GhostView()
     private var lastAnalysis: Analysis?
 
     init() {
@@ -23,10 +24,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
         cell?.isScrollable = true
         delegate = self
 
-        ghost.font = Theme.commandFont
-        ghost.textColor = .tertiaryLabelColor
         ghost.isHidden = true
-        addSubview(ghost)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -126,6 +124,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
         updateGhost()
     }
 
+    /// 灰字补全画在字段编辑器内部、与输入文字同一行，保证基线一致。
     private func updateGhost() {
         guard let editor, let lm = editor.layoutManager, let tc = editor.textContainer,
               let g = lastAnalysis?.ghost, !g.isEmpty,
@@ -135,14 +134,46 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
             ghost.isHidden = true
             return
         }
+        if ghost.superview !== editor { editor.addSubview(ghost) }
         lm.ensureLayout(for: tc)
         let used = lm.usedRect(for: tc)
-        let origin = editor.convert(NSPoint(x: used.maxX + editor.textContainerOrigin.x, y: 0), to: self)
-        ghost.stringValue = g
-        ghost.sizeToFit()
-        let x = origin.x
-        ghost.frame.origin = NSPoint(x: x, y: (bounds.height - ghost.frame.height) / 2)
-        ghost.isHidden = x + ghost.frame.width > bounds.width
+        let line = lm.extraLineFragmentRect.isEmpty && lm.numberOfGlyphs > 0
+            ? lm.lineFragmentRect(forGlyphAt: max(lm.numberOfGlyphs - 1, 0), effectiveRange: nil)
+            : NSRect(x: 0, y: used.minY, width: 0, height: used.height)
+        ghost.text = NSAttributedString(string: g, attributes: [
+            .font: Theme.commandFont, .foregroundColor: NSColor.tertiaryLabelColor,
+        ])
+        // 基线：行片段顶部 + 字形在行内的基线偏移（取最后一个字形；空输入时按字体度量估算）
+        let font = Theme.commandFont
+        let baselineInLine = lm.numberOfGlyphs > 0
+            ? lm.location(forGlyphAt: lm.numberOfGlyphs - 1).y
+            : font.ascender
+        let baseline = line.minY + editor.textContainerOrigin.y + baselineInLine
+        let width = ceil(ghost.text.size().width) + 2
+        let top = baseline - ceil(font.ascender) - 2
+        let x = (lm.numberOfGlyphs == 0 ? 0 : used.maxX) + editor.textContainerOrigin.x
+        ghost.baseline = baseline - top
+        ghost.frame = NSRect(x: x, y: top, width: width, height: ceil(font.ascender - font.descender) + 4)
+        // 超出可见宽度时不显示
+        ghost.isHidden = convert(NSPoint(x: ghost.frame.maxX, y: 0), from: editor).x > bounds.width
+    }
+}
+
+/// 在翻转坐标系中从左上角绘制文字，与 NSTextView 的行布局一致。
+final class GhostView: NSView {
+    var text = NSAttributedString() { didSet { needsDisplay = true } }
+    /// 视图内基线的 y（翻转坐标）
+    var baseline: CGFloat = 0 { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.translateBy(x: 0, y: baseline)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.textPosition = .zero
+        CTLineDraw(CTLineCreateWithAttributedString(text), ctx)
+        ctx.restoreGState()
     }
 }
 

@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Theme.registerFonts()
         let usage = Self.templatesDir.deletingLastPathComponent().appendingPathComponent("usage.json")
         engine = Engine(userDir: Self.templatesDir.path, usagePath: usage.path)
         launcher = LauncherController(engine: engine)

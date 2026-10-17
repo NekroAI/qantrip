@@ -36,6 +36,8 @@ bundle() { # <可执行文件名> <Info.plist>
   cp "$2" "$app/Contents/Info.plist"
 }
 bundle Qantrip "$MAC/Resources/Info.plist"
+mkdir -p "$DIST/Qantrip.app/Contents/Resources"
+cp -R "$MAC/Resources/Fonts" "$DIST/Qantrip.app/Contents/Resources/"
 bundle PasteProbe "$MAC/Resources/PasteProbe-Info.plist"
 cp "$BIN/QantripDebug" "$DIST/qantrip-debug"
 

@@ -35,7 +35,8 @@ def frontmost():
 
 
 def pb_dump():
-    return sh(PBTOOL, "dump")
+    # 恢复时会附加 TransientType 标记（D18），比对原内容时忽略它
+    return "".join(l + "\n" for l in sh(PBTOOL, "dump").splitlines() if "org.nspasteboard.TransientType" not in l)
 
 
 def maccy_texts():
@@ -45,6 +46,15 @@ def maccy_texts():
     rows = con.execute("select ZVALUE from ZHISTORYITEMCONTENT where ZTYPE='public.utf8-plain-text'").fetchall()
     con.close()
     return [bytes(r[0]).decode("utf-8", "replace") for r in rows if r[0] is not None]
+
+
+def maccy_count(text):
+    if not os.path.exists(MACCY):
+        return 0
+    con = sqlite3.connect(f"file:{MACCY}?mode=ro", uri=True)
+    row = con.execute("select coalesce(sum(ZNUMBEROFCOPIES),0) from ZHISTORYITEM where ZTITLE = ?", (text,)).fetchone()
+    con.close()
+    return row[0]
 
 
 def check(name, ok, detail=""):
@@ -137,6 +147,18 @@ def main():
     got = wait_probe(text + text, timeout=4)
     check("展开粘贴：连续粘贴两次", got == text + text, f"收到 {len(got)} 字符，期望 {2 * len(text)}")
     time.sleep(0.8)
+
+    # 恢复原剪贴板不应被剪贴板管理器当作一次新的复制
+    original = f"restore-count-{int(time.time())}"
+    subprocess.run(["pbcopy"], input=original, text=True)
+    time.sleep(1.5)
+    before_count = maccy_count(original)
+    probe_reset()
+    debug("paste", TEXTS["zh"])
+    time.sleep(2.0)
+    after_count = maccy_count(original)
+    check("恢复剪贴板不增加 Maccy 复制计数", before_count == after_count and sh("pbpaste") == original,
+          f"计数 {before_count} → {after_count}")
 
     # 剪贴板在恢复窗口内被用户修改 → 不覆盖
     defaults("restoreDelayMs", 1500)
