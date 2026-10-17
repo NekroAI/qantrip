@@ -29,14 +29,14 @@
 - **评审意见：** 建议推迟到 P2，P0/P1 先用纯文件 + Git / 网盘同步，因为 E2EE 客户端（密钥层级、配对、轮换、冲突）工作量大。
 - **负责人决定：** 保留。理由是团队已有多个 Cloudflare 项目，服务端可以改造复用。
 - **评审补充（已写入 PRD 9.2）：** 服务端确实可以复用，但主要工作量在客户端。因此 P1 拆成"同步服务端"和"E2EE 客户端"两个工作项分别估算。
-- **可复用来源：** `nekro-nxt-community` 项目的 `apps/site`（Hono + D1 + Drizzle + React Router，部署在 Workers 上）
+- **可复用来源：** `nekro-nxt-community` 项目的 `apps/site`（Hono + D1 + React Router，部署在 Workers 上；数据层是原生 SQL 加一层很薄的封装，并未使用 Drizzle——2026-10-17 核对更正）
 
   | 文件 / 表 | 可复用为 |
   |---|---|
   | `server/oauth.ts`（PKCE 授权码流程）、`oauth_codes` 表 | 桌面端通过浏览器回调登录 |
   | `instance_grants` 表（access/refresh 令牌哈希轮换、`revoked_at`） | 设备授权与撤销 |
   | `wrangler.jsonc` 中的 `WRITE_LIMITER`、`audit_log` 表 | 限流、审计 |
-  | `migrations/` + Drizzle | 迁移体系 |
+  | `migrations/`（wrangler d1 migrations） | 迁移体系 |
 
 - **禁止复用：** `server/crypto.ts`。它用服务端环境变量 `CONFIG_ENCRYPTION_KEY` 派生密钥加解密，服务端能解密，违反 E2EE 要求。
 - 其他 Cloudflare 参考项目：`nekro-cloud`、`nekro-endpoint`（同一套 Hono/D1/Drizzle 技术栈）。
@@ -188,6 +188,14 @@
 - **版本：** 根目录 `VERSION` 为版本号，构建号取 git 提交数。
 - **限制：** 仓库私有期间应用无法匿名检查更新，自动更新提示待开源后实现。Mac mini 未安装 Rosetta，x86_64 版本只在 CI 中构建、未实机运行。
 - **内存：** 空闲占用约 45MB（字体约 6MB，其余为 SwiftUI 面板常驻内容）。在可接受范围，不再为此牺牲字体或首次唤起速度。
+
+### D23 云服务与官网：同一个 Worker（2026-10-17）
+
+- **形态：** 一个 Worker「nekro-qantrip」同时承载官网（React Router 服务端渲染）、账号页面与 `/api/v1/*`（Hono），数据在 D1，安装包镜像在 R2；另有 staging 环境。沿用 `nekro-nxt-community` 的入口分流、GitHub 登录、桌面端 PKCE 授权、令牌哈希轮换、限流与审计；不复用其 `server/crypto.ts`（D2）。
+- **域名：** `qantrip.nekro.ai`，staging 为 `qantrip-staging.nekro.ai`。
+- **上线：** 官网公开；下载与更新接口先不公开（下载页显示即将开放，R2 镜像与版本接口由开关控制）。
+- **代码位置：** 本仓库 `apps/cloud/`，以 AGPL-3.0-or-later 授权（D20）。负责人希望借此强化安全透明的印象：用户可以自行部署后端，客户端可以切换后端地址；暂不编写详细的自部署指引。
+- **分期：** C0 骨架与官网 → C1 同步服务端 → C2 端到端加密客户端（Rust 核心）→ C3 macOS 界面 → C4 自托管认证。C0 与安全设计文档（`docs/sync-design.md`）并行，安全设计经负责人确认后才开始 C1–C3。
 
 ---
 
