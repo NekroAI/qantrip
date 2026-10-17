@@ -1,7 +1,7 @@
 ---
 name: fix
 description: 问题修复：找根因，最小修改
-category: 编程
+category: 编写与修复
 params:
   mode:
     type: enum

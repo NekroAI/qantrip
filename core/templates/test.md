@@ -1,7 +1,7 @@
 ---
 name: test
 description: 测试生成
-category: 编程
+category: 审查与测试
 params:
   kind:
     type: multi

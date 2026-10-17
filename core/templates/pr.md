@@ -1,7 +1,7 @@
 ---
 name: pr
 description: 生成 PR 描述
-category: 编程
+category: 提交与文档
 params:
   sections:
     type: multi

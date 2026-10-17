@@ -2,7 +2,7 @@
 name: review
 aliases: [r]
 description: 代码审查
-category: 编程
+category: 审查与测试
 params:
   focus:
     type: multi

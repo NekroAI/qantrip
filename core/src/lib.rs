@@ -4,6 +4,7 @@ uniffi::setup_scaffolding!();
 
 pub mod doc;
 pub mod grammar;
+pub mod i18n;
 pub mod library;
 pub mod template;
 pub mod usage;
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 pub use doc::{DocError, ParamDoc, TemplateDoc};
+pub use i18n::Locale;
 pub use grammar::*;
 pub use template::{Choice, ParamKind};
 
@@ -33,8 +35,8 @@ pub fn serialize_template_doc(doc: TemplateDoc) -> String {
 }
 
 #[uniffi::export]
-pub fn new_template_doc(name: String) -> TemplateDoc {
-    doc::new_doc(&name)
+pub fn new_template_doc(name: String, locale: Locale) -> TemplateDoc {
+    doc::new_doc(&name, locale)
 }
 
 /// 模板库中的一项（编辑器列表使用）。
@@ -65,6 +67,8 @@ pub struct SourceCheck {
 #[derive(uniffi::Object)]
 pub struct Engine {
     user_dir: Option<PathBuf>,
+    /// (界面语言, 内置模板语言)
+    langs: RwLock<(Locale, Locale)>,
     lib: RwLock<library::Library>,
     usage: RwLock<usage::Usage>,
 }
@@ -78,7 +82,13 @@ impl Engine {
         let user_dir = user_dir.map(PathBuf::from);
         let lib = library::Library::load(user_dir.as_deref());
         let usage = usage::Usage::load(usage_path.map(PathBuf::from));
-        Arc::new(Engine { user_dir, lib: RwLock::new(lib), usage: RwLock::new(usage) })
+        Arc::new(Engine { user_dir, langs: RwLock::new((Locale::Zh, Locale::Zh)), lib: RwLock::new(lib), usage: RwLock::new(usage) })
+    }
+
+    /// 设置界面语言与内置模板语言，并重新加载模板库。
+    pub fn set_locale(&self, ui: Locale, templates: Locale) {
+        *self.langs.write().unwrap() = (ui, templates);
+        self.reload();
     }
 
     /// 面板打开时调用：按当前前台应用（bundle id）计算排序快照。
@@ -103,7 +113,8 @@ impl Engine {
 
     /// 重新加载模板目录。
     pub fn reload(&self) {
-        let lib = library::Library::load(self.user_dir.as_deref());
+        let (ui, tpl) = *self.langs.read().unwrap();
+        let lib = library::Library::load_with(self.user_dir.as_deref(), ui, tpl);
         *self.lib.write().unwrap() = lib;
     }
 
@@ -126,8 +137,9 @@ impl Engine {
     }
 
     pub fn entries(&self) -> Vec<TemplateEntry> {
+        let tpl = self.langs.read().unwrap().1;
         let lib = self.lib.read().unwrap();
-        let mut out: Vec<TemplateEntry> = lib
+        let out: Vec<TemplateEntry> = lib
             .templates
             .iter()
             .map(|t| TemplateEntry {
@@ -136,24 +148,29 @@ impl Engine {
                 description: t.description.clone(),
                 category: t.category.clone(),
                 builtin: t.builtin,
-                overrides_builtin: !t.builtin && library::builtin_source(&t.name).is_some(),
+                overrides_builtin: !t.builtin && library::builtin_source_in(&t.name, tpl).is_some(),
                 partial: t.is_partial(),
                 path: t.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 source: t.source.clone(),
             })
             .collect();
-        out.sort_by(|a, b| (a.partial, &a.category, &a.name).cmp(&(b.partial, &b.category, &b.name)));
-        out
+        // 保持模板库顺序（内置模板按工作流分组），同分类相邻
+        let rank = |c: &str| out.iter().position(|e| e.category == c).unwrap_or(usize::MAX);
+        let ranks: Vec<usize> = out.iter().map(|e| rank(&e.category)).collect();
+        let mut idx: Vec<usize> = (0..out.len()).collect();
+        idx.sort_by_key(|&i| (out[i].partial, ranks[i], i));
+        idx.into_iter().map(|i| out[i].clone()).collect()
     }
 
     /// 内置模板的原始源码（用于"自定义内置模板"与"恢复默认"）。
     pub fn builtin_source(&self, name: String) -> Option<String> {
-        library::builtin_source(&name).map(str::to_string)
+        library::builtin_source_in(&name, self.langs.read().unwrap().1).map(str::to_string)
     }
 
     /// 校验编辑中的源码，并用 `try_input`（为空时用模板名）试用。
     pub fn check_source(&self, source: String, try_input: String) -> SourceCheck {
-        let (lib, name, problems) = library::Library::with_override(self.user_dir.as_deref(), &source);
+        let (ui, tpl) = *self.langs.read().unwrap();
+        let (lib, name, problems) = library::Library::with_override_in(self.user_dir.as_deref(), &source, ui, tpl);
         let doc = doc::parse_doc(&source).ok();
         let analysis = name.as_ref().filter(|_| problems.is_empty()).map(|n| {
             let input = if try_input.trim().is_empty() { format!("{n} ") } else { try_input.clone() };

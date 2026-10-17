@@ -1,7 +1,7 @@
 ---
 name: arch
 description: 架构评估与技术选型
-category: 编程
+category: 理解与规划
 params:
   focus:
     type: multi

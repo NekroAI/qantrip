@@ -2,7 +2,7 @@
 name: simplify
 aliases: [simp]
 description: 代码简化
-category: 编程
+category: 编写与修复
 params:
   scope:
     type: enum

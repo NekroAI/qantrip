@@ -26,6 +26,33 @@ export function analyze(input, selected) {
 }
 
 /**
+ * 在线模板编辑器：用 `source` 覆盖或新增一个模板，校验并以 `try_input` 试用。返回 JSON。
+ * @param {string} source
+ * @param {string} try_input
+ * @returns {string}
+ */
+export function check_source(source, try_input) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(try_input, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.check_source(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * 鼠标操作参数：`edit` 为 ParamEdit 的 JSON（如 `{"kind":"toggle"}`），返回 `EditResult` 的 JSON。
  * @param {string} input
  * @param {string | null | undefined} selected
@@ -82,6 +109,37 @@ export function render(input, selected) {
         return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * 切换界面与内置模板语言（`zh` / `en`）。
+ * @param {string} code
+ */
+export function set_locale(code) {
+    const ptr0 = passStringToWasm0(code, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.set_locale(ptr0, len0);
+}
+
+/**
+ * 当前语言下的内置模板（含源码），按模板库顺序。用于生成官网的模板一览。
+ * @returns {string}
+ */
+export function templates() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.templates(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export3(deferred1_0, deferred1_1, 1);
     }
 }
 function __wbg_get_imports() {

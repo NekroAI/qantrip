@@ -1,7 +1,7 @@
 ---
 name: debug
 description: 深度调试：定位并验证问题
-category: 编程
+category: 编写与修复
 params:
   mode:
     type: enum

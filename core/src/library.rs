@@ -6,7 +6,9 @@ use std::path::Path;
 use minijinja::syntax::SyntaxConfig;
 use minijinja::{Environment, UndefinedBehavior};
 
+use crate::i18n::Locale;
 use crate::template::{self, ParamKind, Template, Value};
+use crate::tr;
 
 /// 渲染沙箱限制（PRD 4.3）。MiniJinja 本身不提供文件、网络或进程访问。
 const FUEL: u64 = 200_000;
@@ -14,34 +16,67 @@ const RECURSION_LIMIT: usize = 32;
 const MAX_OUTPUT_CHARS: usize = 100_000;
 
 macro_rules! builtin {
-    ($($name:literal),* $(,)?) => {
-        &[$(include_str!(concat!("../templates/", $name, ".md"))),*]
+    ($dir:literal: $($name:literal),* $(,)?) => {
+        &[$(include_str!(concat!($dir, $name, ".md"))),*]
     };
 }
 
-const BUILTIN: &[&str] = builtin![
-    "_mode", "_scope", "_extra", "zh", "en", "review", "fix", "debug", "test", "refactor", "perf", "security",
-    "explain", "plan", "arch", "docs", "commit", "pr", "simplify", "investigate",
+/// 内置模板的展示顺序：同一分类的模板相邻，分类按工作流排列（理解 → 修改 → 检查 → 交付 → 翻译）。
+/// 两种语言的模板名、参数与候选值一致，只有文字不同。
+const BUILTIN_ZH: &[&str] = builtin!["../templates/":
+    "_mode", "_scope", "_extra",
+    "explain", "investigate", "plan", "arch",
+    "fix", "debug", "refactor", "simplify", "perf",
+    "review", "security", "test",
+    "commit", "pr", "docs",
+    "zh", "en",
 ];
+const BUILTIN_EN: &[&str] = builtin!["../templates/en/":
+    "_mode", "_scope", "_extra",
+    "explain", "investigate", "plan", "arch",
+    "fix", "debug", "refactor", "simplify", "perf",
+    "review", "security", "test",
+    "commit", "pr", "docs",
+    "zh", "en",
+];
+
+fn builtins(loc: Locale) -> &'static [&'static str] {
+    match loc {
+        Locale::Zh => BUILTIN_ZH,
+        Locale::En => BUILTIN_EN,
+    }
+}
 
 pub struct Library {
     pub templates: Vec<Template>,
     pub problems: Vec<String>,
+    /// 界面文字（诊断、提示、分区标题）的语言
+    pub locale: Locale,
     env: Environment<'static>,
 }
 
 impl Library {
+    /// 中文界面、中文内置模板。
     pub fn load(user_dir: Option<&Path>) -> Library {
-        let (templates, problems) = collect(user_dir);
-        build(templates, problems)
+        Library::load_with(user_dir, Locale::Zh, Locale::Zh)
+    }
+
+    /// `ui`：界面文字语言；`templates`：内置模板语言（可以与界面不同）。
+    pub fn load_with(user_dir: Option<&Path>, ui: Locale, templates: Locale) -> Library {
+        let (list, problems) = collect(user_dir, ui, templates);
+        build(list, problems, ui)
     }
 
     /// 编辑器预览：在当前模板库上用 `source` 覆盖（或新增）一个模板。
     /// 返回模板库和 `source` 自身的问题（格式、语法错误）。
     pub fn with_override(user_dir: Option<&Path>, source: &str) -> (Library, Option<String>, Vec<String>) {
-        let (mut templates, problems) = collect(user_dir);
+        Library::with_override_in(user_dir, source, Locale::Zh, Locale::Zh)
+    }
+
+    pub fn with_override_in(user_dir: Option<&Path>, source: &str, ui: Locale, tpl: Locale) -> (Library, Option<String>, Vec<String>) {
+        let (mut templates, problems) = collect(user_dir, ui, tpl);
         let mut own = Vec::new();
-        let name = match template::parse(source, false) {
+        let name = match template::parse_in(source, false, ui) {
             Ok(t) => {
                 let name = t.name.clone();
                 templates.retain(|o| o.name != name);
@@ -53,7 +88,7 @@ impl Library {
                 None
             }
         };
-        let lib = build(templates, problems);
+        let lib = build(templates, problems, ui);
         if let Some(n) = &name {
             own.extend(lib.problems.iter().filter(|p| p.contains(&format!("`{n}`"))).cloned());
         }
@@ -77,24 +112,25 @@ impl Library {
             ctx.insert(p.var_name(), to_jinja(&v, p.kind));
         }
         ctx.insert("extra".into(), minijinja::Value::from(extra.unwrap_or("")));
+        let loc = self.locale;
         let tmpl = self.env.get_template(&t.name).map_err(|e| e.to_string())?;
-        let out = tmpl.render(minijinja::Value::from(ctx)).map_err(|e| format!("渲染失败：{e}"))?;
+        let out = tmpl.render(minijinja::Value::from(ctx)).map_err(|e| tr!(loc, "渲染失败：{e}", "Render failed: {e}"))?;
         let out = tidy(&out);
         if out.chars().count() > MAX_OUTPUT_CHARS {
-            return Err(format!("渲染结果超过 {MAX_OUTPUT_CHARS} 字符上限"));
+            return Err(tr!(loc, "渲染结果超过 {MAX_OUTPUT_CHARS} 字符上限", "The result exceeds the {MAX_OUTPUT_CHARS}-character limit"));
         }
         Ok(out)
     }
 }
 
-fn collect(user_dir: Option<&Path>) -> (Vec<Template>, Vec<String>) {
+fn collect(user_dir: Option<&Path>, ui: Locale, tpl: Locale) -> (Vec<Template>, Vec<String>) {
     let mut problems = Vec::new();
     let mut templates: Vec<Template> = Vec::new();
 
-    for src in BUILTIN {
-        match template::parse(src, true) {
+    for src in builtins(tpl) {
+        match template::parse_in(src, true, ui) {
             Ok(t) => templates.push(t),
-            Err(e) => problems.push(format!("内置模板：{e}")),
+            Err(e) => problems.push(tr!(ui, "内置模板：{e}", "Built-in template: {e}")),
         }
     }
 
@@ -109,26 +145,27 @@ fn collect(user_dir: Option<&Path>) -> (Vec<Template>, Vec<String>) {
         paths.sort();
         for path in paths {
             let file = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| template::parse(&s, false)) {
+            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| template::parse_in(&s, false, ui)) {
                 Ok(mut t) => {
                     t.path = Some(path.clone());
                     // 用户模板与内置模板同名时覆盖内置版本
                     templates.retain(|o| !(o.builtin && o.name == t.name));
                     if templates.iter().any(|o| o.name == t.name) {
-                        problems.push(format!("{file}：模板名 `{}` 重复，已忽略", t.name));
+                        let n = &t.name;
+                        problems.push(tr!(ui, "{file}：模板名 `{n}` 重复，已忽略", "{file}: template name `{n}` is already taken; skipped"));
                     } else {
                         templates.push(t);
                     }
                 }
-                Err(e) => problems.push(format!("{file}：{e}")),
+                Err(e) => problems.push(tr!(ui, "{file}：{e}", "{file}: {e}")),
             }
         }
     }
     (templates, problems)
 }
 
-fn build(mut templates: Vec<Template>, mut problems: Vec<String>) -> Library {
-    resolve_alias_conflicts(&mut templates, &mut problems);
+fn build(mut templates: Vec<Template>, mut problems: Vec<String>, loc: Locale) -> Library {
+    resolve_alias_conflicts(&mut templates, &mut problems, loc);
 
     let mut env = Environment::new();
     env.set_syntax(SyntaxConfig::builder().trim_blocks(true).lstrip_blocks(true).build().unwrap());
@@ -139,15 +176,22 @@ fn build(mut templates: Vec<Template>, mut problems: Vec<String>) -> Library {
     for t in templates {
         match env.add_template_owned(t.name.clone(), t.body.clone()) {
             Ok(()) => ok.push(t),
-            Err(e) => problems.push(format!("模板 `{}` 语法错误：{e}", t.name)),
+            Err(e) => {
+                let n = &t.name;
+                problems.push(tr!(loc, "模板 `{n}` 语法错误：{e}", "Template `{n}` has a syntax error: {e}"))
+            }
         }
     }
-    Library { templates: ok, problems, env }
+    Library { templates: ok, problems, locale: loc, env }
 }
 
 /// 内置模板源码（不含被用户覆盖的情况），用于"恢复默认"。
 pub fn builtin_source(name: &str) -> Option<&'static str> {
-    BUILTIN.iter().copied().find(|s| template::parse(s, true).is_ok_and(|t| t.name == name))
+    builtin_source_in(name, Locale::Zh)
+}
+
+pub fn builtin_source_in(name: &str, loc: Locale) -> Option<&'static str> {
+    builtins(loc).iter().copied().find(|s| template::parse(s, true).is_ok_and(|t| t.name == name))
 }
 
 fn to_jinja(v: &Value, kind: ParamKind) -> minijinja::Value {
@@ -180,14 +224,15 @@ fn tidy(s: &str) -> String {
 }
 
 /// 别名冲突：同一别名（或与其他模板名相同）时，保留先出现者，后者的别名标记为不可用。
-fn resolve_alias_conflicts(templates: &mut [Template], problems: &mut Vec<String>) {
+fn resolve_alias_conflicts(templates: &mut [Template], problems: &mut Vec<String>, loc: Locale) {
     let mut taken: Vec<String> = templates.iter().map(|t| t.name.to_lowercase()).collect();
     for t in templates.iter_mut() {
         let mut kept = Vec::new();
         for a in std::mem::take(&mut t.aliases) {
             let key = a.to_lowercase();
             if taken.contains(&key) {
-                problems.push(format!("模板 `{}` 的别名 `{a}` 与其他模板冲突，已停用", t.name));
+                let n = &t.name;
+                problems.push(tr!(loc, "模板 `{n}` 的别名 `{a}` 与其他模板冲突，已停用", "Alias `{a}` of template `{n}` clashes with another template; disabled"));
             } else {
                 taken.push(key);
                 kept.push(a);
@@ -213,9 +258,23 @@ mod tests {
     }
 
     #[test]
+    fn english_builtins_mirror_chinese() {
+        let zh = Library::load(None);
+        let en = Library::load_with(None, Locale::En, Locale::En);
+        assert!(en.problems.is_empty(), "{:?}", en.problems);
+        let names = |l: &Library| l.templates.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&zh), names(&en));
+        for (a, b) in zh.templates.iter().zip(&en.templates) {
+            assert_eq!(a.aliases, b.aliases, "{}", a.name);
+            let ps = |t: &Template| t.params.iter().map(|p| (p.name.clone(), p.kind, p.short, p.positional, p.choices.iter().map(|c| c.value.clone()).collect::<Vec<_>>())).collect::<Vec<_>>();
+            assert_eq!(ps(a), ps(b), "{}", a.name);
+        }
+    }
+
+    #[test]
     fn renders_all_choice_combinations() {
         // 每个 enum / multi 的每个候选值都能渲染，防止模板里的映射表漏项
-        let lib = Library::load(None);
+        for lib in [Library::load(None), Library::load_with(None, Locale::En, Locale::En)] {
         for t in lib.visible() {
             for p in &t.params {
                 for c in &p.choices {
@@ -228,6 +287,7 @@ mod tests {
                     lib.render(t, &vals, None).unwrap();
                 }
             }
+        }
         }
     }
 

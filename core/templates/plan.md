@@ -1,7 +1,7 @@
 ---
 name: plan
 description: 开发计划：拆分需求、规划实施
-category: 编程
+category: 理解与规划
 params:
   risks:
     type: bool

@@ -2,7 +2,7 @@
 name: commit
 aliases: [ci]
 description: 生成提交信息
-category: 编程
+category: 提交与文档
 params:
   style:
     type: enum

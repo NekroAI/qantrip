@@ -322,6 +322,7 @@ name = "qantrip-wasm"
 version = "0.0.1"
 dependencies = [
  "qantrip-core",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

@@ -1,7 +1,7 @@
 ---
 name: refactor
 description: 代码重构：改善结构，行为不变
-category: 编程
+category: 编写与修复
 params:
   goal:
     type: multi

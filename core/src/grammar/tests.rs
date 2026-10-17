@@ -237,7 +237,7 @@ fn home_screen_sections() {
     let a = super::analyze(&l, &u, "", None);
     assert_eq!(a.candidates[0].section, "试试看");
     assert_eq!(a.candidates[0].kind, CandidateKind::Invocation);
-    assert!(a.candidates.iter().any(|c| c.section == "编程"));
+    assert!(a.candidates.iter().any(|c| c.section == "理解与规划"));
     assert_eq!(a.enter, EnterAction::Insert);
     // 有使用记录后：最近施放 + 常用，且不记录附加文本
     record_use(&l, &mut u, "r security -s 重点检查认证", None, Some("term"));
@@ -284,4 +284,20 @@ fn empty_value_message() {
     let l = lib();
     let a = analyze(&l, "r --scope=", None);
     assert!(errors(&a)[0].starts_with("--scope 需要一个值，可选："), "{:?}", errors(&a));
+}
+
+#[test]
+fn english_messages_and_templates() {
+    use crate::i18n::Locale;
+    let lib = Library::load_with(None, Locale::En, Locale::En);
+    let a = analyze(&lib, "r --bogus", None);
+    assert!(a.diagnostics.iter().any(|d| d.message.starts_with("Unknown option --bogus")), "{:?}", a.diagnostics);
+    let a = analyze(&lib, "", None);
+    assert!(a.candidates.iter().any(|c| c.section == "Try these"));
+    assert!(a.candidates.iter().any(|c| c.section == "Understand & plan"));
+    let out = render_final(&lib, "r security -s check the login flow", None).unwrap();
+    assert!(out.is_ascii() || !out.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)), "{out}");
+    // 界面英文、模板中文
+    let mixed = Library::load_with(None, Locale::En, Locale::Zh);
+    assert!(render_final(&mixed, "r", None).unwrap().contains("审查"));
 }

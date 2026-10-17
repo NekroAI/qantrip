@@ -1,7 +1,7 @@
 ---
 name: docs
 description: 文档生成
-category: 编程
+category: 提交与文档
 params:
   kind:
     type: enum

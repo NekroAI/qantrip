@@ -88,7 +88,7 @@ final class LibraryModel {
 
     func newTemplate() {
         let name = uniqueName("my-template")
-        let source = serializeTemplateDoc(doc: newTemplateDoc(name: name))
+        let source = serializeTemplateDoc(doc: newTemplateDoc(name: name, locale: .zh))
         try? write(source: source, name: name, replacing: nil)
         reload()
         select(name)

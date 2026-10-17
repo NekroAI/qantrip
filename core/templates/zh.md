@@ -2,7 +2,7 @@
 name: zh
 aliases: [中文]
 description: 翻译成中文
-category: 日常
+category: 翻译
 params:
   keep-terms:
     type: bool

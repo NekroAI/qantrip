@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+use crate::i18n::Locale;
 use crate::library::Library;
+use crate::tr;
 use crate::template::{ParamKind, ParamSpec, Template, Value};
 use crate::usage::Usage;
 
@@ -290,7 +292,8 @@ fn normalize(word: &str) -> String {
 }
 
 /// 拆分多选值：逗号分隔，引号内的逗号不拆分。
-fn split_items(raw: &str) -> Result<Vec<String>, String> {
+fn split_items(raw: &str, loc: Locale) -> Result<Vec<String>, String> {
+    let unclosed = || tr!(loc, "引号未闭合", "Unclosed quote");
     let mut items = Vec::new();
     let mut cur = String::new();
     let mut chars = raw.chars();
@@ -301,13 +304,13 @@ fn split_items(raw: &str) -> Result<Vec<String>, String> {
                 quoted = true;
                 loop {
                     match chars.next() {
-                        None => return Err("引号未闭合".into()),
+                        None => return Err(unclosed()),
                         Some('"') => break,
                         Some('\\') => match chars.next() {
                             Some('n') => cur.push('\n'),
                             Some('t') => cur.push('\t'),
                             Some(e) => cur.push(e),
-                            None => return Err("引号未闭合".into()),
+                            None => return Err(unclosed()),
                         },
                         Some(x) => cur.push(x),
                     }
@@ -317,7 +320,7 @@ fn split_items(raw: &str) -> Result<Vec<String>, String> {
                 quoted = true;
                 loop {
                     match chars.next() {
-                        None => return Err("引号未闭合".into()),
+                        None => return Err(unclosed()),
                         Some('\'') => break,
                         Some(x) => cur.push(x),
                     }
@@ -339,9 +342,9 @@ fn split_items(raw: &str) -> Result<Vec<String>, String> {
 }
 
 /// 单个值（字符串 / 数字参数）：去掉引号，不按逗号拆分。
-fn unquote(raw: &str) -> Result<String, String> {
+fn unquote(raw: &str, loc: Locale) -> Result<String, String> {
     if raw.starts_with('"') || raw.starts_with('\'') {
-        let items = split_items(raw)?;
+        let items = split_items(raw, loc)?;
         if items.len() == 1 && (raw.ends_with('"') || raw.ends_with('\'')) {
             return Ok(items.into_iter().next().unwrap());
         }
@@ -456,6 +459,7 @@ fn resolve_prefix<'a, T>(q: &str, items: &'a [T], keys: impl Fn(&T) -> Vec<Strin
 // MARK: - 解析
 
 struct Ctx<'a> {
+    loc: Locale,
     input: &'a str,
     tokens: Vec<Token>,
     diags: Vec<Diagnostic>,
@@ -495,14 +499,17 @@ fn choice_list(p: &ParamSpec) -> String {
     p.choices.iter().map(|c| c.value.as_str()).collect::<Vec<_>>().join(" / ")
 }
 
-fn resolve_choice(p: &ParamSpec, item: &str) -> Result<String, String> {
+fn resolve_choice(p: &ParamSpec, item: &str, loc: Locale) -> Result<String, String> {
     match resolve_prefix(item, &p.choices, |c| std::iter::once(c.value.clone()).chain(c.aliases.clone()).collect()) {
         Ok(c) => Ok(c.value.clone()),
-        Err(hits) if hits.len() > 1 => Err(format!(
-            "`{item}` 有歧义：{}",
-            hits.iter().map(|c| c.value.as_str()).collect::<Vec<_>>().join(" / ")
-        )),
-        Err(_) => Err(format!("--{} 没有候选值 `{item}`，可选：{}", p.name, choice_list(p))),
+        Err(hits) if hits.len() > 1 => {
+            let opts = hits.iter().map(|c| c.value.as_str()).collect::<Vec<_>>().join(" / ");
+            Err(tr!(loc, "`{item}` 有歧义：{opts}", "`{item}` is ambiguous: {opts}"))
+        }
+        Err(_) => {
+            let (name, list) = (&p.name, choice_list(p));
+            Err(tr!(loc, "--{name} 没有候选值 `{item}`，可选：{list}", "--{name} has no value `{item}`; options: {list}"))
+        }
     }
 }
 
@@ -531,14 +538,17 @@ fn set_value(parsed: &mut Parsed, ctx: &mut Ctx, p: &ParamSpec, v: Value, src: S
     match (prev, src) {
         // 位置参数与长选项同时出现：以长选项为准并警告（§4.3）
         (Some(Source::Long), Source::Positional) => {
-            ctx.diag(Severity::Warning, format!("已被 --{} 覆盖", p.name), span.0, span.1, at_cursor, None);
+            let name = &p.name;
+            ctx.diag(Severity::Warning, tr!(ctx.loc, "已被 --{name} 覆盖", "Overridden by --{name}"), span.0, span.1, at_cursor, None);
             return;
         }
         (Some(Source::Positional), Source::Long) => {
-            ctx.diag(Severity::Warning, format!("--{} 覆盖了前面的位置参数", p.name), span.0, span.1, at_cursor, None);
+            let name = &p.name;
+            ctx.diag(Severity::Warning, tr!(ctx.loc, "--{name} 覆盖了前面的位置参数", "--{name} overrides the positional value"), span.0, span.1, at_cursor, None);
         }
         (Some(_), _) if p.kind != ParamKind::Multi => {
-            ctx.diag(Severity::Warning, format!("--{} 重复设置，以最后一次为准", p.name), span.0, span.1, at_cursor, None);
+            let name = &p.name;
+            ctx.diag(Severity::Warning, tr!(ctx.loc, "--{name} 重复设置，以最后一次为准", "--{name} is set twice; the last one wins"), span.0, span.1, at_cursor, None);
         }
         _ => {}
     }
@@ -576,11 +586,11 @@ fn parse_long(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx:
             ctx.token(TokenKind::Invalid, w.start, w.end);
             if lookup.is_empty() {
                 if !at_cursor {
-                    ctx.diag(Severity::Error, "`--` 后需要参数名", w.start, w.end, at_cursor, None);
+                    ctx.diag(Severity::Error, tr!(ctx.loc, "`--` 后需要参数名", "Expected an option name after `--`"), w.start, w.end, at_cursor, None);
                 }
             } else if hits.len() > 1 {
                 let names = hits.iter().map(|p| format!("--{}", p.name)).collect::<Vec<_>>().join(" / ");
-                ctx.diag(Severity::Error, format!("--{lookup} 有歧义：{names}"), w.start, name_end, at_cursor, None);
+                ctx.diag(Severity::Error, tr!(ctx.loc, "--{lookup} 有歧义：{names}", "--{lookup} is ambiguous: {names}"), w.start, name_end, at_cursor, None);
             } else {
                 let fix = closest_param(t, lookup).map(|c| Edit {
                     start: ctx.u16(w.start),
@@ -588,8 +598,11 @@ fn parse_long(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx:
                     text: format!("--{}{}", if negated { "no-" } else { "" }, c.name),
                 });
                 let msg = match &fix {
-                    Some(f) => format!("未知参数 --{lookup}，是否是 {}？", f.text),
-                    None => format!("未知参数 --{lookup}"),
+                    Some(f) => {
+                        let s = &f.text;
+                        tr!(ctx.loc, "未知参数 --{lookup}，是否是 {s}？", "Unknown option --{lookup}. Did you mean {s}?")
+                    }
+                    None => tr!(ctx.loc, "未知参数 --{lookup}", "Unknown option --{lookup}"),
                 };
                 ctx.diag(Severity::Error, msg, w.start, name_end, at_cursor, fix);
             }
@@ -604,9 +617,11 @@ fn parse_long(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx:
 
     if negated {
         if p.kind != ParamKind::Bool {
-            ctx.diag(Severity::Error, format!("--no- 只能用于开关参数，--{} 不是开关", p.name), w.start, name_end, at_cursor, None);
+            let name = &p.name;
+            ctx.diag(Severity::Error, tr!(ctx.loc, "--no- 只能用于开关参数，--{name} 不是开关", "--no- only works with switches; --{name} is not a switch"), w.start, name_end, at_cursor, None);
         } else if value_part.is_some() {
-            ctx.diag(Severity::Error, format!("--no-{} 不接受值", p.name), w.start, w.end, at_cursor, None);
+            let name = &p.name;
+            ctx.diag(Severity::Error, tr!(ctx.loc, "--no-{name} 不接受值", "--no-{name} doesn't take a value"), w.start, w.end, at_cursor, None);
         } else {
             set_value(parsed, ctx, p, Value::Bool(false), Source::Long, (w.start, w.end), at_cursor);
         }
@@ -618,43 +633,44 @@ fn parse_long(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx:
             set_value(parsed, ctx, p, Value::Bool(true), Source::Long, (w.start, w.end), at_cursor);
         } else {
             let fix = Edit { start: ctx.u16(w.start), end: ctx.u16(w.end), text: format!("--{}=", p.name) };
-            ctx.diag(Severity::Error, format!("--{} 需要一个值：--{}=…", p.name, p.name), w.start, w.end, at_cursor, Some(fix));
+            let name = &p.name;
+            ctx.diag(Severity::Error, tr!(ctx.loc, "--{name} 需要一个值：--{name}=…", "--{name} needs a value: --{name}=…"), w.start, w.end, at_cursor, Some(fix));
         }
         return;
     };
 
     if raw.is_empty() && p.kind != ParamKind::String && p.kind != ParamKind::Text {
+        let (name, list) = (&p.name, choice_list(p));
         let msg = if p.choices.is_empty() {
-            format!("--{} 需要一个值", p.name)
+            tr!(ctx.loc, "--{name} 需要一个值", "--{name} needs a value")
         } else {
-            format!("--{} 需要一个值，可选：{}", p.name, choice_list(p))
+            tr!(ctx.loc, "--{name} 需要一个值，可选：{list}", "--{name} needs a value; options: {list}")
         };
         ctx.diag(Severity::Error, msg, w.start, w.end, at_cursor, None);
         return;
     }
+    let loc = ctx.loc;
+    let name = &p.name;
     let result: Result<Value, String> = match p.kind {
-        ParamKind::Bool => parse_bool(raw).map(Value::Bool).ok_or(format!("--{} 是开关，值只能是 true / false", p.name)),
-        ParamKind::Enum => unquote(raw).and_then(|v| resolve_choice(p, &v)).map(Value::Str),
-        ParamKind::Multi => split_items(raw).and_then(|items| {
+        ParamKind::Bool => parse_bool(raw).map(Value::Bool).ok_or(tr!(loc, "--{name} 是开关，值只能是 true / false", "--{name} is a switch; use true or false")),
+        ParamKind::Enum => unquote(raw, loc).and_then(|v| resolve_choice(p, &v, loc)).map(Value::Str),
+        ParamKind::Multi => split_items(raw, loc).and_then(|items| {
             let mut out: Vec<String> = Vec::new();
             for i in items {
-                let v = resolve_choice(p, &i)?;
+                let v = resolve_choice(p, &i, loc)?;
                 if !out.contains(&v) {
                     out.push(v);
                 }
             }
-            if out.is_empty() { Err(format!("--{} 需要至少一个值，可选：{}", p.name, choice_list(p))) } else { Ok(Value::List(out)) }
+            let list = choice_list(p);
+            if out.is_empty() { Err(tr!(loc, "--{name} 需要至少一个值，可选：{list}", "--{name} needs at least one value; options: {list}")) } else { Ok(Value::List(out)) }
         }),
-        ParamKind::String | ParamKind::Text => unquote(raw).map(Value::Str),
-        ParamKind::Number => unquote(raw).and_then(|v| {
-            let n: f64 = v.parse().map_err(|_| format!("--{} 需要数字", p.name))?;
+        ParamKind::String | ParamKind::Text => unquote(raw, loc).map(Value::Str),
+        ParamKind::Number => unquote(raw, loc).and_then(|v| {
+            let n: f64 = v.parse().map_err(|_| tr!(loc, "--{name} 需要数字", "--{name} needs a number"))?;
             if p.min.is_some_and(|m| n < m) || p.max.is_some_and(|m| n > m) {
-                return Err(format!(
-                    "--{} 取值范围 {}–{}",
-                    p.name,
-                    p.min.map(fmt_num).unwrap_or("…".into()),
-                    p.max.map(fmt_num).unwrap_or("…".into())
-                ));
+                let (lo, hi) = (p.min.map(fmt_num).unwrap_or("…".into()), p.max.map(fmt_num).unwrap_or("…".into()));
+                return Err(tr!(loc, "--{name} 取值范围 {lo}–{hi}", "--{name} must be between {lo} and {hi}"));
             }
             Ok(Value::Num(n))
         }),
@@ -673,7 +689,7 @@ fn parse_short(t: &Template, w: &Word, at_cursor: bool, parsed: &mut Parsed, ctx
             Some(p) => set_value(parsed, ctx, p, Value::Bool(true), Source::Short, (w.start, w.end), at_cursor),
             None => {
                 ok = false;
-                ctx.diag(Severity::Error, format!("未知短参数 -{c}"), w.start, w.end, at_cursor, None);
+                ctx.diag(Severity::Error, tr!(ctx.loc, "未知短参数 -{c}", "Unknown flag -{c}"), w.start, w.end, at_cursor, None);
             }
         }
     }
@@ -723,7 +739,8 @@ fn parse_params(t: &Template, words: &[Word], ends_with_ws: bool, ctx: &mut Ctx)
     parsed
 }
 
-fn validate(t: &Template, parsed: &Parsed, ctx: &mut Ctx) -> Option<Edit> {
+fn validate(t: &Template, parsed: &Parsed, ctx: &mut Ctx) -> (Option<Edit>, usize) {
+    let mut missing = 0;
     let end = ctx.input.len();
     let mut fill: Option<Edit> = None;
     for p in &t.params {
@@ -733,9 +750,11 @@ fn validate(t: &Template, parsed: &Parsed, ctx: &mut Ctx) -> Option<Edit> {
             let sep = if ctx.input.ends_with(is_ws) { "" } else { " " };
             let edit = Edit { start: at, end: at, text: format!("{sep}--{}=", p.name) };
             fill.get_or_insert(edit.clone());
+            missing += 1;
+            let name = &p.name;
             ctx.diags.push(Diagnostic {
                 severity: Severity::Error,
-                message: format!("缺少必填参数 --{}", p.name),
+                message: tr!(ctx.loc, "缺少必填参数 --{name}", "Missing required option --{name}"),
                 start: at,
                 end: at,
                 at_cursor: false,
@@ -748,16 +767,20 @@ fn validate(t: &Template, parsed: &Parsed, ctx: &mut Ctx) -> Option<Edit> {
         }
         for r in &p.requires {
             if !parsed.values.contains_key(r) {
-                ctx.diag(Severity::Error, format!("--{} 需要同时设置 --{r}", p.name), 0, end, false, None);
+                let name = &p.name;
+                let msg = tr!(ctx.loc, "--{name} 需要同时设置 --{r}", "--{name} requires --{r}");
+                ctx.diag(Severity::Error, msg, 0, end, false, None);
             }
         }
         for c in &p.conflicts {
             if parsed.values.get(c).is_some_and(|v| *v != Value::Bool(false)) && p.name < *c {
-                ctx.diag(Severity::Error, format!("--{} 与 --{c} 不能同时使用", p.name), 0, end, false, None);
+                let name = &p.name;
+                let msg = tr!(ctx.loc, "--{name} 与 --{c} 不能同时使用", "--{name} and --{c} can't be used together");
+                ctx.diag(Severity::Error, msg, 0, end, false, None);
             }
         }
     }
-    fill
+    (fill, missing)
 }
 
 // MARK: - 展示
@@ -770,19 +793,24 @@ fn label_of(p: &ParamSpec, v: &str) -> String {
     p.choices.iter().find(|c| c.value == v).map(|c| c.label.clone()).unwrap_or_else(|| v.to_string())
 }
 
-fn display(p: &ParamSpec, v: &Value) -> String {
+fn display(p: &ParamSpec, v: &Value, loc: Locale) -> String {
     match v {
-        Value::Bool(b) => if *b { "开" } else { "关" }.into(),
+        Value::Bool(b) => match (b, loc) {
+            (true, Locale::Zh) => "开".into(),
+            (false, Locale::Zh) => "关".into(),
+            (true, Locale::En) => "on".into(),
+            (false, Locale::En) => "off".into(),
+        },
         Value::Str(s) if s.is_empty() => "—".into(),
         Value::Str(s) if p.kind == ParamKind::Enum => label_of(p, s),
         Value::Str(s) => s.clone(),
         Value::List(l) if l.is_empty() => "—".into(),
-        Value::List(l) => l.iter().map(|x| label_of(p, x)).collect::<Vec<_>>().join("、"),
+        Value::List(l) => l.iter().map(|x| label_of(p, x)).collect::<Vec<_>>().join(if loc == Locale::Zh { "、" } else { ", " }),
         Value::Num(n) => fmt_num(*n),
     }
 }
 
-fn param_states(t: &Template, values: &BTreeMap<String, Value>) -> Vec<ParamState> {
+fn param_states(t: &Template, values: &BTreeMap<String, Value>, loc: Locale) -> Vec<ParamState> {
     t.params
         .iter()
         .map(|p| {
@@ -797,7 +825,7 @@ fn param_states(t: &Template, values: &BTreeMap<String, Value>) -> Vec<ParamStat
                 kind: p.kind,
                 short: p.short.map(|c| c.to_string()),
                 description: p.description.clone(),
-                display: display(p, &v),
+                display: display(p, &v, loc),
                 is_set: values.contains_key(&p.name),
                 required: p.required,
                 positional: p.positional,
@@ -947,7 +975,7 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
         };
         let chosen: Vec<&str> = done.split(',').filter(|s| !s.is_empty()).collect();
         let options: Vec<(String, String, String)> = match p.kind {
-            ParamKind::Bool => vec![("true".into(), "开".into(), String::new()), ("false".into(), "关".into(), String::new())],
+            ParamKind::Bool => vec![("true".into(), tr!(ctx.loc, "开", "on"), String::new()), ("false".into(), tr!(ctx.loc, "关", "off"), String::new())],
             ParamKind::Enum | ParamKind::Multi => p
                 .choices
                 .iter()
@@ -987,14 +1015,17 @@ fn param_completions(ctx: &Ctx, t: &Template, partial: Option<&Word>, parsed: &P
                 continue;
             }
             let suffix = if p.kind == ParamKind::Bool { " " } else { "=" };
-            let state = parsed.values.get(&p.name).map(|v| display(p, v));
+            let state = parsed.values.get(&p.name).map(|v| display(p, v, ctx.loc));
             cands.push(Candidate {
                 kind: CandidateKind::Param,
                 key: p.name.clone(),
                 title: format!("--{flag}"),
                 subtitle: p.short.map(|c| format!("-{c}")).unwrap_or_default(),
                 detail: match state {
-                    Some(s) => format!("{}（当前：{s}）", p.description),
+                    Some(s) => {
+                        let d = &p.description;
+                        tr!(ctx.loc, "{d}（当前：{s}）", "{d} (now: {s})")
+                    }
                     None => p.description.clone(),
                 },
                 edit: edit(format!("--{flag}{suffix}")),
@@ -1044,7 +1075,8 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
     if input.trim().is_empty() {
         return home(lib, usage, selected);
     }
-    let mut ctx = Ctx { input, tokens: vec![], diags: vec![] };
+    let loc = lib.locale;
+    let mut ctx = Ctx { loc, input, tokens: vec![], diags: vec![] };
     let words = scan(input);
     let ends_with_ws = input.ends_with(is_ws);
     let empty = Analysis {
@@ -1076,9 +1108,10 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
     let Some((t, tier)) = current else {
         if let Some(w) = cmd_word {
             ctx.token(TokenKind::CommandUnknown, w.start, w.end);
-            ctx.diag(Severity::Error, format!("没有匹配 `{}` 的模板", w.raw), w.start, w.end, !locked, None);
+            let raw = w.raw;
+            ctx.diag(Severity::Error, tr!(loc, "没有匹配 `{raw}` 的模板", "No template matches `{raw}`"), w.start, w.end, !locked, None);
         }
-        return Analysis { tokens: ctx.tokens, diagnostics: ctx.diags, hint: "没有匹配的模板".into(), ..empty };
+        return Analysis { tokens: ctx.tokens, diagnostics: ctx.diags, hint: tr!(loc, "没有匹配的模板", "No matching template"), ..empty };
     };
 
     if !locked {
@@ -1096,12 +1129,13 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
             let n = t.name.to_lowercase();
             n.starts_with(&cmd_text.to_lowercase()).then(|| t.name.chars().skip(cmd_text.chars().count()).collect::<String>()).filter(|g| !g.is_empty())
         };
-        a.params = param_states(t, &BTreeMap::new());
+        a.params = param_states(t, &BTreeMap::new(), loc);
         a.preview = preview(lib, t, &BTreeMap::new(), None).ok();
         a.canonical = Some(t.name.clone());
         if tier == MatchTier::Fuzzy && !cmd_text.eq_ignore_ascii_case(&t.name) {
             a.enter = EnterAction::Complete { edit: Edit { start: ctx.u16(w.start), end: ctx.u16(w.end), text: t.name.clone() } };
-            a.hint = format!("模糊匹配：↩ 补全为 {}", t.name);
+            let name = &t.name;
+            a.hint = tr!(loc, "模糊匹配：↩ 补全为 {name}", "Fuzzy match: ↩ completes to {name}");
         } else {
             a.enter = EnterAction::Insert;
         }
@@ -1113,7 +1147,7 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
     let w = cmd_word.unwrap();
     ctx.token(TokenKind::Command, w.start, w.end);
     let parsed = parse_params(t, &words[1..], ends_with_ws, &mut ctx);
-    let fill = validate(t, &parsed, &mut ctx);
+    let (fill, missing) = validate(t, &parsed, &mut ctx);
 
     let extra_started = parsed.extra_start.is_some();
     let partial = (!ends_with_ws).then(|| words.last()).flatten().filter(|lw| lw.start > w.start);
@@ -1127,7 +1161,7 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
     let in_extra = extra_started && (!typing_first_extra || candidates.is_empty());
 
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
-    let only_missing = errors && ctx.diags.iter().filter(|d| d.severity == Severity::Error).all(|d| d.message.starts_with("缺少必填参数"));
+    let only_missing = errors && missing > 0 && ctx.diags.iter().filter(|d| d.severity == Severity::Error).count() == missing;
     let enter = if !errors {
         EnterAction::Insert
     } else if only_missing {
@@ -1140,7 +1174,8 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
         ctx.diags.push(Diagnostic { severity: Severity::Error, message: e.clone(), start: 0, end: 0, at_cursor: false, fix: None });
     }
     let hint = if tier == MatchTier::Fuzzy && !cmd_text.eq_ignore_ascii_case(&t.name) && !t.aliases.iter().any(|a| a.eq_ignore_ascii_case(cmd_text)) {
-        format!("已匹配为 {}", t.name)
+        let name = &t.name;
+        tr!(loc, "已匹配为 {name}", "Matched {name}")
     } else {
         String::new()
     };
@@ -1153,7 +1188,7 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
         locked: true,
         candidates,
         ghost,
-        params: param_states(t, &parsed.values),
+        params: param_states(t, &parsed.values, loc),
         preview: pv.ok(),
         canonical: (!errors).then(|| canonical(t, &parsed.values, parsed.extra.as_deref())),
         enter,
@@ -1174,7 +1209,8 @@ pub fn render_final(lib: &Library, usage: &Usage, input: &str, selected: Option<
 // MARK: - 首屏（docs/decisions.md D14）
 
 /// 新用户没有历史时展示的示例
-const EXAMPLES: &[&str] = &["r security 重点检查认证和权限", "zh -k", "commit --lang=zh", "explain beginner -d"];
+const EXAMPLES_ZH: &[&str] = &["r security 重点检查认证和权限", "zh -k", "commit --lang=zh", "explain beginner -d"];
+const EXAMPLES_EN: &[&str] = &["r security focus on the auth module", "en technical", "commit", "explain beginner -d"];
 const RECENT_LIMIT: usize = 3;
 const FREQUENT_LIMIT: usize = 5;
 
@@ -1195,31 +1231,40 @@ fn invocation_candidate(lib: &Library, usage: &Usage, invocation: &str, section:
 }
 
 fn home(lib: &Library, usage: &Usage, selected: Option<&str>) -> Analysis {
+    let loc = lib.locale;
+    let (s_recent, s_try, s_frequent, s_other) = match loc {
+        Locale::Zh => ("最近施放", "试试看", "常用", "其他"),
+        Locale::En => ("Recent", "Try these", "Frequent", "Other"),
+    };
+    let examples = if loc == Locale::Zh { EXAMPLES_ZH } else { EXAMPLES_EN };
     let mut cands: Vec<Candidate> = Vec::new();
     let recent: Vec<Candidate> = usage
         .recent(RECENT_LIMIT * 2)
         .iter()
-        .filter_map(|e| invocation_candidate(lib, usage, &e.invocation, "最近施放"))
+        .filter_map(|e| invocation_candidate(lib, usage, &e.invocation, s_recent))
         .take(RECENT_LIMIT)
         .collect();
     if recent.is_empty() {
-        cands.extend(EXAMPLES.iter().filter_map(|e| invocation_candidate(lib, usage, e, "试试看")));
+        cands.extend(examples.iter().filter_map(|e| invocation_candidate(lib, usage, e, s_try)));
     } else {
         cands.extend(recent);
     }
 
     let empty = Word { raw: "", start: 0, end: 0, norm: String::new() };
-    let ctx = Ctx { input: "", tokens: vec![], diags: vec![] };
+    let ctx = Ctx { loc, input: "", tokens: vec![], diags: vec![] };
     let mut frequent: Vec<&Template> = lib.visible().filter(|t| usage.score(&t.name) > 0.0).collect();
     frequent.sort_by(|a, b| usage.score(&b.name).total_cmp(&usage.score(&a.name)).then(a.name.cmp(&b.name)));
     frequent.truncate(FREQUENT_LIMIT);
     for t in &frequent {
-        cands.push(Candidate { section: "常用".into(), ..template_candidate(&ctx, t, MatchTier::Prefix, &empty) });
+        cands.push(Candidate { section: s_frequent.into(), ..template_candidate(&ctx, t, MatchTier::Prefix, &empty) });
     }
     let mut rest: Vec<&Template> = lib.visible().filter(|t| !frequent.iter().any(|f| f.name == t.name)).collect();
-    rest.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
+    // 保持模板库顺序，同分类相邻（分类按首次出现排序）
+    let cat_rank = |c: &str| if c.is_empty() { usize::MAX } else { lib.visible().position(|t| t.category == c).unwrap_or(usize::MAX) };
+    let lib_rank = |n: &str| lib.visible().position(|t| t.name == n).unwrap_or(usize::MAX);
+    rest.sort_by_key(|t| (cat_rank(&t.category), lib_rank(&t.name)));
     for t in rest {
-        let section = if t.category.is_empty() { "其他".to_string() } else { t.category.clone() };
+        let section = if t.category.is_empty() { s_other.to_string() } else { t.category.clone() };
         cands.push(Candidate { section, ..template_candidate(&ctx, t, MatchTier::Prefix, &empty) });
     }
 
@@ -1241,12 +1286,12 @@ fn home(lib: &Library, usage: &Usage, selected: Option<&str>) -> Analysis {
     let mut a = match current {
         Some(c) if c.kind == CandidateKind::Invocation => {
             let inner = analyze(lib, usage, &c.key, None);
-            Analysis { hint: "↩ 重放这次施放".into(), ..inner }
+            Analysis { hint: tr!(loc, "↩ 重放这次施放", "↩ to cast it again"), ..inner }
         }
         Some(c) => match lib.get(&c.key) {
             Some(t) => Analysis {
                 template: Some(info(t)),
-                params: param_states(t, &BTreeMap::new()),
+                params: param_states(t, &BTreeMap::new(), loc),
                 preview: preview(lib, t, &BTreeMap::new(), None).ok(),
                 canonical: Some(t.name.clone()),
                 enter: EnterAction::Insert,
@@ -1282,7 +1327,7 @@ fn parse_input<'a>(lib: &'a Library, usage: &Usage, input: &str, selected: Optio
     let cmd = words.first()?;
     let matches = match_templates(lib, usage, &cmd.norm);
     let (t, _) = selected.and_then(|s| matches.iter().find(|(t, _)| t.name == s)).or(matches.first()).copied()?;
-    let mut ctx = Ctx { input, tokens: vec![], diags: vec![] };
+    let mut ctx = Ctx { loc: lib.locale, input, tokens: vec![], diags: vec![] };
     let parsed = parse_params(t, &words[1..], true, &mut ctx);
     Some((t, cmd.raw.to_string(), parsed))
 }
@@ -1310,16 +1355,16 @@ pub fn edit_param(lib: &Library, usage: &Usage, input: &str, selected: Option<&s
         }
         ParamEdit::Set { value } => {
             let v = match p.kind {
-                ParamKind::Enum => Value::Str(resolve_choice(p, &value).ok()?),
+                ParamKind::Enum => Value::Str(resolve_choice(p, &value, lib.locale).ok()?),
                 ParamKind::Number => Value::Num(value.parse().ok()?),
                 ParamKind::Bool => Value::Bool(parse_bool(&value)?),
-                ParamKind::Multi => Value::List(vec![resolve_choice(p, &value).ok()?]),
+                ParamKind::Multi => Value::List(vec![resolve_choice(p, &value, lib.locale).ok()?]),
                 ParamKind::String | ParamKind::Text => Value::Str(value),
             };
             parsed.values.insert(p.name.clone(), v);
         }
         ParamEdit::ToggleChoice { value } if p.kind == ParamKind::Multi => {
-            let v = resolve_choice(p, &value).ok()?;
+            let v = resolve_choice(p, &value, lib.locale).ok()?;
             let mut list = match current {
                 Value::List(l) => l,
                 _ => vec![],

@@ -2,7 +2,7 @@
 name: en
 aliases: [英文]
 description: 翻译成英文
-category: 日常
+category: 翻译
 params:
   style:
     type: enum

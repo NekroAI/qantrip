@@ -3,6 +3,7 @@
 //! 源码 → `TemplateDoc`（`parse_doc`）→ 编辑 → 源码（`serialize_doc`）。
 //! frontmatter 由表单重新生成，手写的 YAML 注释不会保留。
 
+use crate::i18n::Locale;
 use crate::template::{self, Choice, ParamKind, Template, Value};
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -194,14 +195,18 @@ pub fn serialize_doc(doc: &TemplateDoc) -> String {
 }
 
 /// 新模板的初始文档。
-pub fn new_doc(name: &str) -> TemplateDoc {
+pub fn new_doc(name: &str, loc: Locale) -> TemplateDoc {
     TemplateDoc {
         name: name.to_string(),
         aliases: vec![],
         description: String::new(),
         category: String::new(),
         params: vec![],
-        body: "在这里编写 Prompt。可以使用参数，例如 {% if strict %}严格模式{% endif %}。\n{% include \"_extra\" %}\n".into(),
+        body: match loc {
+            Locale::Zh => "在这里编写 Prompt。可以使用参数，例如 {% if strict %}严格模式{% endif %}。\n{% include \"_extra\" %}\n",
+            Locale::En => "Write your prompt here. You can use parameters, e.g. {% if strict %}strict mode{% endif %}.\n{% include \"_extra\" %}\n",
+        }
+        .into(),
     }
 }
 
@@ -230,7 +235,7 @@ mod tests {
 
     #[test]
     fn quotes_tricky_scalars() {
-        let mut doc = new_doc("t");
+        let mut doc = new_doc("t", Locale::Zh);
         doc.description = "含: 冒号, 逗号 # 井号".into();
         doc.aliases = vec!["yes".into(), "1".into()];
         let back = parse_doc(&serialize_doc(&doc)).unwrap();

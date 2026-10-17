@@ -1,7 +1,7 @@
 ---
 name: perf
 description: 性能优化
-category: 编程
+category: 编写与修复
 params:
   focus:
     type: multi

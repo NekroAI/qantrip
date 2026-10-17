@@ -2,7 +2,7 @@
 name: security
 aliases: [sec]
 description: 安全审查
-category: 编程
+category: 审查与测试
 params:
   focus:
     type: multi

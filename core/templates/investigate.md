@@ -2,7 +2,7 @@
 name: investigate
 aliases: [inv]
 description: 问题调查：收集证据、评估假设
-category: 编程
+category: 理解与规划
 params:
   depth:
     type: enum

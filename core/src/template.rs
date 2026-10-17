@@ -14,6 +14,8 @@
 //! 参数名中的 `-` 在正文里写作 `_`（`keep-terms` → `keep_terms`）。
 //! 以 `_` 开头的模板是公共片段，只能被 `{% include %}` 引用，不出现在搜索结果中。
 
+use crate::i18n::Locale;
+use crate::tr;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, serde::Serialize, serde::Deserialize)]
@@ -166,32 +168,38 @@ fn valid_name(s: &str) -> bool {
         && cs.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// 解析一个模板文件。`builtin` 只用于标记来源。
+/// 解析一个模板文件（中文错误信息）。`builtin` 只用于标记来源。
 pub fn parse(source: &str, builtin: bool) -> Result<Template, String> {
+    parse_in(source, builtin, Locale::Zh)
+}
+
+/// 解析一个模板文件，错误信息使用 `loc`。
+pub fn parse_in(source: &str, builtin: bool, loc: Locale) -> Result<Template, String> {
     let rest = source
         .strip_prefix("---\n")
         .or_else(|| source.strip_prefix("---\r\n"))
-        .ok_or("缺少开头的 --- frontmatter")?;
-    let end = rest.find("\n---").ok_or("frontmatter 没有以 --- 结束")?;
+        .ok_or_else(|| tr!(loc, "缺少开头的 --- frontmatter", "Missing the opening --- of the front matter"))?;
+    let end = rest.find("\n---").ok_or_else(|| tr!(loc, "frontmatter 没有以 --- 结束", "The front matter doesn't end with ---"))?;
     let front = &rest[..end];
     let body = rest[end + 4..].trim_start_matches(['\r', '\n']).to_string();
 
-    let raw: RawFront = serde_norway::from_str(front).map_err(|e| format!("frontmatter 格式错误：{e}"))?;
+    let raw: RawFront = serde_norway::from_str(front).map_err(|e| tr!(loc, "frontmatter 格式错误：{e}", "Invalid front matter: {e}"))?;
     let partial = raw.name.starts_with('_');
     if !partial && !valid_name(&raw.name) {
-        return Err(format!("模板名 `{}` 只能包含字母、数字、- 和 _，并以字母开头", raw.name));
+        let n = &raw.name;
+        return Err(tr!(loc, "模板名 `{n}` 只能包含字母、数字、- 和 _，并以字母开头", "Template name `{n}` may only contain letters, digits, - and _, and must start with a letter"));
     }
 
     let mut params = Vec::new();
     for (k, v) in raw.params {
-        let name = k.as_str().ok_or("参数名必须是字符串")?.to_string();
+        let name = k.as_str().ok_or_else(|| tr!(loc, "参数名必须是字符串", "Parameter names must be strings"))?.to_string();
         if !valid_name(&name) || name.starts_with("no-") {
-            return Err(format!("参数名 `{name}` 不合法"));
+            return Err(tr!(loc, "参数名 `{name}` 不合法", "Invalid parameter name `{name}`"));
         }
-        let rp: RawParam = serde_norway::from_value(v).map_err(|e| format!("参数 `{name}`：{e}"))?;
-        params.push(build_param(name, rp)?);
+        let rp: RawParam = serde_norway::from_value(v).map_err(|e| tr!(loc, "参数 `{name}`：{e}", "Parameter `{name}`: {e}"))?;
+        params.push(build_param(name, rp, loc)?);
     }
-    validate_params(&params)?;
+    validate_params(&params, loc)?;
 
     Ok(Template {
         name: raw.name,
@@ -206,7 +214,7 @@ pub fn parse(source: &str, builtin: bool) -> Result<Template, String> {
     })
 }
 
-fn build_param(name: String, rp: RawParam) -> Result<ParamSpec, String> {
+fn build_param(name: String, rp: RawParam, loc: Locale) -> Result<ParamSpec, String> {
     let kind = match rp.kind.as_str() {
         "bool" => ParamKind::Bool,
         "enum" => ParamKind::Enum,
@@ -214,7 +222,7 @@ fn build_param(name: String, rp: RawParam) -> Result<ParamSpec, String> {
         "string" => ParamKind::String,
         "number" => ParamKind::Number,
         "text" => ParamKind::Text,
-        other => return Err(format!("参数 `{name}`：未知类型 `{other}`")),
+        other => return Err(tr!(loc, "参数 `{name}`：未知类型 `{other}`", "Parameter `{name}`: unknown type `{other}`")),
     };
     let choices: Vec<Choice> = rp
         .choices
@@ -228,13 +236,13 @@ fn build_param(name: String, rp: RawParam) -> Result<ParamSpec, String> {
         .collect();
     let has_choices = matches!(kind, ParamKind::Enum | ParamKind::Multi);
     if has_choices && choices.is_empty() {
-        return Err(format!("参数 `{name}`：enum / multi 必须声明 choices"));
+        return Err(tr!(loc, "参数 `{name}`：enum / multi 必须声明 choices", "Parameter `{name}`: enum / multi needs choices"));
     }
     if !has_choices && !choices.is_empty() {
-        return Err(format!("参数 `{name}`：只有 enum / multi 可以声明 choices"));
+        return Err(tr!(loc, "参数 `{name}`：只有 enum / multi 可以声明 choices", "Parameter `{name}`: only enum / multi can have choices"));
     }
     if rp.positional && !has_choices {
-        return Err(format!("参数 `{name}`：只有 enum / multi 可以声明为位置参数"));
+        return Err(tr!(loc, "参数 `{name}`：只有 enum / multi 可以声明为位置参数", "Parameter `{name}`: only enum / multi can be positional"));
     }
     let short = match rp.short {
         None => None,
@@ -242,7 +250,7 @@ fn build_param(name: String, rp: RawParam) -> Result<ParamSpec, String> {
             let mut cs = s.chars();
             match (cs.next(), cs.next()) {
                 (Some(c), None) if c.is_ascii_alphabetic() && kind == ParamKind::Bool => Some(c),
-                _ => return Err(format!("参数 `{name}`：short 必须是单个字母，且只能用于 bool 参数")),
+                _ => return Err(tr!(loc, "参数 `{name}`：short 必须是单个字母，且只能用于 bool 参数", "Parameter `{name}`: short must be a single letter and only works on bool parameters")),
             }
         }
     };
@@ -263,15 +271,15 @@ fn build_param(name: String, rp: RawParam) -> Result<ParamSpec, String> {
     };
     let default = match rp.default {
         None => None,
-        Some(v) => Some(convert_default(&spec, v).map_err(|e| format!("参数 `{name}` 的默认值：{e}"))?),
+        Some(v) => Some(convert_default(&spec, v, loc).map_err(|e| tr!(loc, "参数 `{name}` 的默认值：{e}", "Default of parameter `{name}`: {e}"))?),
     };
     Ok(ParamSpec { default, ..spec })
 }
 
-fn convert_default(spec: &ParamSpec, v: serde_norway::Value) -> Result<Value, String> {
+fn convert_default(spec: &ParamSpec, v: serde_norway::Value, loc: Locale) -> Result<Value, String> {
     use serde_norway::Value as Y;
     let check_choice = |s: &str| -> Result<String, String> {
-        spec.find_choice(s).map(|c| c.value.clone()).ok_or(format!("`{s}` 不在 choices 中"))
+        spec.find_choice(s).map(|c| c.value.clone()).ok_or_else(|| tr!(loc, "`{s}` 不在 choices 中", "`{s}` is not one of the choices"))
     };
     Ok(match (spec.kind, v) {
         (ParamKind::Bool, Y::Bool(b)) => Value::Bool(b),
@@ -279,28 +287,29 @@ fn convert_default(spec: &ParamSpec, v: serde_norway::Value) -> Result<Value, St
         (ParamKind::Multi, Y::Sequence(items)) => Value::List(
             items
                 .into_iter()
-                .map(|i| i.as_str().ok_or("必须是字符串列表".to_string()).and_then(check_choice))
+                .map(|i| i.as_str().ok_or_else(|| tr!(loc, "必须是字符串列表", "Must be a list of strings")).and_then(check_choice))
                 .collect::<Result<_, _>>()?,
         ),
         (ParamKind::String | ParamKind::Text, Y::String(s)) => Value::Str(s),
-        (ParamKind::Number, Y::Number(n)) => Value::Num(n.as_f64().ok_or("不是有效数字")?),
-        _ => return Err("类型与参数不符".into()),
+        (ParamKind::Number, Y::Number(n)) => Value::Num(n.as_f64().ok_or_else(|| tr!(loc, "不是有效数字", "Not a valid number"))?),
+        _ => return Err(tr!(loc, "类型与参数不符", "Doesn't match the parameter type")),
     })
 }
 
-fn validate_params(params: &[ParamSpec]) -> Result<(), String> {
+fn validate_params(params: &[ParamSpec], loc: Locale) -> Result<(), String> {
     if params.iter().filter(|p| p.positional).count() > 1 {
-        return Err("至多一个参数可以声明为位置参数".into());
+        return Err(tr!(loc, "至多一个参数可以声明为位置参数", "At most one parameter can be positional"));
     }
     for (i, p) in params.iter().enumerate() {
         if let Some(c) = p.short
             && params[..i].iter().any(|q| q.short == Some(c))
         {
-            return Err(format!("短名 -{c} 重复"));
+            return Err(tr!(loc, "短名 -{c} 重复", "Short name -{c} is used twice"));
         }
         for r in p.requires.iter().chain(&p.conflicts) {
             if !params.iter().any(|q| &q.name == r) {
-                return Err(format!("参数 `{}` 引用了不存在的参数 `{r}`", p.name));
+                let n = &p.name;
+                return Err(tr!(loc, "参数 `{n}` 引用了不存在的参数 `{r}`", "Parameter `{n}` refers to unknown parameter `{r}`"));
             }
         }
     }

@@ -2,7 +2,7 @@
 name: explain
 aliases: [ex]
 description: 代码解释
-category: 编程
+category: 理解与规划
 params:
   level:
     type: enum
