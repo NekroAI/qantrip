@@ -17,7 +17,7 @@
 
 > **Qantrip** 读作 /ˈkæntrɪp/，与 cantrip 同音——D&D 里不耗资源、可以随手反复施放的"戏法"。首字母换成 **Q**，就是唤起它的那个键。不是拼写错误。
 
-![Qantrip 面板：输入命令时实时高亮、灰字补全与预览](docs/assets/panel.png)
+![在终端里按 ⌃Q，输入 r sec --scope=staged -s，查看预览，按 ⌘↩ 插入完整的 Prompt](docs/assets/demo-zh.gif)
 
 ## 为什么做它
 

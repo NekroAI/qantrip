@@ -23,7 +23,7 @@
 
 > **Qantrip** is pronounced like *cantrip* — the D&D spell you can cast again and again at no cost. The **Q** is the key you press to cast one. It is not a typo.
 
-![Qantrip panel: typing a command with syntax highlighting, inline completion and a live preview](docs/assets/panel.png)
+![Press ⌃Q in a terminal, type r sec --scope=staged -s, preview the prompt, and press ⌘↩ to insert it](docs/assets/demo.gif)
 
 ## Why
 
