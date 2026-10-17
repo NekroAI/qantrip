@@ -49,6 +49,15 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate, NSTextViewDelegate {
 }
 
 let app = NSApplication.shared
+// ⌘V 由"编辑 → 粘贴"菜单项的快捷键分发，没有主菜单时文本框收不到粘贴。
+let mainMenu = NSMenu()
+let editItem = NSMenuItem()
+let editMenu = NSMenu(title: "Edit")
+editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+editItem.submenu = editMenu
+mainMenu.addItem(NSMenuItem())
+mainMenu.addItem(editItem)
+app.mainMenu = mainMenu
 let delegate = ProbeDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

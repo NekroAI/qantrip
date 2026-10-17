@@ -76,8 +76,8 @@ final class LauncherController: NSObject, NSWindowDelegate {
                 "handler_to_shown_ms": SpikeLog.ms(t2 - t1),
                 "event_to_ready_ms": SpikeLog.ms(t3 - eventTime),
                 "is_key": panel.isKeyWindow,
-                "app_active": NSApp.isActive,
-                "target_still_active": target?.isActive ?? false,
+                // NSApp.isActive 在 non-activating 面板下读数不可靠，以系统视角的前台应用为准
+                "frontmost": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?",
             ])
         }
     }
