@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Qantrip</RootNamespace>
+    <AssemblyName>Qantrip</AssemblyName>
+    <Product>Nekro Qantrip</Product>
+    <Company>NekroAI</Company>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Qantrip.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- 非打包、自包含：不依赖系统安装的 .NET 与 Windows App SDK 运行时（D32） -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>12</LangVersion>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+    <!-- Rust 核心的 C ABI 动态库（apps/windows/native），由 build.ps1 先行构建 -->
+    <QantripNativeDll>$(MSBuildThisFileDirectory)..\native\target\release\qantrip_ffi.dll</QantripNativeDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 只引用用到的组件包，不用 Microsoft.WindowsAppSDK 元包：元包会带上 AI / ML（onnxruntime、DirectML 约 40MB）与 Widgets -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="1.8.25122902" />    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\Qantrip.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(QantripNativeDll)" Link="qantrip_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(QantripNativeDll)')" />
+  </ItemGroup>
+</Project>
