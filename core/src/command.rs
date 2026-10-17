@@ -100,6 +100,7 @@ fn u16(input: &str, byte: usize) -> u32 {
 /// 把带占位符的正文变成模板：`{名}` → 文本参数，`{名:a|b}` → 单选参数（第一个为默认，首个单选为位置参数）。
 /// 其余文字原样保留；含 MiniJinja 语法字符的片段用 raw 块包住，避免被当作模板语法。
 pub fn build_template(name: &str, body: &str, loc: Locale) -> Result<TemplateDoc, String> {
+    let source_body = body;
     let mut params: Vec<ParamDoc> = Vec::new();
     let mut out = String::new();
     let mut literal = String::new();
@@ -161,7 +162,7 @@ pub fn build_template(name: &str, body: &str, loc: Locale) -> Result<TemplateDoc
     flush(&mut literal, &mut out);
     let mut body = out.trim_end().to_string();
     body.push_str("\n{% include \"_extra\" %}\n");
-    let first_line = literal_description(&body);
+    let first_line = literal_description(&placeholder_names(source_body));
     Ok(TemplateDoc { name: name.to_string(), aliases: vec![], description: first_line, category: String::new(), params, body })
 }
 
@@ -190,6 +191,28 @@ fn parse_placeholder(inner: &str) -> Option<(&str, Vec<&str>)> {
         }
     };
     Some((name, choices))
+}
+
+/// 描述用：`{名:a|b}` 显示为 `{名}`
+fn placeholder_names(body: &str) -> String {
+    let mut out = String::new();
+    let mut rest = body;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find('}').and_then(|close| parse_placeholder(&after[..close]).map(|(n, _)| (close, n))) {
+            Some((close, n)) => {
+                out.push_str(&format!("{{{n}}}"));
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 描述取正文第一行（去掉模板语法），最多 40 个字符。
@@ -629,6 +652,7 @@ mod tests {
         assert_eq!(d.params[0].default_value.as_deref(), Some("英文"));
         assert_eq!(d.params[2].kind, ParamKind::String);
         assert!(d.body.contains("{{ lang }}") && d.body.contains("{{ topic }}"));
+        assert_eq!(d.description, "把下面的内容翻译成{lang}，语气{tone}。关注 {topic}");
         let source = doc::serialize_doc(&d);
         let t = template::parse(&source, false).unwrap();
         let lib = Library::with_override(None, &source).0;
