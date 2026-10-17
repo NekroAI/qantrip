@@ -26,13 +26,10 @@ final class Inserter {
     private var pasteDelay: TimeInterval { Self.setting("pasteDelayMs", 30) / 1000 }
     private var restoreDelay: TimeInterval { Self.setting("restoreDelayMs", 500) / 1000 }
     /// 展开粘贴（D13）两次 ⌘V 之间的间隔：Claude Code 异步处理粘贴，第二次需等第一次完成。
-    private var expandInterval: TimeInterval { Self.setting("expandPasteIntervalMs", 250) / 1000 }
+    private var expandInterval: TimeInterval { AppSettings.shared.expandPasteIntervalMs / 1000 }
 
-    /// ⌘↩ 展开粘贴开关（菜单栏可切换）
-    static var expandPasteEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "expandPasteEnabled") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "expandPasteEnabled") }
-    }
+    /// ⌘↩ 展开粘贴开关（设置中可关闭）
+    static var expandPasteEnabled: Bool { AppSettings.shared.expandPasteEnabled }
 
     private static func setting(_ key: String, _ fallback: Double) -> Double {
         let v = UserDefaults.standard.double(forKey: key)
@@ -53,6 +50,12 @@ final class Inserter {
         let expand = expand && Self.expandPasteEnabled
         let started = ProcessInfo.processInfo.systemUptime
 
+        if AppSettings.shared.copyOnly {
+            copyOnly(text)
+            log(.copiedOnly(reason: "copy_only_mode"), text: text, started: started)
+            completion(.copiedOnly(reason: "只复制模式"))
+            return
+        }
         guard Self.isTrusted else {
             copyOnly(text)
             log(.copiedOnly(reason: "no_accessibility"), text: text, started: started)

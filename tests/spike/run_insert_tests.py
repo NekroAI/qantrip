@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Spike 插入链路自动化测试（S5 / S6 / 焦点校验）。
 
-前提：dist/ 已构建；Qantrip 已运行、已授予辅助功能权限、开启 debugHooks；Maccy 在运行。
+前提：dist/ 以 QANTRIP_DEBUG_HOOKS=1 构建；Qantrip 已运行、已授予辅助功能权限、开启 debugHooks、没有打开的窗口；Maccy 在运行。
 输出每个用例的结果，并汇总 spike.jsonl 中的插入耗时。
 """
 import json, os, sqlite3, subprocess, sys, time
@@ -124,6 +124,9 @@ def build_helpers():
 
 def main():
     build_helpers()
+    if "PasteProbe.app" not in sh("pgrep", "-lf", "PasteProbe.app"):
+        sh("open", os.path.join(DIST, "PasteProbe.app"))
+        time.sleep(2)
     # 对照组：普通复制应当被 Maccy 记录，证明 Maccy 正在工作
     marker = f"maccy-control-{int(time.time())}"
     subprocess.run(["pbcopy"], input=marker, text=True)

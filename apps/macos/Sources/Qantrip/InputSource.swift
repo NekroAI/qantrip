@@ -5,9 +5,7 @@ final class InputSourceGuard {
     private var original: TISInputSource?
     private var switchedTo: TISInputSource?
 
-    static var enabled: Bool {
-        UserDefaults.standard.object(forKey: "forceASCIIInput") as? Bool ?? true
-    }
+    static var enabled: Bool { AppSettings.shared.forceASCIIInput }
 
     func engage() {
         original = nil

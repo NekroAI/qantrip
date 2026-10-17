@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launcher: LauncherController!
     private var engine: Engine!
     private var statusItem: NSStatusItem!
+    private var watcher: DispatchSourceFileSystemObject?
+    private var reloadWork: DispatchWorkItem?
 
     /// 用户模板目录（docs/decisions.md D11）
     static let templatesDir: URL = {
@@ -22,12 +24,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine = Engine(userDir: Self.templatesDir.path, usagePath: usage.path)
         launcher = LauncherController(engine: engine)
 
-        // 默认 ⌃Q（docs/decisions.md D5，待冲突实测定稿）
-        hotKey = HotKey(keyCode: UInt32(kVK_ANSI_Q), modifiers: UInt32(controlKey))
-        hotKey.onPress = { [weak self] t in self?.launcher.toggle(eventTime: t, source: "hotkey") }
+        let settings = AppSettings.shared
+        hotKey = HotKey(settings.hotKey)
+        hotKey.onPress = { [weak self] t in
+            NotificationCenter.default.post(name: Onboarding.hotKeyPressed, object: nil)
+            self?.launcher.toggle(eventTime: t, source: "hotkey")
+        }
+        AppServices.shared = AppServices(engine: engine, hotKey: hotKey, launcher: launcher, templatesDir: Self.templatesDir)
 
         setupStatusItem()
+        watchTemplates()
+        #if QANTRIP_DEBUG_HOOKS
         setupDebugHooks()
+        #endif
 
         SpikeLog.event("launch", [
             "core_version": coreVersion(),
@@ -36,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "templates": engine.templates().count,
             "template_problems": engine.problems(),
         ])
+
+        if !settings.onboardingDone {
+            Onboarding.show()
+        }
     }
 
     private func setupStatusItem() {
@@ -46,8 +59,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    /// 仅用于自动化测试：`defaults write ai.nekro.qantrip debugHooks -bool true` 后生效。
-    /// 正式版本必须移除——它允许本机其他进程借用本应用的辅助功能权限插入任意文本。
+    /// 模板目录变化（包括外部编辑器修改）时自动重新加载。
+    private func watchTemplates() {
+        let fd = open(Self.templatesDir.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        src.setEventHandler { [weak self] in self?.scheduleReload() }
+        src.setCancelHandler { close(fd) }
+        src.resume()
+        watcher = src
+    }
+
+    private func scheduleReload() {
+        reloadWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.engine.reload()
+            LibraryWindow.model.reload()
+        }
+        reloadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    #if QANTRIP_DEBUG_HOOKS
+    /// 仅调试构建（QANTRIP_DEBUG_HOOKS=1 scripts/build-macos.sh）且 `defaults write ai.nekro.qantrip debugHooks -bool true` 时生效。
+    /// 它允许本机其他进程借用本应用的辅助功能权限插入任意文本，正式构建不包含。
     private func setupDebugHooks() {
         guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
         let center = DistributedNotificationCenter.default()
@@ -58,10 +93,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ai.nekro.qantrip.debug.type", #selector(debugType(_:))),
             ("ai.nekro.qantrip.debug.confirm", #selector(debugConfirm(_:))),
             ("ai.nekro.qantrip.debug.param", #selector(debugParam(_:))),
+            ("ai.nekro.qantrip.debug.window", #selector(debugWindow(_:))),
+            ("ai.nekro.qantrip.debug.editor", #selector(debugEditor(_:))),
         ]
         for (name, sel) in hooks {
-            center.addObserver(self, selector: sel, name: .init(name), object: nil,
-                               suspensionBehavior: .deliverImmediately)
+            center.addObserver(self, selector: sel, name: .init(name), object: nil, suspensionBehavior: .deliverImmediately)
         }
     }
 
@@ -93,7 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 模拟回车（会记录使用）
     @objc private func debugConfirm(_ note: Notification) {
         launcher.model.confirm(expand: false)
     }
@@ -111,6 +146,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launcher.model.editParam(name, edit)
     }
 
+    /// 打开窗口：name = settings / library[:模板名] / onboarding
+    @objc private func debugWindow(_ note: Notification) {
+        let name = (note.userInfo?["name"] as? String) ?? ""
+        if name == "settings" { openSettings() }
+        else if name == "onboarding" { Onboarding.show() }
+        else if name.hasPrefix("library") { LibraryWindow.show(select: name.split(separator: ":").dropFirst().first.map(String.init)) }
+    }
+
+    /// 驱动模板编辑器：op = new / customize / desc:<文本> / add-param / mode:source / save / delete
+    @objc private func debugEditor(_ note: Notification) {
+        let m = LibraryWindow.model
+        let op = (note.userInfo?["op"] as? String) ?? ""
+        switch op {
+        case "new": m.newTemplate()
+        case "customize": if let e = m.editor { m.customize(e.entry) }
+        case "add-param":
+            m.editor?.updateDoc { d in
+                d.params.append(ParamDoc(name: "lang", kind: .enum, description: "输出语言",
+                                         choices: [Choice(value: "zh", label: "中文", aliases: []), Choice(value: "en", label: "英文", aliases: [])],
+                                         defaultValue: "zh", positional: false, short: nil, required: false, requires: [], conflicts: [], min: nil, max: nil))
+            }
+        case "save": m.editor?.save()
+        case "mode:source": m.editor?.mode = .source
+        case "mode:form": m.editor?.mode = .form
+        case "delete":
+            if let e = m.editor?.entry, let path = e.path {
+                try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+                m.reload()
+            }
+        default:
+            if op.hasPrefix("desc:") { m.editor?.updateDoc { $0.description = String(op.dropFirst(5)) } }
+            if op.hasPrefix("try:") { m.editor?.tryInput = String(op.dropFirst(4)) }
+        }
+        SpikeLog.event("editor", ["op": op, "dirty": m.editor?.dirty ?? false, "selection": m.selection ?? "",
+                                  "problems": m.editor?.check.problems ?? [], "path": m.editor?.entry.path ?? ""])
+    }
+
     @objc private func debugStatus(_ note: Notification) {
         SpikeLog.event("status", [
             "ax_trusted": Inserter.isTrusted,
@@ -118,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "rss_mb": Self.residentMB(),
         ])
     }
+    #endif
 
     static func residentMB() -> Double {
         var info = task_vm_info_data_t()
@@ -129,67 +202,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return kr == KERN_SUCCESS ? (Double(info.phys_footprint) / 1_048_576 * 10).rounded() / 10 : -1
     }
+
+    @objc func openSettings() {
+        WindowManager.shared.show("settings", title: "Qantrip 设置", size: NSSize(width: 560, height: 400)) { SettingsView() }
+    }
 }
 
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(withTitle: "打开面板（⌃Q）", action: #selector(openPanel), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "打开面板（\(hotKey.spec.display)）", action: #selector(openPanel), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "模板库…", action: #selector(openLibrary), keyEquivalent: "l").target = self
+        menu.addItem(withTitle: "设置…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
 
-        let ascii = menu.addItem(withTitle: "唤起时切换到英文输入法", action: #selector(toggleASCII), keyEquivalent: "")
-        ascii.target = self
-        ascii.state = InputSourceGuard.enabled ? .on : .off
-        let expand = menu.addItem(withTitle: "⌘↩ 展开粘贴（Claude Code）", action: #selector(toggleExpand), keyEquivalent: "")
-        expand.target = self
-        expand.state = Inserter.expandPasteEnabled ? .on : .off
-        menu.addItem(.separator())
-
-        let count = engine.templates().count
-        menu.addItem(withTitle: "模板：\(count) 个", action: nil, keyEquivalent: "")
-        for p in engine.problems().prefix(5) {
-            menu.addItem(withTitle: "⚠︎ \(p)", action: nil, keyEquivalent: "")
+        if !hotKey.isRegistered {
+            menu.addItem(withTitle: "⚠︎ 快捷键 \(hotKey.spec.display) 注册失败，请在设置中更换", action: #selector(openSettings), keyEquivalent: "").target = self
         }
-        menu.addItem(withTitle: "打开模板目录", action: #selector(openTemplates), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "重新加载模板", action: #selector(reloadTemplates), keyEquivalent: "r").target = self
-        menu.addItem(withTitle: "清除使用记录", action: #selector(clearUsage), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-
-        let hk = hotKey.isRegistered ? "全局快捷键：⌃Q 已注册" : "全局快捷键注册失败（\(hotKey.status)）"
-        menu.addItem(withTitle: hk, action: nil, keyEquivalent: "")
-        if Inserter.isTrusted {
-            menu.addItem(withTitle: "辅助功能权限：已授予（自动粘贴）", action: nil, keyEquivalent: "")
-        } else {
-            menu.addItem(withTitle: "辅助功能权限：未授予（只复制模式）", action: nil, keyEquivalent: "")
-            menu.addItem(withTitle: "授予辅助功能权限…", action: #selector(requestTrust), keyEquivalent: "").target = self
+        if !Inserter.isTrusted && !AppSettings.shared.copyOnly {
+            menu.addItem(withTitle: "⚠︎ 未授予辅助功能权限（只复制）", action: #selector(requestTrust), keyEquivalent: "").target = self
         }
-        menu.addItem(withTitle: "Nekro Qantrip Demo · core \(coreVersion())", action: nil, keyEquivalent: "")
+        let problems = engine.problems()
+        if !problems.isEmpty {
+            menu.addItem(withTitle: "⚠︎ \(problems.count) 个模板加载问题", action: #selector(openSettings), keyEquivalent: "").target = self
+        }
+        menu.addItem(withTitle: "使用引导…", action: #selector(openOnboarding), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "退出 Qantrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc private func openPanel() {
         launcher.show(eventTime: ProcessInfo.processInfo.systemUptime, source: "menu")
     }
 
-    @objc private func toggleASCII() {
-        UserDefaults.standard.set(!InputSourceGuard.enabled, forKey: "forceASCIIInput")
+    @objc private func openLibrary() {
+        LibraryWindow.show()
     }
 
-    @objc private func toggleExpand() {
-        Inserter.expandPasteEnabled.toggle()
-    }
-
-    @objc private func openTemplates() {
-        NSWorkspace.shared.open(Self.templatesDir)
-    }
-
-    @objc private func clearUsage() {
-        engine.clearUsage()
-    }
-
-    @objc private func reloadTemplates() {
-        engine.reload()
+    @objc private func openOnboarding() {
+        Onboarding.show()
     }
 
     @objc private func requestTrust() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 构建 macOS Spike：Rust 核心 → UniFFI Swift 绑定 → SwiftPM → 组装 .app → 签名。
+# 构建 macOS 应用：Rust 核心 → UniFFI Swift 绑定 → SwiftPM → 组装 .app → 签名。
 # 产物：dist/Qantrip.app、dist/PasteProbe.app、dist/qantrip-debug
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,8 +24,11 @@ cp "$GEN/qantrip_core.swift" "$MAC/Sources/QantripCore/"
 cp "$LIBDIR/libqantrip_core.a" "$MAC/Generated/lib/"
 
 echo "==> SwiftPM"
-swift build -c release --package-path "$MAC"
-BIN="$(swift build -c release --package-path "$MAC" --show-bin-path)"
+# QANTRIP_DEBUG_HOOKS=1 时编译调试钩子（自动化测试用），正式构建不包含
+SWIFT_FLAGS=()
+[ "${QANTRIP_DEBUG_HOOKS:-0}" = "1" ] && SWIFT_FLAGS+=(-Xswiftc -DQANTRIP_DEBUG_HOOKS)
+swift build -c release --package-path "$MAC" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
+BIN="$(swift build -c release --package-path "$MAC" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} --show-bin-path)"
 
 echo "==> 组装"
 rm -rf "$DIST"; mkdir -p "$DIST"

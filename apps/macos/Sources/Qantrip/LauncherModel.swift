@@ -112,7 +112,9 @@ final class LauncherModel {
         case .insert:
             guard let text = engine.render(input: query, selected: selectedKey) else { return reject() }
             let collapses = analysis.preview?.collapsesInClaudeCode ?? false
-            engine.recordUse(input: query, selected: selectedKey, app: target?.bundleIdentifier)
+            if AppSettings.shared.recordUsage {
+                engine.recordUse(input: query, selected: selectedKey, app: target?.bundleIdentifier)
+            }
             onSubmit?(text, expand && collapses)
         case .complete(let edit):
             if !analysis.locked { selectedKey = analysis.template?.name }
