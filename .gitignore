@@ -13,3 +13,7 @@
 *.keychain-db
 .env*
 /spike-logs/
+
+# UniFFI 生成的绑定（由 scripts/build-macos.sh 生成）
+/apps/macos/Sources/qantrip_coreFFI/include/
+/apps/macos/Sources/QantripCore/qantrip_core.swift

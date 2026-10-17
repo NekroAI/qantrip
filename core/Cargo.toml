@@ -1,0 +1,24 @@
+[package]
+name = "qantrip-core"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "qantrip_core"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[dependencies]
+uniffi = "0.32"
+
+[profile.release]
+lto = true
+codegen-units = 1
