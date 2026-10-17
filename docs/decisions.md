@@ -270,6 +270,7 @@
 - **决定：** Windows 版用 C# + WinUI 3（Windows App SDK，非打包、自包含发布），Rust 核心通过 C# 绑定接入；遵循 D6 各平台原生外壳。
 - **环境：** 负责人的 Windows 11（x64）通过 `ssh nexus-win` 访问；需安装 Rust、.NET 8 SDK、VS 生成工具。
 - **顺序：** 先验证高风险能力（全局热键、不抢焦点的浮窗、剪贴板 + Ctrl+V 插入与剪贴板还原、输入法），再补齐面板与设置。
+- **进展（2026-10-18 夜）：** 三轮完成，见 `docs/windows-spike.md`。绑定改用 C ABI + JSON（`apps/windows/native`），因为 uniffi-bindgen-cs 尚不支持 UniFFI 0.32。已有面板、指令模式、设置、模板库、同步界面（DPAPI 加密的密钥文件，放在不漫游的 `%LOCALAPPDATA%`）、首次引导、字体与动效、zip 打包；目标框架 .NET 10。待负责人实测：真实登录与同步、Claude Code / Codex 粘贴、Alt+Q 冲突、搜狗等输入法。
 
 ---
 
