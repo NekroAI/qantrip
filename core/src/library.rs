@@ -32,58 +32,32 @@ pub struct Library {
 
 impl Library {
     pub fn load(user_dir: Option<&Path>) -> Library {
-        let mut problems = Vec::new();
-        let mut templates: Vec<Template> = Vec::new();
+        let (templates, problems) = collect(user_dir);
+        build(templates, problems)
+    }
 
-        for src in BUILTIN {
-            match template::parse(src, true) {
-                Ok(t) => templates.push(t),
-                Err(e) => problems.push(format!("内置模板：{e}")),
+    /// 编辑器预览：在当前模板库上用 `source` 覆盖（或新增）一个模板。
+    /// 返回模板库和 `source` 自身的问题（格式、语法错误）。
+    pub fn with_override(user_dir: Option<&Path>, source: &str) -> (Library, Option<String>, Vec<String>) {
+        let (mut templates, problems) = collect(user_dir);
+        let mut own = Vec::new();
+        let name = match template::parse(source, false) {
+            Ok(t) => {
+                let name = t.name.clone();
+                templates.retain(|o| o.name != name);
+                templates.push(t);
+                Some(name)
             }
-        }
-
-        if let Some(dir) = user_dir
-            && let Ok(entries) = std::fs::read_dir(dir)
-        {
-            let mut paths: Vec<_> = entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "md"))
-                .collect();
-            paths.sort();
-            for path in paths {
-                let file = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| template::parse(&s, false)) {
-                    Ok(t) => {
-                        // 用户模板与内置模板同名时覆盖内置版本
-                        templates.retain(|o| !(o.builtin && o.name == t.name));
-                        if templates.iter().any(|o| o.name == t.name) {
-                            problems.push(format!("{file}：模板名 `{}` 重复，已忽略", t.name));
-                        } else {
-                            templates.push(t);
-                        }
-                    }
-                    Err(e) => problems.push(format!("{file}：{e}")),
-                }
+            Err(e) => {
+                own.push(e);
+                None
             }
+        };
+        let lib = build(templates, problems);
+        if let Some(n) = &name {
+            own.extend(lib.problems.iter().filter(|p| p.contains(&format!("`{n}`"))).cloned());
         }
-
-        resolve_alias_conflicts(&mut templates, &mut problems);
-
-        let mut env = Environment::new();
-        env.set_syntax(SyntaxConfig::builder().trim_blocks(true).lstrip_blocks(true).build().unwrap());
-        env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
-        env.set_fuel(Some(FUEL));
-        env.set_recursion_limit(RECURSION_LIMIT);
-        let mut ok = Vec::new();
-        for t in templates {
-            match env.add_template_owned(t.name.clone(), t.body.clone()) {
-                Ok(()) => ok.push(t),
-                Err(e) => problems.push(format!("模板 `{}` 语法错误：{e}", t.name)),
-            }
-        }
-
-        Library { templates: ok, problems, env }
+        (lib, name, own)
     }
 
     /// 可搜索的模板（不含公共片段）。
@@ -111,6 +85,69 @@ impl Library {
         }
         Ok(out)
     }
+}
+
+fn collect(user_dir: Option<&Path>) -> (Vec<Template>, Vec<String>) {
+    let mut problems = Vec::new();
+    let mut templates: Vec<Template> = Vec::new();
+
+    for src in BUILTIN {
+        match template::parse(src, true) {
+            Ok(t) => templates.push(t),
+            Err(e) => problems.push(format!("内置模板：{e}")),
+        }
+    }
+
+    if let Some(dir) = user_dir
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        let mut paths: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "md"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let file = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| template::parse(&s, false)) {
+                Ok(mut t) => {
+                    t.path = Some(path.clone());
+                    // 用户模板与内置模板同名时覆盖内置版本
+                    templates.retain(|o| !(o.builtin && o.name == t.name));
+                    if templates.iter().any(|o| o.name == t.name) {
+                        problems.push(format!("{file}：模板名 `{}` 重复，已忽略", t.name));
+                    } else {
+                        templates.push(t);
+                    }
+                }
+                Err(e) => problems.push(format!("{file}：{e}")),
+            }
+        }
+    }
+    (templates, problems)
+}
+
+fn build(mut templates: Vec<Template>, mut problems: Vec<String>) -> Library {
+    resolve_alias_conflicts(&mut templates, &mut problems);
+
+    let mut env = Environment::new();
+    env.set_syntax(SyntaxConfig::builder().trim_blocks(true).lstrip_blocks(true).build().unwrap());
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
+    env.set_fuel(Some(FUEL));
+    env.set_recursion_limit(RECURSION_LIMIT);
+    let mut ok = Vec::new();
+    for t in templates {
+        match env.add_template_owned(t.name.clone(), t.body.clone()) {
+            Ok(()) => ok.push(t),
+            Err(e) => problems.push(format!("模板 `{}` 语法错误：{e}", t.name)),
+        }
+    }
+    Library { templates: ok, problems, env }
+}
+
+/// 内置模板源码（不含被用户覆盖的情况），用于"恢复默认"。
+pub fn builtin_source(name: &str) -> Option<&'static str> {
+    BUILTIN.iter().copied().find(|s| template::parse(s, true).is_ok_and(|t| t.name == name))
 }
 
 fn to_jinja(v: &Value, kind: ParamKind) -> minijinja::Value {

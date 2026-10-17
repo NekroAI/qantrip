@@ -89,6 +89,10 @@ pub struct Template {
     pub params: Vec<ParamSpec>,
     pub body: String,
     pub builtin: bool,
+    /// 原始文件内容（编辑器使用）
+    pub source: String,
+    /// 用户模板的文件路径；内置模板为 None
+    pub path: Option<std::path::PathBuf>,
 }
 
 impl Template {
@@ -196,6 +200,8 @@ pub fn parse(source: &str, builtin: bool) -> Result<Template, String> {
         params,
         body,
         builtin,
+        source: source.to_string(),
+        path: None,
     })
 }
 

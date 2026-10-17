@@ -2,6 +2,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod doc;
 pub mod grammar;
 pub mod library;
 pub mod template;
@@ -10,12 +11,55 @@ pub mod usage;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+pub use doc::{DocError, ParamDoc, TemplateDoc};
 pub use grammar::*;
 pub use template::{Choice, ParamKind};
 
 #[uniffi::export]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// 模板源码 → 结构化文档（图形化编辑器）。
+#[uniffi::export]
+pub fn parse_template_doc(source: String) -> Result<TemplateDoc, DocError> {
+    doc::parse_doc(&source)
+}
+
+/// 结构化文档 → 模板源码。
+#[uniffi::export]
+pub fn serialize_template_doc(doc: TemplateDoc) -> String {
+    doc::serialize_doc(&doc)
+}
+
+#[uniffi::export]
+pub fn new_template_doc(name: String) -> TemplateDoc {
+    doc::new_doc(&name)
+}
+
+/// 模板库中的一项（编辑器列表使用）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TemplateEntry {
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub description: String,
+    pub category: String,
+    pub builtin: bool,
+    /// 用户模板覆盖了同名内置模板
+    pub overrides_builtin: bool,
+    pub partial: bool,
+    pub path: Option<String>,
+    pub source: String,
+}
+
+/// 编辑器的实时校验与试用结果。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SourceCheck {
+    pub name: Option<String>,
+    pub problems: Vec<String>,
+    pub doc: Option<TemplateDoc>,
+    /// 以试用输入解析的结果（预览、参数状态等）
+    pub analysis: Option<Analysis>,
 }
 
 #[derive(uniffi::Object)]
@@ -79,6 +123,43 @@ impl Engine {
                 builtin: t.builtin,
             })
             .collect()
+    }
+
+    pub fn entries(&self) -> Vec<TemplateEntry> {
+        let lib = self.lib.read().unwrap();
+        let mut out: Vec<TemplateEntry> = lib
+            .templates
+            .iter()
+            .map(|t| TemplateEntry {
+                name: t.name.clone(),
+                aliases: t.aliases.clone(),
+                description: t.description.clone(),
+                category: t.category.clone(),
+                builtin: t.builtin,
+                overrides_builtin: !t.builtin && library::builtin_source(&t.name).is_some(),
+                partial: t.is_partial(),
+                path: t.path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                source: t.source.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| (a.partial, &a.category, &a.name).cmp(&(b.partial, &b.category, &b.name)));
+        out
+    }
+
+    /// 内置模板的原始源码（用于"自定义内置模板"与"恢复默认"）。
+    pub fn builtin_source(&self, name: String) -> Option<String> {
+        library::builtin_source(&name).map(str::to_string)
+    }
+
+    /// 校验编辑中的源码，并用 `try_input`（为空时用模板名）试用。
+    pub fn check_source(&self, source: String, try_input: String) -> SourceCheck {
+        let (lib, name, problems) = library::Library::with_override(self.user_dir.as_deref(), &source);
+        let doc = doc::parse_doc(&source).ok();
+        let analysis = name.as_ref().filter(|_| problems.is_empty()).map(|n| {
+            let input = if try_input.trim().is_empty() { format!("{n} ") } else { try_input.clone() };
+            grammar::analyze(&lib, &self.usage.read().unwrap(), &input, Some(n))
+        });
+        SourceCheck { name, problems, doc, analysis }
     }
 
     /// 解析面板输入。`selected`：界面当前高亮的模板名。
