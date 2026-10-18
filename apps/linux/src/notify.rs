@@ -23,14 +23,25 @@ pub fn notice(summary: &str, body: &str) {
 
 fn send(summary: &str, body: &str, transient: bool, timeout: i32) {
     let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else { return };
+    // 不附加 desktop-entry：GNOME 在发送进程与该应用对应不上时（如从终端启动）不显示横幅
     let hints = glib::VariantDict::new(None);
-    hints.insert("desktop-entry", crate::APP_ID);
     if transient {
         hints.insert("transient", true);
-        hints.insert("urgency", 0u8);
+        // 低优先级（0）的通知在 GNOME 中不弹出横幅，因此用普通优先级
+        hints.insert("urgency", 1u8);
     }
     let replaces = if transient { LAST.with(|c| c.get()) } else { 0 };
-    let args = ("Nekro Qantrip", replaces, crate::APP_ID, summary, body, Vec::<String>::new(), hints.end(), timeout).to_variant();
+    // 逐项构造参数：直接把 VariantDict 放进元组会被包成 `v`，签名不再是 a{sv}
+    let args = glib::Variant::tuple_from_iter([
+        "Nekro Qantrip".to_variant(),
+        replaces.to_variant(),
+        crate::APP_ID.to_variant(),
+        summary.to_variant(),
+        body.to_variant(),
+        Vec::<String>::new().to_variant(),
+        hints.end(),
+        timeout.to_variant(),
+    ]);
     let transient_flag = transient;
     conn.call(
         Some("org.freedesktop.Notifications"),

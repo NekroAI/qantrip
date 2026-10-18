@@ -44,6 +44,9 @@ struct QantripTray {
     snap: Snapshot,
     tx: async_channel::Sender<Action>,
     icon_path: String,
+    /// 图标名（KDE 等按主题加载，单色、随面板配色）；GNOME 的 AppIndicator 扩展不认自带主题路径，留空改用像素图
+    icon_name: String,
+    pixmaps: Vec<ksni::Icon>,
 }
 
 impl QantripTray {
@@ -73,7 +76,11 @@ impl ksni::Tray for QantripTray {
     }
 
     fn icon_name(&self) -> String {
-        "qantrip-tray-symbolic".into()
+        self.icon_name.clone()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.pixmaps.clone()
     }
 
     fn icon_theme_path(&self) -> String {
@@ -147,6 +154,46 @@ pub struct Tray {
     last: std::cell::RefCell<Snapshot>,
 }
 
+/// 应用图标的像素图（ARGB32，网络字节序），供不按名称加载图标的托盘宿主使用
+fn app_icon_pixmaps() -> Vec<ksni::Icon> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    for d in crate::paths::resource_dirs() {
+        // 资源目录为 <前缀>/share/qantrip，应用图标在 <前缀>/share/icons
+        if let Some(share) = d.parent() {
+            candidates.push(share.join("icons/hicolor/256x256/apps/ai.nekro.qantrip.png"));
+        }
+    }
+    candidates.push(crate::paths::user_icons_dir().join("hicolor/256x256/apps/ai.nekro.qantrip.png"));
+    if cfg!(debug_assertions) {
+        candidates.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/icon/AppIcon-1024.png"));
+    }
+    let Some(path) = candidates.into_iter().find(|p| p.exists()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for size in [22, 32, 48] {
+        let Ok(pb) = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&path, size, size, true) else { continue };
+        let pb = if pb.has_alpha() {
+            pb
+        } else {
+            match pb.add_alpha(false, 0, 0, 0) {
+                Ok(p) => p,
+                Err(_) => continue,
+            }
+        };
+        let (w, h, stride) = (pb.width(), pb.height(), pb.rowstride() as usize);
+        let bytes = pb.read_pixel_bytes();
+        let mut data = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let i = y * stride + x * 4;
+                let (r, g, b, a) = (bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
+                data.extend_from_slice(&[a, r, g, b]);
+            }
+        }
+        out.push(ksni::Icon { width: w, height: h, data });
+    }
+    out
+}
+
 fn snapshot(app: &App) -> Snapshot {
     let shortcut = app.hotkey.display();
     let hotkey_problem = match app.hotkey.state() {
@@ -176,7 +223,8 @@ impl Tray {
         let (tx, rx) = async_channel::unbounded::<Action>();
         let icon_path = crate::paths::resource("icons").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let first = snapshot(&app);
-        let tray = QantripTray { snap: first.clone(), tx, icon_path };
+        let icon_name = if app.session.desktop == crate::session::Desktop::Gnome { String::new() } else { "qantrip-tray-symbolic".to_string() };
+        let tray = QantripTray { snap: first.clone(), tx, icon_path, icon_name, pixmaps: app_icon_pixmaps() };
         let handle = match tray.spawn() {
             Ok(h) => h,
             Err(e) => {

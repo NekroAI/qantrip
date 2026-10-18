@@ -244,17 +244,26 @@ impl Panel {
         });
         let weak = Rc::downgrade(&panel);
         panel.field.connect_keys(move |key, mods| weak.upgrade().map(|p| p.key(key, mods)).unwrap_or(false));
-        // 点击面板外部 / 切换到其他窗口时关闭
+        // 点击面板外部 / 切换到其他窗口时关闭。稍等片刻再确认：GNOME 切换输入法（Super+空格）时
+        // 输入源切换器会短暂取得焦点，随后焦点回到面板，此时不应关闭
         let weak = Rc::downgrade(&panel);
         panel.window.connect_is_active_notify(move |w| {
-            if let Some(p) = weak.upgrade()
-                && !w.is_active()
-                && p.visible.get()
-                && !p.hiding.get()
-                && util::uptime() - p.shown_at.get() > 0.25
-            {
-                p.hide();
+            let Some(p) = weak.upgrade() else { return };
+            #[cfg(all(feature = "debug-hooks", debug_assertions))]
+            crate::log::event("panel_active", serde_json::json!({"active": w.is_active()}));
+            if w.is_active() || !p.visible.get() || p.hiding.get() || util::uptime() - p.shown_at.get() < 0.25 {
+                return;
             }
+            let weak2 = Rc::downgrade(&p);
+            glib::timeout_add_local_once(Duration::from_millis(220), move || {
+                if let Some(p) = weak2.upgrade()
+                    && !p.window.is_active()
+                    && p.visible.get()
+                    && !p.hiding.get()
+                {
+                    p.hide();
+                }
+            });
         });
         let weak = Rc::downgrade(&panel);
         panel.window.connect_close_request(move |_| {

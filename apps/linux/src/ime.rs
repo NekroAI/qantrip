@@ -23,6 +23,8 @@ enum Restore {
 
 pub struct Ime {
     settings: Rc<Settings>,
+    /// IBus 的键盘引擎名（启动时在后台查询一次：`ibus list-engine` 较慢）
+    kb_engine: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     restore: RefCell<Option<Restore>>,
     active: std::cell::Cell<bool>,
 }
@@ -90,7 +92,16 @@ fn ibus_keyboard_engine(layout: &str, variant: &str) -> String {
 
 impl Ime {
     pub fn new(settings: Rc<Settings>) -> Rc<Ime> {
-        Rc::new(Ime { settings, restore: RefCell::new(None), active: std::cell::Cell::new(false) })
+        let kb_engine = std::sync::Arc::new(std::sync::Mutex::new(None));
+        if glib::find_program_in_path("ibus").is_some() {
+            let (layout, variant) = keyboard_layout();
+            let slot = kb_engine.clone();
+            std::thread::spawn(move || {
+                let name = ibus_keyboard_engine(&layout, &variant);
+                *slot.lock().unwrap() = Some(name);
+            });
+        }
+        Rc::new(Ime { settings, kb_engine, restore: RefCell::new(None), active: std::cell::Cell::new(false) })
     }
 
     /// 面板打开：切到英文。Fcitx5 需在面板输入框获得焦点后执行，因此稍后调用；IBus 命令在后台线程执行。
@@ -102,28 +113,28 @@ impl Ime {
         }
         let this = self.clone();
         glib::spawn_future_local(async move {
-            glib::timeout_future(std::time::Duration::from_millis(60)).await;
-            if !this.active.get() {
-                return;
-            }
-            if let Some(conn) = session_bus()
-                && let Some(v) = fcitx_call(&conn, "State")
-            {
-                crate::log::event("ime", serde_json::json!({"im": "fcitx5", "state": v.get::<(i32,)>().map(|t| t.0)}));
-                if v.get::<(i32,)>().map(|t| t.0) == Some(2) {
+            // Fcitx5 按输入上下文切换：等面板输入框取得焦点后再执行
+            let fcitx = session_bus().and_then(|c| fcitx_call(&c, "State").map(|v| (c, v)));
+            if let Some((conn, v)) = fcitx {
+                glib::timeout_future(std::time::Duration::from_millis(60)).await;
+                if !this.active.get() {
+                    return;
+                }
+                let state = fcitx_call(&conn, "State").or(Some(v)).and_then(|v| v.get::<(i32,)>().map(|t| t.0));
+                crate::log::event("ime", serde_json::json!({"im": "fcitx5", "state": state}));
+                if state == Some(2) {
                     fcitx_call(&conn, "Deactivate");
                     *this.restore.borrow_mut() = Some(Restore::Fcitx);
                 }
                 return;
             }
-            // IBus：仅在正在使用非键盘布局引擎（如拼音）时切换
-            let (layout, variant) = keyboard_layout();
+            // IBus：引擎是全局的，立即切换；仅在正在使用非键盘布局引擎（如拼音）时切换
+            let kb = this.kb_engine.lock().unwrap().clone().unwrap_or_else(|| "xkb:us::eng".to_string());
             let prev = gio::spawn_blocking(move || {
                 let engine = ibus(&["engine"])?;
                 if engine.is_empty() || engine.starts_with("xkb:") {
                     return None;
                 }
-                let kb = ibus_keyboard_engine(&layout, &variant);
                 ibus(&["engine", &kb]).map(|_| engine)
             })
             .await

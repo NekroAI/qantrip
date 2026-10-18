@@ -304,9 +304,19 @@ impl App {
         i18n::set_ui_locale(self.settings.ui_locale());
         self.engine.set_locale(self.settings.ui_locale(), self.settings.template_locale());
         self.panel().language_changed();
-        self.library_reload();
-        if let Some(lib) = self.library.borrow().clone() {
-            lib.language_changed();
+        // 模板库与设置窗口以新语言重建（保留当前选择与可见状态）
+        // 有未保存的修改时不重建（下次打开时生效），避免丢失编辑内容
+        let unsaved = self.library.borrow().as_ref().is_some_and(|l| l.has_unsaved());
+        let old = if unsaved { None } else { self.library.borrow_mut().take() };
+        if let Some(lib) = old {
+            let (visible, selection) = (lib.is_visible(), lib.selection());
+            lib.destroy();
+            if visible {
+                match selection {
+                    Some(s) if s.starts_with("settings:") => self.show_settings(Some(s.trim_start_matches("settings:"))),
+                    other => self.show_library(other),
+                }
+            }
         }
         self.refresh_tray();
     }

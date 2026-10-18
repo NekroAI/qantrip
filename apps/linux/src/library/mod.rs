@@ -332,19 +332,20 @@ impl LibraryWindow {
         self.selection.borrow().as_deref().is_some_and(|s| s.starts_with("settings:"))
     }
 
-    pub fn language_changed(self: &Rc<Self>) {
-        // 重新打开时以新语言重建（与 Windows 相同的取舍：设置页立即重建）
-        self.search.set_placeholder_text(Some(&l("搜索模板", "Search templates")));
-        let page = self.selection.borrow().clone();
-        *self.settings.borrow_mut() = None;
-        if let Some(name) = self.content_stack.child_by_name("settings") {
-            self.content_stack.remove(&name);
+    pub fn selection(&self) -> Option<String> {
+        self.selection.borrow().clone()
+    }
+
+    pub fn has_unsaved(&self) -> bool {
+        self.editor.borrow().as_ref().is_some_and(|e| e.dirty())
+    }
+
+    /// 关闭并销毁窗口（界面语言变化后重建）
+    pub fn destroy(&self) {
+        if let Some(s) = self.settings.borrow().as_ref() {
+            s.set_visible(false);
         }
-        if page.as_deref().is_some_and(|p| p.starts_with("settings:")) {
-            *self.selection.borrow_mut() = None;
-            self.select(page);
-        }
-        self.rebuild_list();
+        self.window.destroy();
     }
 
     /// 重新读取模板列表（编辑中且未修改的模板跟随磁盘内容刷新）
@@ -1010,4 +1011,33 @@ fn zip_dir(dir: &Path, out: &Path) -> Result<(), String> {
     }
     z.finish().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zip_roundtrip_keeps_templates_folder() {
+        let base = std::env::temp_dir().join(format!("qantrip-zip-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("templates");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "---\nname: a\n---\nA").unwrap();
+        std::fs::write(dir.join("b.md"), "---\nname: b\n---\n中文").unwrap();
+        let zip = base.join("out.zip");
+        zip_dir(&dir, &zip).unwrap();
+        let mut files = unzip_md(&zip).unwrap();
+        files.sort();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].0, "a.md");
+        assert_eq!(String::from_utf8(files[1].1.clone()).unwrap(), "---\nname: b\n---\n中文");
+        // 文件夹导入：递归收集 .md，忽略 __MACOSX
+        std::fs::create_dir_all(base.join("templates/__MACOSX")).unwrap();
+        std::fs::write(base.join("templates/__MACOSX/c.md"), "x").unwrap();
+        let mut out = Vec::new();
+        collect_md(&dir, &mut out);
+        assert_eq!(out.len(), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
