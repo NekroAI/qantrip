@@ -2,12 +2,11 @@
 // 记录、花名册、信封与加入消息对服务端都是不透明的字节。
 import { all, audit, first, run, statement } from './db.js'
 import { HttpError, b64u, now, randomToken, sha256 } from './http.js'
+import { HARD, formatBytes } from './limits.js'
 
-// 硬性限制（docs/sync-design.md 第 11 节）
+// 硬性限制（docs/sync-design.md 第 11 节）。保险库容量按账号计算（limits.ts），这里只有与账号无关的上限。
 export const LIMITS = {
   recordBytes: 256 * 1024,
-  vaultBytes: 10 * 1024 * 1024,
-  vaultRecords: 5000,
   batchWrites: 50,
   pageSize: 200,
   rosterEntries: 1000,
@@ -119,16 +118,20 @@ const parseWrite = (w: unknown): WriteInput => {
   return { record_id: o.record_id, base_seq: o.base_seq ?? null, epoch: o.epoch as number, ciphertext: o.ciphertext, deleted: Boolean(o.deleted), idempotency_key: o.idempotency_key }
 }
 
-export const pushRecords = async (env: Env, vaultId: string, deviceId: string, body: unknown): Promise<WriteResult[]> => {
+/** 本账号保险库的有效容量：账号限制与绝对上限中较小者 */
+const vaultQuota = (quotaBytes: number) => Math.min(quotaBytes, HARD.vaultBytes)
+
+export const pushRecords = async (env: Env, vaultId: string, deviceId: string, quotaBytes: number, body: unknown): Promise<WriteResult[]> => {
   const writes = (body as { writes?: unknown[] })?.writes
   if (!Array.isArray(writes) || writes.length === 0) throw new HttpError(400, 'bad_request', '缺少写入内容')
   if (writes.length > LIMITS.batchWrites) throw new HttpError(400, 'batch_too_large', `每批最多 ${LIMITS.batchWrites} 条`)
   const results: WriteResult[] = []
-  for (const raw of writes) results.push(await writeOne(env, vaultId, deviceId, parseWrite(raw)))
+  const quota = vaultQuota(quotaBytes)
+  for (const raw of writes) results.push(await writeOne(env, vaultId, deviceId, quota, parseWrite(raw)))
   return results
 }
 
-const writeOne = async (env: Env, vaultId: string, deviceId: string, w: WriteInput): Promise<WriteResult> => {
+const writeOne = async (env: Env, vaultId: string, deviceId: string, quota: number, w: WriteInput): Promise<WriteResult> => {
   const db = env.DB
   const cached = await first<{ result: string }>(db, 'SELECT result FROM idempotency_keys WHERE vault_id = ? AND key = ?', vaultId, w.idempotency_key)
   if (cached) return JSON.parse(cached.result) as WriteResult
@@ -155,7 +158,7 @@ const writeOne = async (env: Env, vaultId: string, deviceId: string, w: WriteInp
          SELECT id, ?, seq + 1, ?, ?, ?, ?, ?, ? FROM vaults
          WHERE id = ? AND record_count < ? AND byte_count + ? <= ?
          ON CONFLICT(vault_id, record_id) DO NOTHING`,
-        w.record_id, w.epoch, bytes, bytes.length, del, deviceId, t, vaultId, LIMITS.vaultRecords, bytes.length, LIMITS.vaultBytes,
+        w.record_id, w.epoch, bytes, bytes.length, del, deviceId, t, vaultId, HARD.vaultRecords, bytes.length, quota,
       ),
       statement(db, 'UPDATE vaults SET seq = seq + 1, record_count = record_count + 1, byte_count = byte_count + ?, updated_at = ? WHERE id = ? AND changes() = 1', bytes.length, t, vaultId),
     ])
@@ -167,7 +170,7 @@ const writeOne = async (env: Env, vaultId: string, deviceId: string, w: WriteInp
       db, 'SELECT record_id, seq, epoch, ciphertext, deleted FROM records WHERE vault_id = ? AND record_id = ?', vaultId, w.record_id,
     )
     if (again) return { record_id: w.record_id, status: 'conflict', current: toWire(again) }
-    return remember(env, vaultId, w, { record_id: w.record_id, status: 'quota_exceeded', message: '保险库已满（最多 5,000 条、10 MiB）' })
+    return remember(env, vaultId, w, { record_id: w.record_id, status: 'quota_exceeded', message: `保险库已满（最多 ${HARD.vaultRecords.toLocaleString('en-US')} 条、${formatBytes(quota)}）` })
   }
 
   if (!current) {
@@ -176,7 +179,10 @@ const writeOne = async (env: Env, vaultId: string, deviceId: string, w: WriteInp
   }
   if (current.seq !== w.base_seq) return { record_id: w.record_id, status: 'conflict', current: toWire(current) }
   const delta = bytes.length - current.size
-  if (vault.byte_count + delta > LIMITS.vaultBytes) return remember(env, vaultId, w, { record_id: w.record_id, status: 'quota_exceeded', message: '保险库已满（最多 10 MiB）' })
+  // 只有增长的写入受容量限制：缩小或删除总是允许，容量下调后仍能腾出空间
+  if (delta > 0 && vault.byte_count + delta > quota) {
+    return remember(env, vaultId, w, { record_id: w.record_id, status: 'quota_exceeded', message: `保险库已满（最多 ${formatBytes(quota)}）` })
+  }
 
   // CAS：只有 seq 仍等于 base_seq 时才更新；更新成功才推进保险库 seq
   const [upd] = await db.batch([
@@ -278,20 +284,26 @@ const message = (body: unknown): Uint8Array => {
   return bytes
 }
 
-export const createJoin = async (env: Env, vaultId: string, body: unknown): Promise<{ join_id: string; expires_at: number }> => {
+export const createJoin = async (env: Env, vaultId: string, deviceId: string, body: unknown): Promise<{ join_id: string; expires_at: number }> => {
   const bytes = message(body)
   const t = now()
   await run(env.DB, 'DELETE FROM join_requests WHERE vault_id = ? AND expires_at < ?', vaultId, t)
   const active = await first<{ id: string }>(env.DB, 'SELECT id FROM join_requests WHERE vault_id = ? LIMIT 1', vaultId)
   if (active) throw new HttpError(409, 'join_in_progress', '已有一个进行中的加入请求，请完成或等待其过期（10 分钟）')
   const id = `j_${randomToken(12)}`
-  await run(env.DB, 'INSERT INTO join_requests (id, vault_id, commit_msg, created_at, expires_at) VALUES (?, ?, ?, ?, ?)', id, vaultId, bytes, t, t + JOIN_TTL)
+  await run(env.DB, 'INSERT INTO join_requests (id, vault_id, commit_msg, created_at, expires_at, device_id) VALUES (?, ?, ?, ?, ?, ?)', id, vaultId, bytes, t, t + JOIN_TTL, deviceId)
   return { join_id: id, expires_at: t + JOIN_TTL }
 }
 
 type JoinRow = { id: string; commit_msg: ArrayBuffer; reply_msg: ArrayBuffer | null; reveal_msg: ArrayBuffer | null; result_msg: ArrayBuffer | null; expires_at: number }
 const enc = (b: ArrayBuffer | null) => (b ? b64u.encode(new Uint8Array(b)) : null)
 const joinView = (r: JoinRow) => ({ join_id: r.id, commit: enc(r.commit_msg), reply: enc(r.reply_msg), reveal: enc(r.reveal_msg), result: enc(r.result_msg), expires_at: r.expires_at })
+
+/** 其他设备发起、尚未过期的加入请求数（每个保险库同时最多一个，按 vault_id 索引计数） */
+export const pendingJoins = async (env: Env, vaultId: string, deviceId: string): Promise<number> =>
+  (await first<{ n: number }>(
+    env.DB, 'SELECT COUNT(*) AS n FROM join_requests WHERE vault_id = ? AND expires_at > ? AND (device_id IS NULL OR device_id != ?)', vaultId, now(), deviceId,
+  ))?.n ?? 0
 
 export const activeJoins = async (env: Env, vaultId: string) =>
   (await all<JoinRow>(env.DB, 'SELECT * FROM join_requests WHERE vault_id = ? AND expires_at > ? LIMIT 1', vaultId, now())).map(joinView)

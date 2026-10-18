@@ -1,10 +1,14 @@
 import { Hono, type Context } from 'hono'
-import { bearerAuth, finishGitHubLogin, logout, revokeToken, sessionCookie, startGitHubLogin, tokenEndpoint, type DeviceAuth } from './auth.js'
+import {
+  accountDevices, bearerAuth, enforceDeviceLimit, finishGitHubLogin, logout, releaseDevice, revokeToken, sessionCookie, startGitHubLogin, tokenEndpoint,
+  type DeviceAuth,
+} from './auth.js'
 import { HttpError, safeReturnPath } from './http.js'
+import { HARD, policyOf } from './limits.js'
 import { downloadFile, latestRelease } from './releases.js'
 import {
   activeJoins, appendRoster, cancelJoin, changes, createJoin, createVault, envelopesFor, getJoin, isJoinStep,
-  ownedVault, postJoinStep, pushRecords, putEnvelope, raiseMinEpoch, rosterSince, vaultOf,
+  ownedVault, pendingJoins, postJoinStep, pushRecords, putEnvelope, raiseMinEpoch, rosterSince, vaultOf, type VaultRow,
 } from './sync.js'
 
 type AppEnv = { Bindings: Env; Variables: { auth: DeviceAuth } }
@@ -15,7 +19,7 @@ export const handlesPath = (pathname: string): boolean =>
 export const api = new Hono<AppEnv>()
 
 api.onError((err, c) => {
-  if (err instanceof HttpError) return c.json({ error: err.code, message: err.message }, err.status as 400)
+  if (err instanceof HttpError) return c.json({ ...err.extra, error: err.code, message: err.message }, err.status as 400)
   console.error('api error', err instanceof Error ? err.message : 'unknown')
   return c.json({ error: 'internal', message: '服务暂时不可用，请稍后重试' }, 500)
 })
@@ -88,8 +92,39 @@ api.post('/api/v1/oauth/revoke', async (c) => {
 
 const authed = new Hono<AppEnv>()
 authed.use('*', async (c, next) => {
-  c.set('auth', await bearerAuth(c.env, c.req.raw))
+  const auth = await bearerAuth(c.env, c.req.raw)
+  c.set('auth', auth)
+  // 超出设备数量限制的设备只能使用账号接口（查看与移除设备），不能访问保险库
+  if (!c.req.path.startsWith('/api/v1/account')) await enforceDeviceLimit(c.env, auth)
   await next()
+})
+
+const usageOf = (v: VaultRow, auth: DeviceAuth) => ({
+  bytes: v.byte_count,
+  quota_bytes: Math.min(auth.limits.quota_bytes, HARD.vaultBytes),
+  records: v.record_count,
+})
+
+// MARK: 账号
+
+authed.get('/account', async (c) => {
+  await limit(c, 'read')
+  const auth = c.get('auth')
+  const [user, vault] = await Promise.all([
+    c.env.DB.prepare('SELECT login FROM users WHERE id = ?').bind(auth.userId).first<{ login: string }>(),
+    vaultOf(c.env.DB, auth.userId),
+  ])
+  return c.json({ login: user?.login ?? '', limits: auth.limits, usage: vault ? usageOf(vault, auth) : null })
+})
+
+authed.get('/account/devices', async (c) => {
+  await limit(c, 'read')
+  return c.json(await accountDevices(c.env, c.get('auth')))
+})
+
+authed.delete('/account/devices/:grant', async (c) => {
+  await limit(c, 'write')
+  return c.json(await releaseDevice(c.env, c.get('auth'), c.req.param('grant')))
 })
 
 authed.get('/vault', async (c) => {
@@ -109,7 +144,15 @@ const vault = (c: Context<AppEnv>) => ownedVault(c.env.DB, c.get('auth').userId,
 authed.get('/vaults/:vault/head', async (c) => {
   await limit(c, 'read')
   const v = await vault(c)
-  return c.json({ seq: v.seq, roster_index: v.roster_len, min_epoch: v.min_epoch })
+  const auth = c.get('auth')
+  return c.json({
+    seq: v.seq,
+    roster_index: v.roster_len,
+    min_epoch: v.min_epoch,
+    pending_joins: await pendingJoins(c.env, v.id, auth.deviceId),
+    usage: usageOf(v, auth),
+    policy: policyOf(auth.limits),
+  })
 })
 
 authed.get('/vaults/:vault/changes', async (c) => {
@@ -120,7 +163,8 @@ authed.get('/vaults/:vault/changes', async (c) => {
 authed.post('/vaults/:vault/records', async (c) => {
   await limit(c, 'write')
   const v = await vault(c)
-  return c.json({ results: await pushRecords(c.env, v.id, c.get('auth').deviceId, await c.req.json()) })
+  const auth = c.get('auth')
+  return c.json({ results: await pushRecords(c.env, v.id, auth.deviceId, auth.limits.quota_bytes, await c.req.json()) })
 })
 
 authed.post('/vaults/:vault/min-epoch', async (c) => {
@@ -158,7 +202,7 @@ authed.get('/vaults/:vault/envelopes/:recipient', async (c) => {
 authed.post('/vaults/:vault/joins', async (c) => {
   await limit(c, 'write')
   const v = await vault(c)
-  return c.json(await createJoin(c.env, v.id, await c.req.json()), 201)
+  return c.json(await createJoin(c.env, v.id, c.get('auth').deviceId, await c.req.json()), 201)
 })
 
 authed.get('/vaults/:vault/joins', async (c) => {

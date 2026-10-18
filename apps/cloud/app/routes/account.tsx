@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { Form, Link, redirect, useNavigation } from 'react-router'
-import { deleteAccount, listGrants, loginAvailable, revokeGrant, sessionCookie, sessionUser } from '../../server/auth.js'
+import { deleteAccount, listGrants, loginAvailable, revokeGrant, sessionCookie, sessionUser, userLimits } from '../../server/auth.js'
+import { HARD } from '../../server/limits.js'
 import { deleteVault, vaultOf } from '../../server/sync.js'
 import { type Locale, useHref, useLocale } from '../lib/i18n'
 import type { Route } from './+types/account'
@@ -17,7 +18,7 @@ const T = {
     signOut: 'Sign out',
     vault: 'Sync vault',
     records: 'encrypted records',
-    total: 'ciphertext / 10 MB',
+    total: (quota: string) => `ciphertext / ${quota}`,
     created: 'created',
     noVault: 'No vault yet. It is created when you turn on sync in the Qantrip app.',
     onlyCounts: 'Only counts and sizes are visible here: content is encrypted on your devices and the server cannot read it.',
@@ -26,7 +27,10 @@ const T = {
     lastActive: 'last active',
     signedIn: 'signed in',
     revoke: 'Sign out this device',
-    devicesNote: 'Device names are encrypted, so only device IDs are shown. Signing a device out only revokes its access; to remove it from the vault and rotate keys, use another signed-in device.',
+    devicesNote: 'Device names, platforms and app versions are reported by the app when it signs in. Signing a device out only revokes its access; to remove it from the vault and rotate keys, use another signed-in device.',
+    unnamed: 'Unnamed device',
+    limited: 'over the device limit, cannot sync',
+    deviceLimit: (n: number) => `Up to ${n} devices can sync with this account at the same time.`,
     danger: 'Danger zone',
     delVault: 'Delete vault',
     delVaultP: 'Deletes all ciphertext on the server. Local templates on your devices are not affected; you can turn sync on again later.',
@@ -47,7 +51,7 @@ const T = {
     signOut: '退出登录',
     vault: '同步保险库',
     records: '条加密记录',
-    total: '密文总量 / 10 MB',
+    total: (quota: string) => `密文总量 / ${quota}`,
     created: '创建时间',
     noVault: '还没有保险库。在 Qantrip 应用的设置中开启同步后会自动创建。',
     onlyCounts: '这里只能看到数量与大小：内容由你的设备加密，服务端无法读取。',
@@ -56,7 +60,10 @@ const T = {
     lastActive: '最后活跃',
     signedIn: '登录于',
     revoke: '退出此设备',
-    devicesNote: '设备名称加密存储，这里只显示设备标识。退出设备只收回它的访问权；要把它移出保险库并轮换密钥，请在另一台已登录的设备上操作。',
+    devicesNote: '设备名称、平台与应用版本由应用登录时上报。退出设备只收回它的访问权；要把它移出保险库并轮换密钥，请在另一台已登录的设备上操作。',
+    unnamed: '未命名设备',
+    limited: '超出设备数量限制，无法同步',
+    deviceLimit: (n: number) => `此账号最多同时在 ${n} 台设备上同步。`,
     danger: '危险操作',
     delVault: '删除保险库',
     delVaultP: '删除服务端保存的全部密文。所有设备上的本地模板不受影响，之后可以在设备上重新开启同步。',
@@ -74,14 +81,26 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   const url = new URL(request.url)
   const user = await sessionUser(env, request)
   const status = url.searchParams.get('login')
-  if (!user) return { user: null, loginOpen: loginAvailable(env), status, grants: [], vault: null }
-  const [grants, vault] = await Promise.all([listGrants(env, user.id), vaultOf(env.DB, user.id)])
+  if (!user) return { user: null, loginOpen: loginAvailable(env), status, grants: [], vault: null, maxDevices: 0 }
+  const [grants, vault, limits] = await Promise.all([listGrants(env, user.id), vaultOf(env.DB, user.id), userLimits(env, user.id)])
   return {
     user: { login: user.login, avatar: user.avatar_url },
     loginOpen: true,
     status,
-    grants: grants.map((g) => ({ id: g.id, device: g.device_id, created: g.created_at, lastUsed: g.last_used_at })),
-    vault: vault ? { records: vault.record_count, bytes: vault.byte_count, created: vault.created_at as number } : null,
+    grants: grants.map((g) => ({
+      id: g.id,
+      device: g.device_id,
+      name: g.device_name,
+      platform: g.platform,
+      version: g.app_version,
+      limited: g.limited === 1,
+      created: g.created_at,
+      lastUsed: g.last_used_at,
+    })),
+    vault: vault
+      ? { records: vault.record_count, bytes: vault.byte_count, quota: Math.min(limits.quota_bytes, HARD.vaultBytes), created: vault.created_at as number }
+      : null,
+    maxDevices: limits.max_devices,
   }
 }
 
@@ -103,7 +122,7 @@ const date = (ms: number, locale: string) => new Date(ms).toLocaleString(locale,
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`)
 
 export default function Account({ loaderData }: Route.ComponentProps) {
-  const { user, loginOpen, status, grants, vault } = loaderData
+  const { user, loginOpen, status, grants, vault, maxDevices } = loaderData
   const busy = useNavigation().state !== 'idle'
   const t = T[useLocale()]
   const href = useHref()
@@ -164,7 +183,7 @@ export default function Account({ loaderData }: Route.ComponentProps) {
             </span>
             <span>
               <b>{size(vault.bytes)}</b>
-              <span className="muted">{t.total}</span>
+              <span className="muted">{t.total(size(vault.quota))}</span>
             </span>
             <span>
               <b>{fmt(vault.created)}</b>
@@ -188,8 +207,13 @@ export default function Account({ loaderData }: Route.ComponentProps) {
             {grants.map((g) => (
               <div className="list-item" key={g.id}>
                 <span>
-                  <span className="mono">{g.device.slice(0, 4)}…{g.device.slice(-4)}</span>
+                  <strong>{g.name ?? t.unnamed}</strong>
+                  {g.platform && <span className="muted"> · {g.platform}</span>}
+                  {g.version && <span className="muted"> · {g.version}</span>}
+                  <br />
+                  <span className="mono muted">{g.device.slice(0, 4)}…{g.device.slice(-4)}</span>
                   <span className="muted"> · {t.lastActive} {fmt(g.lastUsed)} · {t.signedIn} {fmt(g.created)}</span>
+                  {g.limited && <span className="muted"> · {t.limited}</span>}
                 </span>
                 <Form method="post">
                   <input type="hidden" name="intent" value="revoke" />
@@ -202,7 +226,9 @@ export default function Account({ loaderData }: Route.ComponentProps) {
             ))}
           </div>
         )}
-        <p className="muted">{t.devicesNote}</p>
+        <p className="muted">
+          {t.deviceLimit(maxDevices)} {t.devicesNote}
+        </p>
       </div>
 
       <div className="card">

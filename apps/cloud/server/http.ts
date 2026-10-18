@@ -1,9 +1,10 @@
-/** 接口错误：status + 机器可读的 code + 给用户看的中文说明。 */
+/** 接口错误：status + 机器可读的 code + 给用户看的中文说明；`extra` 为附加的机器可读字段。 */
 export class HttpError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message)
   }

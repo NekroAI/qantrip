@@ -13,7 +13,13 @@
     "SITE_ORIGIN": "https://qantrip.nekro.ai",
     "QANTRIP_ENV": "production",
     "PUBLIC_DOWNLOADS": "0",
-    "SUPER_ADMIN_GITHUB_IDS": "57167362"
+    "SUPER_ADMIN_GITHUB_IDS": "57167362",
+    // 按账号限制的默认值；运营者可在 users.limits 中为单个账号覆盖（server/limits.ts）
+    "DEFAULT_QUOTA_BYTES": "204800",
+    "DEFAULT_MAX_DEVICES": "2",
+    "SYNC_CHECK_INTERVAL_SECS": "3600",
+    "SYNC_PANEL_CHECK_SECS": "900",
+    "SYNC_MIN_PUSH_INTERVAL_SECS": "900"
   },
   "triggers": { "crons": ["23 4 * * *"] },
   "d1_databases": [
@@ -33,7 +39,12 @@
         "SITE_ORIGIN": "https://qantrip-staging.nekro.ai",
         "QANTRIP_ENV": "staging",
         "PUBLIC_DOWNLOADS": "0",
-        "SUPER_ADMIN_GITHUB_IDS": "57167362"
+        "SUPER_ADMIN_GITHUB_IDS": "57167362",
+        "DEFAULT_QUOTA_BYTES": "204800",
+        "DEFAULT_MAX_DEVICES": "2",
+        "SYNC_CHECK_INTERVAL_SECS": "3600",
+        "SYNC_PANEL_CHECK_SECS": "900",
+        "SYNC_MIN_PUSH_INTERVAL_SECS": "900"
       },
       "triggers": { "crons": ["23 4 * * *"] },
       "d1_databases": [
