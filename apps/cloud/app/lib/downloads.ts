@@ -53,7 +53,7 @@ export const CLIENTS: Client[] = [
     os: 'windows',
     file: 'Qantrip-Windows-x64-Setup.exe',
     url: latest('Qantrip-Windows-x64-Setup.exe'),
-    name: { en: 'Windows · x64 (preview)', zh: 'Windows · x64（预览版）' },
+    name: { en: 'Windows · x64', zh: 'Windows · x64' },
     detail: { en: 'Windows 10 2004+ · installer, no admin rights', zh: 'Windows 10 2004+ · 安装程序，无需管理员权限' },
     featured: true,
   },

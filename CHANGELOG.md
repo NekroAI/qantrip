@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format is based on 
 - `qantrip list`, `qantrip render <input>` and `qantrip complete <input>` on Linux use the same templates and grammar from the command line.
 
 ### Changed
+- Windows is no longer marked as a preview.
 - In Chinese, the Linux app calls the trash 回收站 like the desktop does.
 
 ## [0.3.6] — 2026-10-18

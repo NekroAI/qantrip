@@ -52,7 +52,7 @@ r security --scope=staged -s 重点看认证模块
 
 Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性** 点 **仍要打开**。之后更新会保留权限与模板。
 
-**Windows（预览版）：** 下载并运行 [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe)（不需要管理员权限；也提供便携版 [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip)），按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
+**Windows：** 下载并运行 [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe)（不需要管理员权限；也提供便携版 [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip)），按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
 
 **Linux（预览版）：** 下载 AppImage——[x86_64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.AppImage) 或 [ARM64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-aarch64.AppImage)——设为可执行后运行；也可以安装 [.deb](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.deb) / [.rpm](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.rpm)（ARM64 为 `Qantrip-Linux-aarch64.deb` / `.rpm`）。按 <kbd>Ctrl+Q</kbd> 唤起；GNOME、KDE（Wayland）会请你确认快捷键，引导中可以授权一次自动粘贴。需要 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 或更新版本），详见 [docs/install.md](docs/install.md)。
 
@@ -88,12 +88,12 @@ Qantrip 会自动重新加载。与内置模板同名的文件会覆盖内置版
 
 | 方面 | 状态 |
 |---|---|
-| macOS 应用（面板、语法、模板、模板库、设置、引导） | ✅ 0.2.0，中英双语 |
+| macOS 应用（面板、语法、模板、模板库、设置、引导） | ✅ 中英双语 |
 | 在线演示（核心编译为 WebAssembly） | ✅ [qantrip.nekro.ai](https://qantrip.nekro.ai) |
 | 同步服务端（Cloudflare Workers + D1，只存密文） | ✅ 已部署 |
-| 端到端加密同步 | ✅ 0.2.0，见 [设计](docs/sync-design.md) |
-| 面板内快速创建模板的指令模式 | 📝 计划中 |
-| Windows | 🧪 0.3.0 预览版（x64 压缩包） |
+| 端到端加密同步 | ✅ macOS、Windows、Linux，见 [设计](docs/sync-design.md) |
+| 面板内快速创建模板的指令模式 | ✅ |
+| Windows | ✅ Windows 10/11 x64（安装程序或便携版 zip） |
 | Linux | 🧪 预览版（x86_64 / ARM64；AppImage、deb、rpm；GNOME、KDE Plasma、X11） |
 | AI 辅助编辑模板 | 📝 计划中 |
 

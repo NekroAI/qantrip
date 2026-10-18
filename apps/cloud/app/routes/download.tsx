@@ -6,7 +6,7 @@ import type { Route } from './+types/download'
 const T = {
   en: {
     title: 'Download Qantrip for macOS, Windows and Linux · Nekro Qantrip',
-    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ (Apple silicon or Intel), Windows 10/11 (preview) and Linux (preview: AppImage, .deb, .rpm). Free download from GitHub Releases.',
+    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ (Apple silicon or Intel), Windows 10/11 and Linux (preview: AppImage, .deb, .rpm). Free download from GitHub Releases.',
     h1: 'Download Qantrip',
     lead: 'Free and open source. The latest version, straight from GitHub Releases.',
     forYou: 'For your computer',
@@ -33,7 +33,7 @@ const T = {
   },
   zh: {
     title: '下载 Qantrip（macOS、Windows、Linux）· Nekro Qantrip',
-    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+（Apple 芯片与 Intel 芯片）、Windows 10/11（预览版）与 Linux（预览版：AppImage、deb、rpm）。直接从 GitHub Releases 免费下载。',
+    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+（Apple 芯片与 Intel 芯片）、Windows 10/11 与 Linux（预览版：AppImage、deb、rpm）。直接从 GitHub Releases 免费下载。',
     h1: '下载 Qantrip',
     lead: '免费、开源。最新版本，直接从 GitHub Releases 下载。',
     forYou: '适合你的电脑',

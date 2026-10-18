@@ -11,7 +11,7 @@ Requires macOS 14 or later.
 
 To update, download the new version and replace the app; permissions, templates and settings are kept. If you use sync, macOS asks once after each update whether Qantrip may use its keychain item; choose **Always Allow**.
 
-## Windows (preview)
+## Windows
 
 Requires Windows 10 version 2004 or later, x64. Windows 11 recommended.
 
@@ -51,7 +51,7 @@ Known limits on Wayland: the clipboard keeps the prompt after pasting (it is res
 
 更新时下载新版本覆盖即可，权限、模板与设置都会保留。开启同步后，每次更新系统会询问一次是否允许 Qantrip 使用它的钥匙串条目，选择 **始终允许**。
 
-## Windows（预览版）
+## Windows
 
 需要 Windows 10 2004 或更新版本（x64），推荐 Windows 11。
 

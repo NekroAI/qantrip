@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml"><img src="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Windows%20%7C%20Linux%20(preview)-lightgrey" alt="Platform: macOS 14+ | Windows | Linux (preview)">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Windows%2010%2F11%20%7C%20Linux%20(preview)-lightgrey" alt="Platform: macOS 14+ | Windows 10/11 | Linux (preview)">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
 </p>
 
@@ -58,7 +58,7 @@ Download the DMG — [Apple silicon](https://github.com/NekroAI/qantrip/releases
 
 Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 
-**Windows (preview):** download and run [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe) (no admin rights needed; a portable [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip) is also available), then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
+**Windows:** download and run [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe) (no admin rights needed; a portable [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip) is also available), then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
 
 **Linux (preview):** download the AppImage — [x86_64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.AppImage) or [ARM64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-aarch64.AppImage) — make it executable and run it, or install the [.deb](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.deb) / [.rpm](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.rpm) (ARM64: `Qantrip-Linux-aarch64.deb` / `.rpm`). Press <kbd>Ctrl+Q</kbd>; on GNOME and KDE (Wayland) the system asks you to confirm the shortcut, and the welcome guide lets you allow auto-paste once. Requires GTK 4.14+ and libadwaita 1.5+ (Ubuntu 24.04, Debian 13, Fedora 40 or later). See [docs/install.md](docs/install.md).
 
@@ -94,12 +94,12 @@ The full format is described in the [input grammar](docs/input-grammar.md) and o
 
 | Area | Status |
 |---|---|
-| macOS app (panel, grammar, templates, library, settings, onboarding) | ✅ 0.2.0 — English and Chinese |
+| macOS app (panel, grammar, templates, library, settings, onboarding) | ✅ English and Chinese |
 | Online demo (core compiled to WebAssembly) | ✅ [qantrip.nekro.ai](https://qantrip.nekro.ai) |
 | Sync server (Cloudflare Workers + D1, ciphertext only) | ✅ deployed |
-| End-to-end encrypted sync | ✅ 0.2.0 — [design](docs/sync-design.md) |
-| Command mode for creating templates in the panel | 📝 planned |
-| Windows | 🧪 0.3.0 preview (x64 zip) |
+| End-to-end encrypted sync | ✅ macOS, Windows, Linux — [design](docs/sync-design.md) |
+| Command mode for creating templates in the panel | ✅ |
+| Windows | ✅ Windows 10/11 x64 (installer or portable zip) |
 | Linux | 🧪 preview (x86_64 / ARM64; AppImage, .deb, .rpm; GNOME, KDE Plasma, X11) |
 | AI-assisted template editing | 📝 planned |
 

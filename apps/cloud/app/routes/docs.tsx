@@ -23,7 +23,7 @@ const T = {
       ['reference', 'Reference'],
     ],
     install: [
-      { h: 'Download', p: 'Get the DMG for your Mac. Windows and Linux (AppImage, .deb, .rpm) are available as previews.', link: 'Downloads' },
+      { h: 'Download', p: 'Get the DMG for your Mac or the installer for Windows. Linux (AppImage, .deb, .rpm) is available as a preview.', link: 'Downloads' },
       { h: 'Drag to Applications', p: 'Open the DMG and drag Qantrip into Applications.' },
       { h: 'Open it once', p: 'Qantrip is not notarized yet. Go to System Settings → Privacy & Security → Open Anyway.' },
       { h: 'Allow Accessibility', p: 'Optional. It lets Qantrip paste for you; without it, prompts are copied instead.' },
@@ -104,7 +104,7 @@ const T = {
       ['reference', '参考'],
     ],
     install: [
-      { h: '下载', p: '下载对应芯片的 DMG。Windows 与 Linux（AppImage、deb、rpm）提供预览版。', link: '下载页' },
+      { h: '下载', p: 'Mac 下载对应芯片的 DMG，Windows 下载安装程序。Linux（AppImage、deb、rpm）提供预览版。', link: '下载页' },
       { h: '拖进「应用程序」', p: '打开 DMG，把 Qantrip 拖进「应用程序」。' },
       { h: '首次打开', p: 'Qantrip 尚未经过 Apple 公证：到 系统设置 → 隐私与安全性，点「仍要打开」。' },
       { h: '授权辅助功能', p: '可选。授权后 Qantrip 可以替你粘贴；不授权时 Prompt 会复制到剪贴板。' },
