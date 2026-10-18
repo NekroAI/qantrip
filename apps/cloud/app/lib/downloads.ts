@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { Locale } from './i18n'
 import { REPO_URL } from './site'
 
-export type ClientId = 'macos-arm64' | 'macos-x86_64' | 'windows' | 'linux'
+export type ClientId = 'macos-arm64' | 'macos-x86_64' | 'windows' | 'windows-zip' | 'linux'
 
 export interface Client {
   id: ClientId
@@ -37,10 +37,18 @@ export const CLIENTS: Client[] = [
   {
     id: 'windows',
     os: 'windows',
+    file: 'Qantrip-Windows-x64-Setup.exe',
+    url: latest('Qantrip-Windows-x64-Setup.exe'),
+    name: { en: 'Windows · x64 (preview)', zh: 'Windows · x64（预览版）' },
+    detail: { en: 'Windows 10 2004+ · installer, no admin rights', zh: 'Windows 10 2004+ · 安装程序，无需管理员权限' },
+  },
+  {
+    id: 'windows-zip',
+    os: 'windows',
     file: 'Qantrip-Windows-x64.zip',
     url: latest('Qantrip-Windows-x64.zip'),
-    name: { en: 'Windows · x64 (preview)', zh: 'Windows · x64（预览版）' },
-    detail: { en: 'Windows 10 2004+ · unzip and run', zh: 'Windows 10 2004+ · 解压即用' },
+    name: { en: 'Windows · x64 portable', zh: 'Windows · x64 便携版' },
+    detail: { en: 'Unzip and run Qantrip.exe', zh: '解压后运行 Qantrip.exe' },
   },
   { id: 'linux', os: 'linux', file: null, url: null, name: { en: 'Linux', zh: 'Linux' }, detail: { en: 'Planned', zh: '计划中' } },
 ]

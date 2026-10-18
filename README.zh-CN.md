@@ -52,7 +52,7 @@ r security --scope=staged -s 重点看认证模块
 
 Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性** 点 **仍要打开**。之后更新会保留权限与模板。
 
-**Windows（预览版）：** 下载 [Qantrip-Windows-x64.zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip)，解压后运行 `Qantrip.exe`，按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
+**Windows（预览版）：** 下载并运行 [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe)（不需要管理员权限；也提供便携版 [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip)），按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
 
 ## 编写模板
 

@@ -58,7 +58,7 @@ Download the DMG — [Apple silicon](https://github.com/NekroAI/qantrip/releases
 
 Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 
-**Windows (preview):** download [Qantrip-Windows-x64.zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip), extract it and run `Qantrip.exe`, then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
+**Windows (preview):** download and run [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe) (no admin rights needed; a portable [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip) is also available), then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
 
 ## Writing a template
 

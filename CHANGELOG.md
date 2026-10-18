@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-10-18
+
+### Added
+- Windows installer (`Qantrip-Windows-x64-Setup.exe`): per-user, no admin rights, Start menu shortcut, optional launch at login, uninstall from Apps & features. The zip stays as a portable version.
+- Update notice: Qantrip checks for a new release about once a day and shows it in the menu bar / tray menu and once as a notification; Settings › About has Check for Updates and Skip This Version. No automatic updates.
+- Quick access from the panel: ⌘L / Ctrl+L opens the template library, ⌘, / Ctrl+, opens settings, plus two icons in the panel header.
+- Recovery phrase: Copy and Save to File.
+
+### Changed
+- Settings and the template library are now one window: Settings is pinned at the bottom of the sidebar.
+- macOS: a designed install window in the DMG, and opening the DMG no longer triggers a separate security prompt.
+
+### Fixed
+- Inserting into Qantrip's own windows (the welcome guide's practice field, the template editor) now works.
+- The panel placeholder lines up with the caret.
+
 ## [0.3.2] — 2026-10-18
 
 ### Added
@@ -60,7 +76,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.3
 [0.3.2]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.2
 [0.3.1]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.1
 [0.3.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.0
