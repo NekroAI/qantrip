@@ -709,7 +709,8 @@ internal sealed class LibraryWindow : Window
     {
         var t = new TextBox
         {
-            Text = text, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
+            // WinUI 文本框以 \r 作换行：只有 \n 时开启自动换行后各行会连成一段
+            Text = text.Replace("\r\n", "\n").Replace('\n', '\r'), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
             IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, VerticalAlignment = VerticalAlignment.Stretch,
         };
         // 长行自动换行（不出现横向滚动）
@@ -1087,7 +1088,8 @@ internal sealed class LibraryWindow : Window
 
     private FrameworkElement BuildTryPanel()
     {
-        var sp = new StackPanel { Spacing = 10, Padding = new Thickness(16, 12, 16, 16) };
+        // 不用 StackPanel：输入框的占位文字等较宽的子元素会撑宽整列，使内容左右两侧被裁掉
+        var sp = new PageColumn { MaxColumnWidth = 10000, Spacing = 10, Inset = new Thickness(16, 12, 16, 16) };
         sp.Children.Add(new TextBlock { Text = Loc.T("试用", "Try it"), FontWeight = FontWeights.SemiBold, FontSize = 15 });
         var ed = editor;
         var input = new TextBox { FontFamily = Theme.Mono, IsSpellCheckEnabled = false, Text = ed?.TryInput ?? "" };
