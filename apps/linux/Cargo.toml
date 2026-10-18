@@ -1,0 +1,47 @@
+[package]
+name = "qantrip-linux"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "Nekro Qantrip 的 Linux 外壳（GTK4 + libadwaita），直接调用 Rust 核心"
+
+[[bin]]
+name = "qantrip"
+path = "src/main.rs"
+
+[features]
+# 仅开发构建使用的调试钩子（与 macOS 的 QANTRIP_DEBUG_HOOKS 对应）：
+# 只有 debug 构建且运行时设置 QANTRIP_DEBUG_HOOKS=1 才生效，release 构建即使打开此特性也会被忽略。
+debug-hooks = []
+
+[dependencies]
+qantrip-core = { path = "../../core" }
+# 界面：GTK 4.14 / libadwaita 1.5（Ubuntu 24.04 起），新版本 API 不使用
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+# GLib 2.80（Ubuntu 24.04）：命令行转发错误信息
+gio = { version = "0.22", features = ["v2_80"] }
+gdk4-x11 = { version = "0.11", features = ["xlib"] }
+gdk4-wayland = "0.11"
+# 桌面门户：Wayland 全局快捷键（GlobalShortcuts）与自动粘贴（RemoteDesktop）
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts", "remote_desktop", "screencast"] }
+enumflags2 = "0.7"
+# 托盘（StatusNotifierItem / AppIndicator）
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
+# 同步密钥：Secret Service（GNOME 密钥环、KWallet），不可用时回退到 0600 文件
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
+# X11：全局快捷键（XGrabKey）、前台窗口、模拟粘贴（XTest）
+x11rb = { version = "0.14", features = ["xtest"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+async-channel = "2"
+data-encoding = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

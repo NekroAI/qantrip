@@ -19,6 +19,7 @@
 /apps/macos/Sources/QantripCore/qantrip_core.swift
 /core/wasm/target/
 /apps/windows/native/target/
+/apps/linux/target/
 /apps/windows/Qantrip/bin/
 /apps/windows/Qantrip/obj/
 /tests/windows/*.png

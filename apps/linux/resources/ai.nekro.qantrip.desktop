@@ -1,0 +1,27 @@
+[Desktop Entry]
+Type=Application
+Name=Nekro Qantrip
+GenericName=Prompt Launcher
+GenericName[zh_CN]=Prompt 快捷输入
+Comment=Press Ctrl+Q to insert prompts anywhere
+Comment[zh_CN]=按 Ctrl+Q 在任何应用中插入 Prompt
+Exec=qantrip %U
+TryExec=qantrip
+Icon=ai.nekro.qantrip
+Terminal=false
+Categories=Utility;
+Keywords=prompt;ai;launcher;template;
+StartupNotify=true
+StartupWMClass=ai.nekro.qantrip
+X-GNOME-UsesNotifications=true
+Actions=Toggle;Settings;
+
+[Desktop Action Toggle]
+Name=Open Panel
+Name[zh_CN]=打开面板
+Exec=qantrip toggle
+
+[Desktop Action Settings]
+Name=Settings
+Name[zh_CN]=设置
+Exec=qantrip settings

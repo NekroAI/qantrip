@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>ai.nekro.qantrip</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Nekro Qantrip</name>
+  <summary>Insert parameterized prompts anywhere with a shortcut</summary>
+  <summary xml:lang="zh-CN">用快捷键在任何应用中插入参数化的 Prompt</summary>
+  <description>
+    <p>Press Ctrl+Q, type a few letters and insert a ready-made prompt into the app you are using. Templates are plain Markdown files with parameters; sync between devices is end-to-end encrypted.</p>
+    <p xml:lang="zh-CN">按 Ctrl+Q，输入几个字母，就能把常用 Prompt 插入到当前应用。模板是带参数的 Markdown 文件，设备间同步为端到端加密。</p>
+  </description>
+  <launchable type="desktop-id">ai.nekro.qantrip.desktop</launchable>
+  <url type="homepage">https://qantrip.nekro.ai</url>
+  <url type="vcs-browser">https://github.com/NekroAI/qantrip</url>
+  <developer id="ai.nekro">
+    <name>NekroAI</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+</component>

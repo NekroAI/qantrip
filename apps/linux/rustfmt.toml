@@ -1,0 +1,3 @@
+# 与核心代码的长行风格一致
+max_width = 160
+use_small_heuristics = "Max"
