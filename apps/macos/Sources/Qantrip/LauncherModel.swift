@@ -27,6 +27,9 @@ final class LauncherModel {
     @ObservationIgnored var onCancel: (() -> Void)?
     /// 指令执行完成（docs/decisions.md D31）
     @ObservationIgnored var onCommand: ((CommandOutcome) -> Void)?
+    /// 面板中的快捷入口（⌘L / ⌘, 与顶栏图标）
+    @ObservationIgnored var onOpenLibrary: (() -> Void)?
+    @ObservationIgnored var onOpenSettings: (() -> Void)?
     @ObservationIgnored private var clipboardLoaded = false
     /// 界面高亮的模板名或首屏调用；命令词改变时清空
     @ObservationIgnored private var selectedKey: String?

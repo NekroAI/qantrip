@@ -285,12 +285,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openSyncSettings() {
-        UserDefaults.standard.set("sync", forKey: "settingsTab")
-        openSettings()
+        LibraryWindow.showSettings(.sync)
     }
 
     @objc func openSettings() {
-        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 660, height: 540)) { SettingsView() }
+        LibraryWindow.showSettings()
     }
 }
 

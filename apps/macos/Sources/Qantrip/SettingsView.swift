@@ -2,20 +2,77 @@ import AppKit
 import QantripCore
 import SwiftUI
 
-struct SettingsView: View {
-    /// 当前标签页；菜单中的同步提示会直接打开"同步"页
-    @AppStorage("settingsTab") private var tab = "general"
+/// 设置页面：与模板库合在同一个窗口的侧边栏中（LibraryWindow）
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case general, insert, templates, sync, privacy, about
+    var id: String { rawValue }
+    /// 侧边栏中的选择标识
+    var key: String { "settings:\(rawValue)" }
+
+    init?(key: String?) {
+        guard let key, key.hasPrefix("settings:") else { return nil }
+        self.init(rawValue: String(key.dropFirst("settings:".count)))
+    }
+
+    var title: String {
+        switch self {
+        case .general: L("通用", "General")
+        case .insert: L("插入", "Insert")
+        case .templates: L("模板文件", "Template Files")
+        case .sync: L("同步", "Sync")
+        case .privacy: L("隐私", "Privacy")
+        case .about: L("关于", "About")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: "gearshape"
+        case .insert: "text.insert"
+        case .templates: "folder"
+        case .sync: "arrow.triangle.2.circlepath"
+        case .privacy: "hand.raised"
+        case .about: "info.circle"
+        }
+    }
+}
+
+/// 设置页容器：顶部分段控件切换页面
+struct SettingsContainer: View {
+    let page: SettingsPage
+    let select: (SettingsPage) -> Void
 
     var body: some View {
-        TabView(selection: $tab) {
-            GeneralSettings().tabItem { Label(L("通用", "General"), systemImage: "gearshape") }.tag("general")
-            InsertSettings().tabItem { Label(L("插入", "Insert"), systemImage: "text.insert") }.tag("insert")
-            TemplateSettings().tabItem { Label(L("模板", "Templates"), systemImage: "books.vertical") }.tag("templates")
-            SyncSettings().tabItem { Label(L("同步", "Sync"), systemImage: "arrow.triangle.2.circlepath") }.tag("sync")
-            PrivacySettings().tabItem { Label(L("隐私", "Privacy"), systemImage: "hand.raised") }.tag("privacy")
-            AboutView().tabItem { Label(L("关于", "About"), systemImage: "info.circle") }.tag("about")
+        VStack(spacing: 0) {
+            Picker("", selection: Binding(get: { page }, set: select)) {
+                ForEach(SettingsPage.allCases) { p in Label(p.title, systemImage: p.icon).tag(p) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.top, 12)
+            SettingsPageView(page: page)
         }
-        .frame(width: 660, height: 540)
+        .navigationTitle(L("设置", "Settings"))
+    }
+}
+
+struct SettingsPageView: View {
+    let page: SettingsPage
+
+    var body: some View {
+        Group {
+            switch page {
+            case .general: GeneralSettings()
+            case .insert: InsertSettings()
+            case .templates: TemplateSettings()
+            case .sync: SyncSettings()
+            case .privacy: PrivacySettings()
+            case .about: AboutView()
+            }
+        }
+        .frame(maxWidth: 680, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity)
     }
 }
 

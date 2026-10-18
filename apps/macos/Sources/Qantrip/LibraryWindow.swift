@@ -10,9 +10,14 @@ enum LibraryWindow {
     static func show(select name: String? = nil) {
         model.reload()
         if let name { model.select(name) }
-        WindowManager.shared.show("library", title: L("模板库", "Template Library"), size: NSSize(width: 1180, height: 760), resizable: true) {
+        WindowManager.shared.show("library", title: "Qantrip", size: NSSize(width: 1180, height: 760), resizable: true) {
             LibraryView(model: model)
         }
+    }
+
+    /// 打开同一个窗口中的设置页
+    static func showSettings(_ page: SettingsPage = .general) {
+        show(select: page.key)
     }
 }
 
@@ -53,7 +58,7 @@ final class LibraryModel {
         guard key != selection else { return }
         if let e = editor, e.dirty, !confirmDiscard(e.doc?.name ?? e.entry.name) { return }
         selection = key
-        editor = key.flatMap { k in entries.first { Self.key($0) == k } }.map { EditorModel(entry: $0, library: self) }
+        editor = SettingsPage(key: key) != nil ? nil : key.flatMap { k in entries.first { Self.key($0) == k } }.map { EditorModel(entry: $0, library: self) }
     }
 
     private func confirmDiscard(_ name: String) -> Bool {
@@ -342,7 +347,9 @@ struct LibraryView: View {
         NavigationSplitView {
             sidebar.navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            if let editor = model.editor {
+            if let page = SettingsPage(key: model.selection) {
+                SettingsContainer(page: page) { model.select($0.key) }
+            } else if let editor = model.editor {
                 EditorView(editor: editor, library: model).id(editor.entry.name + (editor.entry.path ?? ""))
             } else {
                 ContentUnavailableView(L("选择或新建一个模板", "Select or create a template"), systemImage: "wand.and.stars",
@@ -351,9 +358,11 @@ struct LibraryView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                if SettingsPage(key: model.selection) == nil {
                 Button { model.newTemplate() } label: { Label(L("新建", "New"), systemImage: "plus") }.help(L("新建模板", "New template"))
                 Button { model.importFiles() } label: { Label(L("导入", "Import"), systemImage: "square.and.arrow.down") }.help(L("导入模板", "Import templates"))
                 Button { model.exportAll() } label: { Label(L("导出全部", "Export All"), systemImage: "square.and.arrow.up") }.help(L("把我的模板导出为 zip", "Export my templates as a zip"))
+                }
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -391,6 +400,21 @@ struct LibraryView: View {
             }
         }
         .searchable(text: $model.search, placement: .sidebar, prompt: L("搜索模板", "Search templates"))
+        // 设置与模板库在同一个窗口：侧边栏底部固定入口
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            let active = SettingsPage(key: model.selection) != nil
+            Button { model.select(SettingsPage.general.key) } label: {
+                Label(L("设置", "Settings"), systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(active ? AnyShapeStyle(Color.accentColor.opacity(0.22)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        }
     }
 
     @ViewBuilder private func menu(_ e: TemplateEntry) -> some View {

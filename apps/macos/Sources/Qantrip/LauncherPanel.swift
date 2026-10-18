@@ -23,6 +23,17 @@ final class LauncherPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// ⌘L 打开模板库、⌘, 打开设置
+    var onShortcut: ((String) -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           let key = event.charactersIgnoringModifiers?.lowercased(), onShortcut?(key) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// 管理面板的预创建、显示、隐藏、插入与动效。
@@ -46,6 +57,15 @@ final class LauncherController: NSObject, NSWindowDelegate {
         model.onSubmit = { [weak self] text, expand in self?.submit(text, expand: expand) }
         model.onCancel = { [weak self] in self?.hide() }
         model.onCommand = { [weak self] outcome in self?.finishCommand(outcome) }
+        model.onOpenLibrary = { [weak self] in self?.openWindow { LibraryWindow.show() } }
+        model.onOpenSettings = { [weak self] in self?.openWindow { LibraryWindow.showSettings() } }
+        panel.onShortcut = { [weak self] key in
+            switch key {
+            case "l": self?.model.onOpenLibrary?(); return true
+            case ",": self?.model.onOpenSettings?(); return true
+            default: return false
+            }
+        }
         observeRejects()
         // 启动后离屏完整走一遍显示流程，避免首次唤起时的冷启动开销（实测约 250ms）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in prewarm() }
@@ -180,6 +200,13 @@ final class LauncherController: NSObject, NSWindowDelegate {
             break
         }
         if !message.isEmpty { hud.show(message) }
+    }
+
+    /// 关闭面板后打开 Qantrip 的窗口（不把焦点还给原应用）
+    private func openWindow(_ open: @escaping () -> Void) {
+        ownKeyWindow = nil
+        hide()
+        DispatchQueue.main.async(execute: open)
     }
 
     /// 唤起面板前 Qantrip 自己的键窗口（见 show）

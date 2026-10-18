@@ -58,6 +58,11 @@ struct LauncherView: View {
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(.quaternary.opacity(0.5), in: Capsule())
             }
+            // 快捷入口：模板库（⌘L）与设置（⌘,）
+            HStack(spacing: 2) {
+                HeaderIcon(symbol: "books.vertical", help: L("模板库（⌘L）", "Template Library (⌘L)")) { model.onOpenLibrary?() }
+                HeaderIcon(symbol: "gearshape", help: L("设置（⌘,）", "Settings (⌘,)")) { model.onOpenSettings?() }
+            }
         }
         .padding(.horizontal, 18).padding(.vertical, 14)
     }
@@ -477,5 +482,27 @@ struct FlowLayout: Layout {
             rows[rows.count - 1] = r
         }
         return rows
+    }
+}
+
+
+/// 面板顶栏的小图标按钮
+private struct HeaderIcon: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 26, height: 26)
+                .foregroundStyle(hover ? .primary : .tertiary)
+                .background(hover ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(help)
     }
 }
