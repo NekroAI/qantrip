@@ -81,6 +81,8 @@ final class LauncherController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated { SyncService.shared.panelOpened() }
         let t1 = ProcessInfo.processInfo.systemUptime
         let target = NSWorkspace.shared.frontmostApplication
+        // 在 Qantrip 自己的窗口里唤起（如引导页的练习框）：记住原来的键窗口，插入时直接写入，不走模拟粘贴
+        ownKeyWindow = target?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? NSApp.keyWindow.flatMap { $0 === panel ? nil : $0 } : nil
         inputSource.engage()
         let tIME = ProcessInfo.processInfo.systemUptime
         model.begin(target: target)
@@ -119,6 +121,8 @@ final class LauncherController: NSObject, NSWindowDelegate {
     func hide() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+        // 在自己的窗口里唤起时，关闭面板后把键盘焦点还给那个窗口
+        ownKeyWindow?.makeKeyAndOrderFront(nil)
         model.entered = false
         inputSource.restore()
     }
@@ -178,10 +182,34 @@ final class LauncherController: NSObject, NSWindowDelegate {
         if !message.isEmpty { hud.show(message) }
     }
 
+    /// 唤起面板前 Qantrip 自己的键窗口（见 show）
+    private var ownKeyWindow: NSWindow?
+
     func insert(_ text: String, target override: NSRunningApplication? = nil, expand: Bool = false) {
+        if override == nil, let window = ownKeyWindow {
+            ownKeyWindow = nil
+            insertIntoOwnWindow(text, window: window)
+            return
+        }
         inserter.insert(text, target: override ?? model.target, expand: expand) { [weak self] outcome in
             if case .copiedOnly(let reason) = outcome {
                 self?.hud.show(L("已复制到剪贴板（\(reason)），按 ⌘V 粘贴", "Copied to clipboard (\(reason)). Press ⌘V to paste"))
+            }
+        }
+    }
+
+    /// 目标是 Qantrip 自己的窗口：恢复键窗口后直接把文字插入当前输入框
+    private func insertIntoOwnWindow(_ text: String, window: NSWindow) {
+        window.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async {
+            SpikeLog.event("insert_own", ["responder": window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil", "chars": text.count])
+            if let client = window.firstResponder as? NSTextInputClient {
+                client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            } else {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(text, forType: .string)
+                NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
             }
         }
     }

@@ -29,6 +29,11 @@ jobs:
           P12_BASE64: ${{ secrets.MACOS_SIGNING_P12 }}
           P12_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
         run: scripts/ci-import-cert.sh
+      - name: 安装 dmgbuild（DMG 安装窗口布局）
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmgbuild"
+          "$RUNNER_TEMP/dmgbuild/bin/pip" install --quiet dmgbuild
+          echo "DMGBUILD=$RUNNER_TEMP/dmgbuild/bin/dmgbuild" >> "$GITHUB_ENV"
       - name: 打包 ${{ matrix.arch }}
         run: |
           # 发布版本必须使用发布证书（docs/decisions.md D1 / D22），不能退回开发证书

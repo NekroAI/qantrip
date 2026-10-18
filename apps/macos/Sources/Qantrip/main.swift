@@ -222,6 +222,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case "save": m.editor?.save()
         case "mode:source": m.editor?.mode = .source
+        case "focus":
+            // 把键窗口中第一个可编辑的文本视图设为焦点（模拟用户点进输入框）
+            func find(_ v: NSView) -> NSTextView? {
+                if let t = v as? NSTextView, t.isEditable { return t }
+                for c in v.subviews { if let t = find(c) { return t } }
+                return nil
+            }
+            if let w = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey }), let v = w.contentView, let t = find(v) {
+                w.makeFirstResponder(t)
+                t.setSelectedRange(NSRange(location: (t.string as NSString).length, length: 0))
+            }
         case "mode:form": m.editor?.mode = .form
         case "delete":
             if let e = m.editor?.entry, let path = e.path {

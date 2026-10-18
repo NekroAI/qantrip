@@ -1,5 +1,7 @@
+import AppKit
 import QantripCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 // 设置 › 同步（docs/sync-design.md，C3）。按状态分为：未登录 → 创建 / 加入 / 恢复 → 已加入（状态、设备、加入请求）。
 
@@ -390,12 +392,39 @@ private struct PhraseSheet: View {
     let phrase: String
     let done: () -> Void
     @State private var saved = false
+    @State private var copied = false
+
+    /// 复制时标记为机密内容（剪贴板管理器不记录），60 秒后若剪贴板未被改动则清除
+    private func copyPhrase() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(phrase, forType: .string)
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        pb.writeObjects([item])
+        let change = pb.changeCount
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            if pb.changeCount == change { pb.clearContents() }
+        }
+    }
+
+    private func savePhrase() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = L("Qantrip 恢复短语.txt", "Qantrip recovery phrase.txt")
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let words = phrase.split(separator: " ").enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let text = L("Nekro Qantrip 同步恢复短语\n所有设备都丢失时，用它找回同步数据。请妥善保管，不要发给任何人。\n\n", "Nekro Qantrip sync recovery phrase\nUse it to recover your synced data if you lose every device. Keep it safe and never share it.\n\n") + words + "\n"
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
 
     var body: some View {
         let words = phrase.split(separator: " ").map(String.init)
         VStack(alignment: .leading, spacing: 14) {
             Text(L("你的恢复短语", "Your recovery phrase")).font(.title3.weight(.semibold))
-            Text(L("抄写下来，保存在安全的地方。所有设备都丢失时，只有它能找回你的同步数据；任何人（包括我们）都无法替你恢复。", "Write it down and keep it somewhere safe. If you lose every device, it's the only way to get your synced data back. Nobody, including us, can recover it for you."))
+            Text(L("把它保存在安全的地方。所有设备都丢失时，只有它能找回你的同步数据；任何人（包括我们）都无法替你恢复。", "Keep it somewhere safe. If you lose every device, it's the only way to get your synced data back. Nobody, including us, can recover it for you."))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 4), spacing: 8) {
@@ -409,7 +438,14 @@ private struct PhraseSheet: View {
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
             .textSelection(.enabled)
-            Toggle(L("我已经抄写并保存好了", "I've written it down"), isOn: $saved)
+            HStack {
+                Button { copyPhrase() } label: { Label(copied ? L("已复制（60 秒后从剪贴板清除）", "Copied (cleared from the clipboard in 60 s)") : L("复制", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc") }
+                Button { savePhrase() } label: { Label(L("保存为文件…", "Save to File…"), systemImage: "square.and.arrow.down") }
+                Spacer()
+            }
+            Text(L("请把它保存在只有你能访问的地方，例如密码管理器；不要发给任何人。", "Keep it somewhere only you can access, such as a password manager. Never share it."))
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle(L("我已经保存好了", "I've saved it"), isOn: $saved)
             HStack {
                 Spacer()
                 Button(L("完成", "Done"), action: done).buttonStyle(.borderedProminent).disabled(!saved)

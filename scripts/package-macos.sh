@@ -12,14 +12,13 @@ STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 unset QANTRIP_DEBUG_HOOKS
 DIST="$STAGE/build" ARCH="$ARCH" "$ROOT/scripts/build-macos.sh"
 
-mkdir -p "$STAGE/dmg" "$OUT"
-cp -R "$STAGE/build/Qantrip.app" "$STAGE/dmg/"
-ln -s /Applications "$STAGE/dmg/应用程序"
+mkdir -p "$OUT"
 DMG="$OUT/Qantrip-$VERSION-$ARCH.dmg"
 rm -f "$DMG"
-hdiutil create -volname "Nekro Qantrip $VERSION" -srcfolder "$STAGE/dmg" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
-if [ -n "${SIGN_IDENTITY:-}" ]; then
-  codesign --force --sign "$SIGN_IDENTITY" ${SIGN_KEYCHAIN:+--keychain "$SIGN_KEYCHAIN"} "$DMG"
-fi
+# 安装窗口（背景、图标位置）由 dmgbuild 直接写入 .DS_Store，不依赖 Finder，CI 中也可用
+DMGBUILD="${DMGBUILD:-dmgbuild}"
+"$DMGBUILD" -s "$ROOT/apps/macos/dmg/settings.py" -D app="$STAGE/build/Qantrip.app" -D background="$ROOT/apps/macos/dmg/background.tiff" "Nekro Qantrip $VERSION" "$DMG" >/dev/null
+# DMG 本身不签名：没有 Developer ID 时，带不受信任签名的磁盘映像在打开时也会被 Gatekeeper 拦截一次；
+# 应用本体已用发布证书签名，只在首次打开应用时需要确认一次
 shasum -a 256 "$DMG"
 echo "完成：$DMG"

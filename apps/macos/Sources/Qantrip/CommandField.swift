@@ -12,8 +12,13 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
     private let ghost = GhostView()
     private var lastAnalysis: Analysis?
 
+    /// 占位文字不用 placeholderString：输入框自带的占位与光标基线不一致（光标按等宽字体的行高绘制），
+    /// 改为和灰字补全一样画在字段编辑器内、与光标同一基线
+    private var placeholder = ""
+
     private func updatePlaceholder() {
-        placeholderString = L("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth")
+        placeholder = L("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth")
+        updateGhost()
     }
 
     init() {
@@ -133,8 +138,9 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
 
     /// 灰字补全画在字段编辑器内部、与输入文字同一行，保证基线一致。
     private func updateGhost() {
+        let empty = stringValue.isEmpty
         guard let editor, let lm = editor.layoutManager, let tc = editor.textContainer,
-              let g = lastAnalysis?.ghost, !g.isEmpty,
+              let g = empty ? placeholder : lastAnalysis?.ghost, !g.isEmpty,
               editor.selectedRange.location == (stringValue as NSString).length,
               !editor.hasMarkedText()
         else {
@@ -161,8 +167,8 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
         let x = (lm.numberOfGlyphs == 0 ? 0 : used.maxX) + editor.textContainerOrigin.x
         ghost.baseline = baseline - top
         ghost.frame = NSRect(x: x, y: top, width: width, height: ceil(font.ascender - font.descender) + 4)
-        // 超出可见宽度时不显示
-        ghost.isHidden = convert(NSPoint(x: ghost.frame.maxX, y: 0), from: editor).x > bounds.width
+        // 超出可见宽度时不显示（占位文字总是显示）
+        ghost.isHidden = !empty && convert(NSPoint(x: ghost.frame.maxX, y: 0), from: editor).x > bounds.width
     }
 }
 
