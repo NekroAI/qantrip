@@ -11,7 +11,8 @@ namespace Qantrip.UI;
 /// <summary>
 /// 设置 › 同步（docs/sync-design.md，对应 macOS SyncSettingsView.swift）。按状态分为：
 /// 未登录 → 登录；已登录、本机没有保险库 → 创建（恢复短语只显示一次）/ 加入（双向校验码）/ 用恢复短语恢复；
-/// 已加入 → 账号、上次同步、立即同步、安全提醒、加入请求、设备、轮换密钥、重置；最后是高级（服务端地址）。
+/// 已加入 → 账号、上次同步、云端用量、立即同步、安全提醒、加入请求、设备（账号设备 + 已退出登录但仍在保险库中的设备）、轮换密钥、重置；
+/// 超出设备上限 → 列出其他设备，解除一台后本机即可同步；最后是高级（服务端地址）。
 /// 状态来自 <see cref="SyncService"/>；状态签名变化时整页重建，输入框实例跨重建保留（不丢失正在输入的内容与焦点）。
 /// </summary>
 internal sealed class SyncPage
@@ -37,6 +38,7 @@ internal sealed class SyncPage
     public void Attach()
     {
         sync.Changed += OnChanged;
+        sync.SettingsVisible = true;
         sync.Start();
         sync.Refresh();
         Render(force: true);
@@ -47,6 +49,7 @@ internal sealed class SyncPage
     public void Detach()
     {
         sync.Changed -= OnChanged;
+        sync.SettingsVisible = false;
         poll?.Stop();
         poll = null;
     }
@@ -67,6 +70,8 @@ internal sealed class SyncPage
         foreach (var d in sync.Devices) b.Append($"{d.DeviceId}:{d.IsSelf},");
         b.Append('|');
         foreach (var c in sync.ConfirmCodes) b.Append($"{c.Key}:{c.Value},");
+        b.Append($"|{s?.Usage?.Bytes}/{s?.Usage?.QuotaBytes}|{s?.NextPushAt}|{s?.DeviceLimit}|{sync.AccountDevices?.MaxDevices}|");
+        foreach (var d in sync.AccountDevices?.Devices ?? new()) b.Append($"{d.GrantId}:{d.Name}:{d.Platform}:{d.AppVersion}:{d.LastSeenAt}:{d.IsSelf}:{d.Limited}:{d.InVault},");
         b.Append('|').Append(Settings.SyncServer).Append('|').Append(Loc.En);
         return b.ToString();
     }
@@ -190,6 +195,7 @@ internal sealed class SyncPage
         }
 
         if (!sync.SignedIn) SignedOut();
+        else if (sync.Status?.DeviceLimit is uint max) DeviceLimit(max);
         else if (!(sync.Status?.HasVault ?? false)) NoVault();
         else Enrolled();
 
@@ -313,6 +319,14 @@ internal sealed class SyncPage
         info.Children.Add(Row(Text(Loc.T("账号", "Account"), secondary: true), Text(status.Account ?? "", bold: true)));
         info.Children.Add(Row(Text(Loc.T("上次同步", "Last synced"), secondary: true), relative));
         var card = new List<UIElement> { Spread(info, Row(Btn("syncnow", Loc.T("立即同步", "Sync now"), sync.SyncNow, accent: true, enabled: !Busy), Btn("signout", Loc.T("退出登录", "Sign out"), sync.SignOut, enabled: !Busy))) };
+        if (status.Usage is { } usage) card.Add(UsageRow(usage));
+        if (status.NextPushAt is long at)
+        {
+            var time = DateTimeOffset.FromUnixTimeSeconds(at).ToLocalTime().ToString("HH:mm");
+            var t = Text(Loc.T($"本地修改将在 {time} 自动上传；点「立即同步」可马上上传。", $"Local changes upload automatically at {time}. Click Sync now to upload right away."), secondary: true, size: 12);
+            AutomationProperties.SetAutomationId(t, "sync_nextpush");
+            card.Add(t);
+        }
         if (sync.LastReport is { Conflicts: > 0 } report)
         {
             var t = Text(Loc.T($"有 {report.Conflicts} 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", $"{report.Conflicts} template(s) changed on two devices at once. Both versions were kept; merge them in the template library."), size: 12);
@@ -361,16 +375,26 @@ internal sealed class SyncPage
 
         page.Children.Add(SettingsWindow.Section(Loc.T("设备", "Devices")));
         var devices = new List<UIElement>();
-        foreach (var d in sync.Devices)
+        if (sync.AccountDevices is { } account)
         {
-            var name = Row(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 16 },
-                Text(d.IsSelf ? Loc.T("这台电脑", "This PC") : Loc.T($"设备 {d.RosterIndex}", $"Device {d.RosterIndex}")),
-                Text(d.DeviceId.Length > 8 ? d.DeviceId[..8] : d.DeviceId, secondary: true, size: 12, mono: true));
-            var device = d;
-            devices.Add(d.IsSelf ? name : Spread(name, Btn("remove_" + d.DeviceId[..Math.Min(8, d.DeviceId.Length)], Loc.T("移除", "Remove"), () => _ = ConfirmRevoke(device), enabled: !Busy)));
+            foreach (var d in account.Devices) devices.Add(AccountDeviceRow(d));
+            // 已退出登录、但仍在保险库中的设备：建议从保险库移除并轮换密钥
+            foreach (var d in sync.Devices.Where(r => !r.IsSelf && !account.Devices.Any(a => a.DeviceId == r.DeviceId)))
+            {
+                var device = d;
+                var left = new StackPanel { Spacing = 2 };
+                left.Children.Add(Text(Loc.T("已退出登录的设备", "Signed-out device")));
+                left.Children.Add(Text(Loc.T("仍在保险库中。建议移除并轮换密钥。", "Still in the vault. Removing it rotates the keys."), secondary: true, size: 12));
+                devices.Add(Spread(Row(Icon(""), left),
+                    Btn("revoke_" + Short(d.DeviceId), Loc.T("从保险库移除", "Remove from vault"), () => _ = ConfirmRevoke(device), enabled: !Busy)));
+            }
+            devices.Add(Text(Loc.T($"这个账号最多同时登录 {account.MaxDevices} 台设备。要添加设备，在新设备上登录同一个账号并按提示操作。",
+                $"This account can be signed in on up to {account.MaxDevices} devices. To add one, sign in with the same account on it and follow the steps."), secondary: true, size: 12));
         }
-        devices.Add(Text(Loc.T("要添加设备，在新的设备上登录同一个账号，按提示操作。", "To add a device, sign in with the same account on it and follow the steps."), secondary: true, size: 12));
-        page.Children.Add(Box(devices.ToArray()));
+        else devices.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("正在读取设备…", "Loading devices…"), secondary: true)));
+        var devicesBox = Box(devices.ToArray());
+        AutomationProperties.SetAutomationId(devicesBox, "sync_devices");
+        page.Children.Add(devicesBox);
 
         page.Children.Add(SettingsWindow.Section(Loc.T("密钥与本机", "Keys and this PC")));
         page.Children.Add(Box(
@@ -378,6 +402,111 @@ internal sealed class SyncPage
                 Btn("rotate", Loc.T("轮换密钥", "Rotate keys"), sync.RotateKeys, enabled: !Busy)),
             Spread(Text(Loc.T("重置只删除这台电脑的同步身份，不影响模板文件，也不影响其他设备。", "Resetting only removes this PC's sync identity. Your template files and other devices are not affected."), secondary: true, size: 13),
                 Btn("reset", Loc.T("重置这台设备的同步", "Reset sync on this PC"), () => _ = ConfirmReset(), enabled: !Busy))));
+    }
+
+    // MARK: 用量与账号设备
+
+    private static string Short(string id) => id.Length > 8 ? id[..8] : id;
+
+    private static FontIcon Icon(string glyph) => new() { Glyph = glyph, FontFamily = Theme.Icons, FontSize = 16, VerticalAlignment = VerticalAlignment.Center };
+
+    /// 云端用量：已用 / 配额、进度条；用满时提示新的修改不会上传
+    private static UIElement UsageRow(SyncUsage usage)
+    {
+        double ratio = Math.Min((double)usage.Bytes / Math.Max(usage.QuotaBytes, 1UL), 1);
+        var sp = new StackPanel { Spacing = 4 };
+        var amount = Text($"{FormatBytes(usage.Bytes)} / {FormatBytes(usage.QuotaBytes)}", secondary: true, size: 13);
+        AutomationProperties.SetAutomationId(amount, "sync_usage");
+        sp.Children.Add(Spread(Text(Loc.T("云端用量", "Cloud storage"), secondary: true), amount));
+        var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = ratio };
+        if (ratio > 0.9) bar.Foreground = new SolidColorBrush(Microsoft.UI.Colors.Crimson);
+        else if (ratio > 0.75) bar.Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange);
+        AutomationProperties.SetName(bar, Loc.T("云端用量", "Cloud storage"));
+        sp.Children.Add(bar);
+        if (ratio >= 1)
+        {
+            var full = Text(Loc.T("云端空间已满：新的修改不会上传，本地模板不受影响。可以删除不用的模板腾出空间。",
+                "Cloud storage is full: new changes won't upload; local templates are unaffected. Delete unused templates to free space."), size: 12);
+            full.Foreground = new SolidColorBrush(Microsoft.UI.Colors.Crimson);
+            sp.Children.Add(full);
+        }
+        return sp;
+    }
+
+    /// 字节数（十进制单位，与 macOS ByteCountFormatter 的 .file 一致）
+    internal static string FormatBytes(ulong n)
+    {
+        if (n < 1000) return Loc.T($"{n} 字节", n == 1 ? "1 byte" : $"{n} bytes");
+        string[] units = { "KB", "MB", "GB", "TB" };
+        double v = n;
+        int i = -1;
+        do { v /= 1000; i++; } while (v >= 1000 && i < units.Length - 1);
+        return $"{(v >= 100 ? v.ToString("0") : v.ToString("0.#"))} {units[i]}";
+    }
+
+    /// 相对时间（按界面语言）
+    private static string Relative(long unix)
+    {
+        var d = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(unix);
+        if (d.TotalSeconds < 60) return Loc.T("刚刚", "just now");
+        int m = (int)d.TotalMinutes, h = (int)d.TotalHours, days = (int)d.TotalDays;
+        if (m < 60) return Loc.T($"{m} 分钟前", m == 1 ? "1 minute ago" : $"{m} minutes ago");
+        if (h < 24) return Loc.T($"{h} 小时前", h == 1 ? "1 hour ago" : $"{h} hours ago");
+        if (days < 30) return Loc.T($"{days} 天前", days == 1 ? "yesterday" : $"{days} days ago");
+        return DateTimeOffset.FromUnixTimeSeconds(unix).ToLocalTime().ToString("yyyy-MM-dd");
+    }
+
+    private static Border Tag(string text, Windows.UI.Color color)
+    {
+        var t = new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.SemiBold };
+        return new Border
+        {
+            Child = t, Padding = new Thickness(6, 1, 6, 2), CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(color) { Opacity = 0.22 },
+        };
+    }
+
+    private static Windows.UI.Color Accent =>
+        Application.Current.Resources.TryGetValue("SystemAccentColor", out var c) && c is Windows.UI.Color color ? color : Microsoft.UI.Colors.SteelBlue;
+
+    /// 账号下的一台设备：名称、标签、系统 · Qantrip 版本 · 上次在线；右侧"解除"（本机为"退出登录"）
+    private UIElement AccountDeviceRow(AccountDevice d)
+    {
+        var title = Row(Text(d.Name.Length == 0 ? Loc.T("未命名设备", "Unnamed device") : d.Name));
+        if (d.IsSelf) title.Children.Add(Tag(Loc.T("本机", "This device"), Accent));
+        if (d.Limited) title.Children.Add(Tag(Loc.T("超出上限", "Over limit"), Microsoft.UI.Colors.DarkOrange));
+        // 本机没有保险库状态时无法判断其他设备是否在保险库中
+        else if (!d.InVault && sync.Enrolled) title.Children.Add(Tag(Loc.T("未加入保险库", "Not in vault"), Microsoft.UI.Colors.Gray));
+        var parts = new List<string>();
+        if (d.Platform.Length > 0) parts.Add(d.Platform);
+        if (d.AppVersion.Length > 0) parts.Add("Qantrip " + d.AppVersion);
+        parts.Add(Loc.T("上次在线 ", "Last seen ") + Relative(d.LastSeenAt));
+        var left = new StackPanel { Spacing = 2 };
+        left.Children.Add(title);
+        left.Children.Add(Text(string.Join(" · ", parts), secondary: true, size: 12));
+        var icon = Icon(d.Platform.StartsWith("windows", StringComparison.OrdinalIgnoreCase) ? "" : "");
+        var device = d;
+        var row = Spread(Row(icon, left), Btn("release_" + d.GrantId, d.IsSelf ? Loc.T("退出登录", "Sign out") : Loc.T("解除", "Release"), () => _ = ConfirmRelease(device), enabled: !Busy));
+        AutomationProperties.SetAutomationId(row, "sync_device_" + d.GrantId);
+        return row;
+    }
+
+    /// 本机超出设备上限：列出账号下的其他设备，解除一台后本机即可同步；旧设备丢失时也可以在这里直接解除。
+    private void DeviceLimit(uint max)
+    {
+        page.Children.Add(SettingsWindow.Section(Loc.T("设备数量", "Devices")));
+        var items = new List<UIElement>();
+        var head = Row(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 16, Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange) },
+            Text(Loc.T($"这个账号最多同时在 {max} 台设备上同步", $"This account can sync on up to {max} devices at a time"), bold: true));
+        AutomationProperties.SetAutomationId(head, "sync_devicelimit");
+        items.Add(head);
+        items.Add(Text(Loc.T("解除下面任意一台设备后，这台设备就可以同步。旧设备丢失或无法再使用时，也可以在这里直接解除它。",
+            "Release any device below and this one can sync. If an old device is lost or unusable, you can release it right here."), secondary: true, size: 13));
+        if (sync.AccountDevices is { } account)
+            foreach (var d in account.Devices.Where(d => !d.IsSelf)) items.Add(AccountDeviceRow(d));
+        else items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("正在读取设备…", "Loading devices…"), secondary: true)));
+        items.Add(Row(Btn("signout", Loc.T("退出登录", "Sign out"), sync.SignOut, enabled: !Busy)));
+        page.Children.Add(Box(items.ToArray()));
     }
 
     /// 只更新"x 分钟前"，不重建页面
@@ -445,6 +574,25 @@ internal sealed class SyncPage
             return await d.ShowAsync();
         }
         finally { dialogOpen = false; }
+    }
+
+    private async Task ConfirmRelease(AccountDevice d)
+    {
+        bool limit = sync.Status?.DeviceLimit != null;
+        var r = await Dialog(new ContentDialog
+        {
+            Title = d.IsSelf ? Loc.T("退出这台设备的登录？", "Sign out on this device?") : Loc.T("解除这台设备？", "Release this device?"),
+            Content = d.IsSelf
+                ? Loc.T("这台设备会退出登录，不再上传或下载。本机的模板文件不受影响。", "This device will be signed out and stop uploading or downloading. Your template files stay on this PC.")
+                : limit
+                    ? Loc.T("它会退出登录，无法再上传或下载。", "It will be signed out and can no longer upload or download.")
+                    : Loc.T("它会退出登录，无法再上传或下载。如果它还在保险库中，之后可以在这里把它移除并轮换密钥。",
+                        "It will be signed out and can no longer upload or download. If it is still in the vault, you can then remove it here, which rotates the keys."),
+            PrimaryButtonText = d.IsSelf ? Loc.T("退出登录", "Sign out") : Loc.T("解除", "Release"),
+            CloseButtonText = Loc.T("取消", "Cancel"),
+            DefaultButton = ContentDialogButton.Close,
+        });
+        if (r == ContentDialogResult.Primary) sync.Release(d);
     }
 
     private async Task ConfirmRevoke(DeviceInfo d)

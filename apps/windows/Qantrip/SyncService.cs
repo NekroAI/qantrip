@@ -7,8 +7,10 @@ namespace Qantrip;
 
 /// <summary>
 /// 端到端加密同步的 Windows 外壳（docs/sync-design.md，对应 macOS SyncService.swift）。加密、花名册与协议都在 Rust 核心里；
-/// 这里只负责：在后台线程串行调用核心、浏览器登录回调、定时同步、把状态交给界面（UI 线程上的属性 + Changed 事件）。
-/// 面板唤起不触发任何网络请求（local-first）。
+/// 这里只负责：在后台线程串行调用核心、浏览器登录回调、按触发原因交给核心判断是否同步、把状态交给界面（UI 线程上的属性 + Changed 事件）。
+/// 触发模型（docs/sync-design.md v0.4，与 macOS 相同）：每 60 秒 timer（锁屏 / 睡眠 / 显示器关闭时跳过，恢复后 wake）、启动 launch、
+/// 唤起面板 panel_opened（后台执行，面板不等待）、模板目录变化 8 秒后 local_change、被节流的本地修改在 next_push_at 再试一次。
+/// 是否真的发请求由核心按服务端下发的策略决定；没到期时不联网。
 /// </summary>
 internal sealed class SyncService
 {
@@ -27,6 +29,10 @@ internal sealed class SyncService
     /// 刚创建保险库时的恢复短语，只显示一次
     public string? Phrase { get; set; }
     public SyncReport? LastReport { get; private set; }
+    /// 账号下已登录的设备（含未加入保险库、超出设备上限的）
+    public AccountDevices? AccountDevices { get; private set; }
+    /// 设置 › 同步页面可见时为真：此时才轮询加入请求、读取账号设备
+    public bool SettingsVisible { get; set; }
 
     /// 状态变化（UI 线程）
     public event Action? Changed;
@@ -36,12 +42,14 @@ internal sealed class SyncService
     public bool SignedIn => Status?.SignedIn ?? false;
     public bool Enrolled => (Status?.HasVault ?? false) && (Status?.Enrolled ?? false);
     /// 托盘提示：有设备等待加入
-    public int PendingJoinCount => JoinRequests.Count(r => r.Status != "handled_elsewhere");
+    public int PendingJoinCount => Math.Max((int)(Status?.PendingJoins ?? 0), JoinRequests.Count(r => r.Status != "handled_elsewhere"));
 
     private SyncClient? client;
     private string server = "";
     private DispatcherQueue? ui;
-    private DispatcherQueueTimer? timer, joinTimer, pending;
+    private DispatcherQueueTimer? timer, joinTimer, pending, pushTimer;
+    /// 锁屏、睡眠或显示器关闭：暂停定时检查
+    private bool asleep;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly LoopbackReceiver receiver = new();
     /// 仅调试：QANTRIP_DEBUG_SYNC_MOCK 模拟各个界面状态（不调用核心，用于截图）
@@ -77,7 +85,7 @@ internal sealed class SyncService
         {
             Directory.CreateDirectory(dataDir);
             var old = client;
-            client = new SyncClient(url, dataDir, Settings.TemplatesDir, Path.Combine(dataDir, "secrets.bin"));
+            client = new SyncClient(url, dataDir, Settings.TemplatesDir, Path.Combine(dataDir, "secrets.bin"), ThisDevice());
             if (old != null) _ = Task.Run(async () => { await gate.WaitAsync(); try { old.Dispose(); } finally { gate.Release(); } });
             Status = client.Status(); // 不联网
         }
@@ -92,16 +100,82 @@ internal sealed class SyncService
         JoinRequests = new();
         Devices = new();
         Join = null;
+        AccountDevices = null;
         timer?.Stop();
-        // 每 5 分钟同步一次
+        // 每分钟让核心判断一次是否到期；没到期时不发任何请求（间隔由服务端下发的同步策略决定）
         timer = ui.CreateTimer();
-        timer.Interval = TimeSpan.FromMinutes(5);
-        timer.Tick += (_, _) => SyncInBackground();
+        timer.Interval = TimeSpan.FromSeconds(60);
+        timer.Tick += (_, _) => Trigger(SyncTrigger.Timer);
         timer.Start();
         Log.Event("sync_start", new() { ["server_default"] = url == Settings.DefaultSyncServer, ["signed_in"] = SignedIn, ["enrolled"] = Enrolled });
         Notify();
         Refresh();
-        SyncInBackground();
+        Trigger(SyncTrigger.Launch);
+    }
+
+    /// 登录与刷新令牌时上报的设备信息：计算机名、"Windows 11 26200"、应用版本。
+    private static DeviceLabel ThisDevice()
+    {
+        string name = Environment.MachineName;
+        try
+        {
+            int size = 0;
+            Win32.GetComputerNameEx(Win32.ComputerNamePhysicalDnsHostname, null, ref size);
+            var buf = new char[Math.Max(size, 1)];
+            if (size > 0 && Win32.GetComputerNameEx(Win32.ComputerNamePhysicalDnsHostname, buf, ref size) && size > 0) name = new string(buf, 0, size);
+        }
+        catch (Exception e) { Log.Error("computer_name", e); }
+        var v = Environment.OSVersion.Version;
+        var platform = $"Windows {(v.Major == 10 && v.Build >= 22000 ? 11 : v.Major)} {v.Build}";
+        return new DeviceLabel(name, platform, UI.SettingsWindow.Version);
+    }
+
+    /// 锁屏 / 睡眠 / 显示器关闭（true）与恢复（false）。恢复后补一次检查。
+    public void SetAsleep(bool value)
+    {
+        bool woke = asleep && !value;
+        asleep = value;
+        Log.Event("sync_asleep", new() { ["asleep"] = value });
+        if (woke) Trigger(SyncTrigger.Wake);
+    }
+
+    /// 按触发原因交给核心判断是否同步（docs/sync-design.md v0.4）；没到期时核心不发请求。
+    public void Trigger(string trigger)
+    {
+        if (mock != null || !SignedIn || !(Enrolled || Status?.DeviceLimit != null)) return;
+        if (asleep && trigger == SyncTrigger.Timer) return;
+        Run(null, c => c.MaybeSync(trigger), report =>
+        {
+            if (report != null) AfterReport(report);
+            AfterTrigger();
+        }, e =>
+        {
+            Log.Event("sync_trigger_error", new() { ["trigger"] = trigger, ["kind"] = e.Kind });
+            AfterTrigger();
+        });
+    }
+
+    private void AfterTrigger()
+    {
+        SchedulePush();
+        if ((Status?.PendingJoins ?? 0) > 0 || SettingsVisible) PollJoinRequests();
+        if (Status?.DeviceLimit != null && (SettingsVisible || AccountDevices is null)) LoadAccountDevices();
+    }
+
+    /// 唤出面板时调用：距上次检查足够久时在后台检查一次，面板不等待。
+    public void PanelOpened() => Trigger(SyncTrigger.PanelOpened);
+
+    /// 本地修改被节流时，在核心给出的时间点再试一次自动上传。
+    private void SchedulePush()
+    {
+        pushTimer?.Stop();
+        if (ui is null || Status?.NextPushAt is not long at) return;
+        var delay = Math.Max(1, at - DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 1);
+        pushTimer = ui.CreateTimer();
+        pushTimer.Interval = TimeSpan.FromSeconds(delay);
+        pushTimer.IsRepeating = false;
+        pushTimer.Tick += (_, _) => Trigger(SyncTrigger.LocalChange);
+        pushTimer.Start();
     }
 
     private void Notify() => Changed?.Invoke();
@@ -145,35 +219,54 @@ internal sealed class SyncService
     private void Run(string? label, Action<SyncClient> work, Action? done = null) =>
         Run<bool>(label, c => { work(c); return true; }, _ => done?.Invoke());
 
-    /// 读取服务端信息：是否有保险库、在册设备、加入请求。
+    /// 读取服务端信息：是否有保险库、在册设备；设置页可见或超出设备上限时再读账号设备。
     public void Refresh()
     {
         if (mock != null || client is null || !SignedIn) return;
         if (Status is { HasVault: false })
             Run(null, c => c.RemoteVaultExists(), v => RemoteVault = v);
         else
-        {
             Run(null, c => c.Devices(), v => Devices = v);
-            Run(null, c => c.ListJoinRequests(), v => JoinRequests = v);
-        }
+        if (SettingsVisible || Status?.DeviceLimit != null) LoadAccountDevices();
     }
 
-    private void AfterSync(SyncReport report)
+    public void LoadAccountDevices()
+    {
+        if (mock != null) return;
+        Run(null, c => c.AccountDevices(), v => AccountDevices = v);
+    }
+
+    /// 解除一台设备的登录（超出设备上限时，或旧设备已丢失）；是本机时等同于退出登录。
+    public void Release(AccountDevice device) => Run(Loc.T("正在解除…", "Releasing…"), c => c.ReleaseDevice(device.GrantId), () =>
+    {
+        if (device.IsSelf)
+        {
+            RemoteVault = null;
+            Devices = new();
+            JoinRequests = new();
+            AccountDevices = null;
+            return;
+        }
+        Refresh();
+        // 腾出名额后立即同步一次（超出上限的本机由此恢复）
+        Run(null, c => c.MaybeSync(SyncTrigger.Manual), r => { if (r != null) AfterReport(r); SchedulePush(); });
+    });
+
+    private void AfterReport(SyncReport report)
     {
         LastReport = report;
         Log.Event("sync", new() { ["pulled"] = report.Pulled, ["pushed"] = report.Pushed, ["conflicts"] = report.Conflicts, ["rejected"] = report.Rejected });
         if (report.Pulled > 0 || report.Conflicts > 0) OnTemplatesChanged?.Invoke();
+    }
+
+    private void AfterSync(SyncReport report)
+    {
+        AfterReport(report);
+        SchedulePush();
         Refresh();
     }
 
-    /// 静默同步：失败不打扰用户（状态里会有告警）。
-    public void SyncInBackground()
-    {
-        if (mock != null || !Enrolled) return;
-        Run(null, c => c.SyncNow(), AfterSync);
-    }
-
-    /// 模板目录变化后稍等片刻再同步，合并连续的保存。
+    /// 模板目录变化后稍等片刻，合并连续的保存，再交给核心按上传间隔决定是否上传。
     public void ScheduleSync()
     {
         if (mock != null || !Enrolled || ui is null) return;
@@ -181,7 +274,7 @@ internal sealed class SyncService
         pending = ui.CreateTimer();
         pending.Interval = TimeSpan.FromSeconds(8);
         pending.IsRepeating = false;
-        pending.Tick += (_, _) => SyncInBackground();
+        pending.Tick += (_, _) => Trigger(SyncTrigger.LocalChange);
         pending.Start();
     }
 
@@ -204,7 +297,7 @@ internal sealed class SyncService
                     {
                         App.Current?.ActivateSettings();
                         Refresh();
-                        SyncInBackground();
+                        Trigger(SyncTrigger.Launch);
                     });
                 }
                 else
@@ -264,6 +357,7 @@ internal sealed class SyncService
         RemoteVault = null;
         Devices = new();
         JoinRequests = new();
+        AccountDevices = null;
     });
 
     public void ResetDevice() => Run(Loc.T("正在重置…", "Resetting…"), c => c.ResetDevice(), () =>
@@ -271,6 +365,7 @@ internal sealed class SyncService
         RemoteVault = null;
         Devices = new();
         JoinRequests = new();
+        AccountDevices = null;
         Join = null;
         Refresh();
     });
@@ -381,6 +476,16 @@ internal sealed class SyncService
         mock = m;
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         Status = new SyncStatus { SignedIn = m != "signedout", Account = m == "signedout" ? null : "octocat", DeviceId = "K7Q2M4X9TRV3WZ8H5N6PJ2CDFA" };
+        AccountDevices = new AccountDevices
+        {
+            MaxDevices = 3,
+            Devices = new()
+            {
+                new AccountDevice { GrantId = "g0", DeviceId = "K7Q2M4X9TRV3WZ8H5N6PJ2CDFA", Name = "DESKTOP-QANTRIP", Platform = "Windows 11 26200", AppVersion = "0.3.1", LastSeenAt = now - 30, IsSelf = true, InVault = m != "limit", Limited = m == "limit" },
+                new AccountDevice { GrantId = "g1", DeviceId = "B3D5F7H9JKMNPQRSTVWXYZ2345", Name = "MacBook Pro", Platform = "macOS 26.1", AppVersion = "0.3.1", LastSeenAt = now - 7200, InVault = true },
+                new AccountDevice { GrantId = "g2", DeviceId = "C4E6G8J2KLMNPQRSTVWXYZ3456", Name = "Mac mini", Platform = "macOS 26.0", AppVersion = "0.3.0", LastSeenAt = now - 86400 * 3 },
+            },
+        };
         switch (m)
         {
             case "novault": RemoteVault = false; break;
@@ -391,13 +496,23 @@ internal sealed class SyncService
                 RemoteVault = false;
                 Phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";
                 break;
+            case "limit":
+                Status.DeviceLimit = 3;
+                break;
             case "enrolled" or "blocked":
                 Status.HasVault = true;
                 Status.Enrolled = true;
                 Status.LastSync = now - 125;
+                Status.Usage = new SyncUsage { Bytes = 3_400_000, QuotaBytes = 4_000_000, Records = 120 };
+                Status.NextPushAt = now + 600;
                 Status.WritesBlocked = m == "blocked";
                 if (m == "blocked") Status.Alerts.Add(new SyncAlert { Code = "rollback", Message = "服务器返回的花名册比本机记录的旧，可能被回滚", At = now - 60 });
-                Devices = new() { new DeviceInfo { DeviceId = "K7Q2M4X9TRV3WZ8H5N6PJ2CDFA", IsSelf = true, RosterIndex = 0 }, new DeviceInfo { DeviceId = "B3D5F7H9JKMNPQRSTVWXYZ2345", RosterIndex = 1 } };
+                Devices = new()
+                {
+                    new DeviceInfo { DeviceId = "K7Q2M4X9TRV3WZ8H5N6PJ2CDFA", IsSelf = true, RosterIndex = 0 },
+                    new DeviceInfo { DeviceId = "B3D5F7H9JKMNPQRSTVWXYZ2345", RosterIndex = 1 },
+                    new DeviceInfo { DeviceId = "D5F7H9JKMNPQRSTVWXYZ234567", RosterIndex = 2 }, // 已退出登录、仍在保险库中
+                };
                 JoinRequests = new() { new JoinRequest { JoinId = "r1", Status = "ready_for_code", ExpiresAt = now + 600 } };
                 LastReport = new SyncReport { Pulled = 1, Conflicts = 1 };
                 ConfirmCodes["r0"] = "719 204";
