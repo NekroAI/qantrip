@@ -13,6 +13,7 @@ export default [
   ...pages('', 'en'),
   ...pages('zh/', 'zh'),
   route('account', 'routes/account.tsx'),
+  route('admin', 'routes/admin.tsx'),
   route('oauth/authorize', 'routes/oauth-authorize.tsx'),
   route('*', 'routes/not-found.tsx'),
 ] satisfies RouteConfig

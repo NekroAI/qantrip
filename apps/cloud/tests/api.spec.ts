@@ -406,3 +406,32 @@ describe('seo', () => {
     expect(localeRedirect(req('/account', { 'accept-language': 'zh-CN' }))).toBeNull()
   })
 })
+
+describe('admin', () => {
+  it('admin check, limits override and stats', async () => {
+    const { isAdmin, setUserLimits, stats, listUsers } = await import('../server/admin.js')
+    const { effectiveLimits } = await import('../server/limits.js')
+    const e = { ...env, SUPER_ADMIN_GITHUB_IDS: '42, 7' } as Env
+    expect(isAdmin(e, { github_id: 7 })).toBe(true)
+    expect(isAdmin(e, { github_id: 8 })).toBe(false)
+    expect(isAdmin(e, null)).toBe(false)
+    const user = await makeUser()
+    const admin = { id: 'admin', github_id: 7, login: 'boss' }
+    expect(await setUserLimits(e, admin, user.id, { max_devices: 5, quota_bytes: 1024 * 1024 })).toBeNull()
+    const row = await env.DB.prepare('SELECT limits FROM users WHERE id = ?').bind(user.id).first<{ limits: string }>()
+    const eff = effectiveLimits(e, row!.limits)
+    expect(eff.max_devices).toBe(5)
+    expect(eff.quota_bytes).toBe(1024 * 1024)
+    // 超出范围被拒绝
+    expect(await setUserLimits(e, admin, user.id, { max_devices: 999 })).toBe('max_devices')
+    // 全部留空 → 恢复默认
+    expect(await setUserLimits(e, admin, user.id, {})).toBeNull()
+    const cleared = await env.DB.prepare('SELECT limits FROM users WHERE id = ?').bind(user.id).first<{ limits: string | null }>()
+    expect(cleared!.limits).toBeNull()
+    const s = await stats(e)
+    expect(s.users).toBeGreaterThan(0)
+    expect(s.signups).toHaveLength(30)
+    const list = await listUsers(e, { q: user.login })
+    expect(list.users.map((u) => u.id)).toContain(user.id)
+  })
+})

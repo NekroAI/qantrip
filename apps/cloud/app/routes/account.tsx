@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import { Form, Link, redirect, useNavigation } from 'react-router'
 import { deleteAccount, listGrants, loginAvailable, revokeGrant, sessionCookie, sessionUser, userLimits } from '../../server/auth.js'
 import { HARD } from '../../server/limits.js'
+import { isAdmin } from '../../server/admin.js'
 import { deleteVault, vaultOf } from '../../server/sync.js'
 import { type Locale, useHref, useLocale } from '../lib/i18n'
 import type { Route } from './+types/account'
@@ -16,6 +17,7 @@ const T = {
     soonP: 'The sync service is being prepared.',
     ghAccount: 'GitHub account',
     signOut: 'Sign out',
+    admin: 'Admin',
     vault: 'Sync vault',
     records: 'encrypted records',
     total: (quota: string) => `ciphertext / ${quota}`,
@@ -49,6 +51,7 @@ const T = {
     soonP: '同步服务正在准备中。',
     ghAccount: 'GitHub 账号',
     signOut: '退出登录',
+    admin: '后台管理',
     vault: '同步保险库',
     records: '条加密记录',
     total: (quota: string) => `密文总量 / ${quota}`,
@@ -85,6 +88,7 @@ export const loader = async ({ request }: Route.LoaderArgs) => {
   const [grants, vault, limits] = await Promise.all([listGrants(env, user.id), vaultOf(env.DB, user.id), userLimits(env, user.id)])
   return {
     user: { login: user.login, avatar: user.avatar_url },
+    admin: isAdmin(env, user),
     loginOpen: true,
     status,
     grants: grants.map((g) => ({
@@ -164,6 +168,11 @@ export default function Account({ loaderData }: Route.ComponentProps) {
             <span className="muted">{t.ghAccount}</span>
           </div>
         </div>
+        {loaderData.admin && (
+          <Link className="btn small" to="/admin">
+            {t.admin}
+          </Link>
+        )}
         <form method="post" action="/auth/logout">
           <button className="btn small" type="submit">
             {t.signOut}

@@ -12,7 +12,7 @@ const text = (body: string, type = 'text/plain; charset=utf-8') =>
   new Response(body, { headers: { 'content-type': type, 'cache-control': 'public, max-age=3600' } })
 
 const robots = (env: Env) =>
-  text(production(env) ? `User-agent: *\nAllow: /\nDisallow: /account\nDisallow: /oauth/\nDisallow: /auth/\nDisallow: /api/\n\nSitemap: ${env.SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n')
+  text(production(env) ? `User-agent: *\nAllow: /\nDisallow: /account\nDisallow: /admin\nDisallow: /oauth/\nDisallow: /auth/\nDisallow: /api/\n\nSitemap: ${env.SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n')
 
 const sitemap = (env: Env) => {
   const o = env.SITE_ORIGIN

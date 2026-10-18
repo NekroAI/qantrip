@@ -380,6 +380,19 @@ table caption { text-align: left; padding: 10px 14px; font-size: 12px; color: va
 .small { font-size: 13px; }
 .links-row { display: flex; flex-wrap: wrap; gap: 10px 24px; }
 
+/* 后台管理 */
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.admin-stats .card { gap: 4px; }
+.admin-stats b { font: 600 1.8rem/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.admin-bars { display: flex; align-items: flex-end; gap: 3px; height: 96px; }
+.admin-bars span { flex: 1; background: var(--brand); border-radius: 3px 3px 0 0; opacity: 0.8; min-width: 4px; }
+.admin-edit { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 20px; padding: 8px 0; }
+.admin-limits { display: grid; gap: 10px; }
+.admin-limits label { display: grid; grid-template-columns: minmax(0, 1fr) 140px; align-items: center; gap: 10px; font-size: 14px; }
+.admin-devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.admin-devices li { display: grid; gap: 2px; }
+.admin td { vertical-align: middle; }
+
 /* 页脚 */
 .footer { border-top: 1px solid var(--line); padding-block: 28px 44px; color: var(--muted); font-size: 13px; }
 .footer .wrap { display: flex; gap: 14px 28px; flex-wrap: wrap; justify-content: space-between; }
