@@ -352,7 +352,7 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(.separator())
         }
         if SyncService.shared.pendingJoinCount > 0 {
-            menu.addItem(withTitle: L("有设备请求加入同步…", "A Mac wants to join sync…"), action: #selector(openSyncSettings), keyEquivalent: "").target = self
+            menu.addItem(withTitle: L("有设备请求加入同步…", "A device wants to join sync…"), action: #selector(openSyncSettings), keyEquivalent: "").target = self
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: L("打开面板（\(hotKey.spec.display)）", "Open Panel (\(hotKey.spec.display))"), action: #selector(openPanel), keyEquivalent: "").target = self

@@ -46,7 +46,7 @@ struct SyncSettings: View {
                             .disabled(sync.signedIn)
                     }
                     if let id = sync.status?.deviceId {
-                        LabeledContent(L("本机标识", "This Mac's ID")) { Text(id).font(.caption.monospaced()).textSelection(.enabled) }
+                        LabeledContent(L("本机标识", "This device's ID")) { Text(id).font(.caption.monospaced()).textSelection(.enabled) }
                     }
                 }
             } footer: {
@@ -79,7 +79,7 @@ private struct SignedOut: View {
     var body: some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
-                Text(L("在多台 Mac 之间同步你的模板", "Sync your templates across your Macs")).font(.headline)
+                Text(L("在多台设备之间同步你的模板", "Sync your templates across your devices")).font(.headline)
                 Text(L("端到端加密：密钥只在你的设备上，服务器只保存无法解密的密文。", "End-to-end encrypted: keys stay on your devices, and the server only stores ciphertext it can't decrypt."))
                     .foregroundStyle(.secondary)
                 Button(L("使用 GitHub 登录", "Sign in with GitHub")) { sync.signIn() }
@@ -134,8 +134,8 @@ private struct NoVault: View {
         } else if sync.remoteVault == true {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L("把这台 Mac 加入保险库", "Add this Mac to your vault")).font(.headline)
-                    Text(L("在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。", "On a Mac that already syncs, open Qantrip Settings › Sync and enter the code shown here."))
+                    Text(L("把这台设备加入保险库", "Add this device to your vault")).font(.headline)
+                    Text(L("在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。", "On a device that already syncs, open Qantrip Settings › Sync and enter the code shown here."))
                         .foregroundStyle(.secondary)
                     HStack {
                         Button(L("开始加入", "Start")) { sync.startJoin() }
@@ -166,22 +166,24 @@ private struct JoinWaiting: View {
                 case .waitingForApprover:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(L("等待已同步的设备响应…", "Waiting for a Mac that already syncs…"))
+                        Text(L("等待已同步的设备响应…", "Waiting for a device that already syncs…"))
                     }
-                    Text(L("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that Mac."))
+                    Text(L("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that device."))
                         .foregroundStyle(.secondary)
                 case .enterCodeOnOtherDevice:
-                    Text(L("在另一台设备上输入这个校验码", "Enter this code on your other Mac")).font(.headline)
+                    Text(L("在另一台设备上输入这个校验码", "Enter this code on your other device")).font(.headline)
                     Text(join.sas ?? "")
                         .font(.system(size: 34, weight: .semibold, design: .monospaced))
                         .tracking(4)
                         .textSelection(.enabled)
-                    Text(L("这台设备上不需要任何确认。", "Nothing to confirm on this Mac."))
+                    Text(L("这台设备上不需要任何确认。", "Nothing to confirm on this device."))
                         .foregroundStyle(.secondary)
                 case .enterCodeHere:
-                    Text(L("输入另一台设备上显示的确认码", "Enter the code shown on your other Mac")).font(.headline)
+                    Text(L("输入另一台设备上显示的确认码", "Enter the code shown on your other device")).font(.headline)
                     HStack {
-                        TextField(L("确认码", "Code"), text: $code)
+                        TextField("", text: $code, prompt: Text(L("确认码", "Code")))
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
                             .font(.title3.monospaced())
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 220)
@@ -190,7 +192,7 @@ private struct JoinWaiting: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(code.count < 4 || sync.working != nil)
                     }
-                    Text(L("两边互相输入校验码，确保这台 Mac 加入的是你自己的保险库。", "Entering a code on each side makes sure this Mac joins your own vault."))
+                    Text(L("两边互相输入校验码，确保这台设备加入的是你自己的保险库。", "Entering a code on each side makes sure this device joins your own vault."))
                         .font(.caption).foregroundStyle(.secondary)
                 case .completed:
                     Label(L("已加入", "Joined"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
@@ -242,7 +244,7 @@ private struct Enrolled: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let report = sync.lastReport, report.conflicts > 0 {
-                Text(L("有 \(report.conflicts) 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", "\(report.conflicts) template(s) changed on two Macs at once. Both versions were kept; merge them in the template library."))
+                Text(L("有 \(report.conflicts) 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", "\(report.conflicts) template(s) changed on two devices at once. Both versions were kept; merge them in the template library."))
                     .font(.caption).foregroundStyle(.orange)
             }
             HStack {
@@ -265,7 +267,7 @@ private struct Enrolled: View {
         ForEach(sync.confirmCodes.sorted(by: { $0.key < $1.key }), id: \.key) { id, confirm in
             Section(L("最后一步", "Last step")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(L("在新的 Mac 上输入这个确认码", "Enter this code on the new Mac"))
+                    Text(L("在新设备上输入这个确认码", "Enter this code on the new device"))
                     Text(confirm)
                         .font(.system(size: 30, weight: .semibold, design: .monospaced))
                         .tracking(4)
@@ -278,19 +280,21 @@ private struct Enrolled: View {
 
         let requests = sync.joinRequests.filter { $0.status != .handledElsewhere && sync.confirmCodes[$0.joinId] == nil }
         if !requests.isEmpty {
-            Section(L("新设备请求加入", "A new Mac wants to join")) {
+            Section(L("新设备请求加入", "A new device wants to join")) {
                 ForEach(requests, id: \.joinId) { r in
                     VStack(alignment: .leading, spacing: 8) {
                         if r.status == .waitingForNewDevice {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text(L("等待新设备显示校验码…", "Waiting for the new Mac to show its code…"))
+                                Text(L("等待新设备显示校验码…", "Waiting for the new device to show its code…"))
                             }
                         } else {
-                            Text(L("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new Mac. If this isn't you, reject it."))
+                            Text(L("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new device. If this isn't you, reject it."))
                                 .font(.callout)
                             HStack {
-                                TextField(L("校验码", "Code"), text: Binding(get: { codes[r.joinId] ?? "" }, set: { codes[r.joinId] = $0 }))
+                                TextField("", text: Binding(get: { codes[r.joinId] ?? "" }, set: { codes[r.joinId] = $0 }), prompt: Text(L("校验码", "Code")))
+                                    .labelsHidden()
+                                    .multilineTextAlignment(.leading)
                                     .font(.body.monospaced())
                                     .textFieldStyle(.roundedBorder)
                                     .frame(maxWidth: 200)
@@ -344,10 +348,10 @@ private struct Enrolled: View {
             HStack {
                 Button(L("轮换密钥", "Rotate keys")) { sync.rotateKeys() }.disabled(sync.working != nil)
                 Spacer()
-                Button(L("重置这台设备的同步", "Reset sync on this Mac"), role: .destructive) { confirmReset = true }
+                Button(L("重置这台设备的同步", "Reset sync on this device"), role: .destructive) { confirmReset = true }
             }
         } footer: {
-            Text(L("重置只删除这台 Mac 的同步身份，不影响模板文件，也不影响其他设备。", "Resetting only removes this Mac's sync identity. Your template files and other Macs are not affected."))
+            Text(L("重置只删除这台设备的同步身份，不影响模板文件，也不影响其他设备。", "Resetting only removes this device's sync identity. Your template files and other devices are not affected."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .confirmationDialog(L("移除这台设备？", "Remove this device?"), isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
@@ -360,7 +364,7 @@ private struct Enrolled: View {
         } message: {
             Text(L("被移除的设备将无法读取之后的任何同步内容。", "The removed device won't be able to read anything synced afterwards."))
         }
-        .confirmationDialog(L("重置这台设备的同步？", "Reset sync on this Mac?"), isPresented: $confirmReset) {
+        .confirmationDialog(L("重置这台设备的同步？", "Reset sync on this device?"), isPresented: $confirmReset) {
             Button(L("重置", "Reset"), role: .destructive) { sync.resetDevice() }
         } message: {
             Text(L("之后需要重新加入保险库。", "You'll need to join the vault again afterwards."))

@@ -142,7 +142,7 @@ func describe(_ error: Error) -> String {
     case .Network: return L("无法连接同步服务器，请检查网络", "Can't reach the sync server. Check your connection.")
     case let .Server(status, code, message): return AppSettings.shared.uiLocale == .zh ? message : "Server error \(status) (\(code))"
     case .NoVault: return L("还没有保险库", "There is no vault yet")
-    case .NotEnrolled: return L("这台设备还没有加入保险库", "This Mac hasn't joined the vault")
+    case .NotEnrolled: return L("这台设备还没有加入保险库", "This device hasn't joined the vault")
     case let .Security(message): return AppSettings.shared.uiLocale == .zh ? message : "Security check failed. Sync has been paused for safety."
     case let .SasMismatch(remaining): return L("校验码不正确，还可以再试 \(remaining) 次", "Wrong code. \(remaining) attempts left.")
     case let .Cooldown(seconds): return L("错误次数过多，请 \((seconds + 59) / 60) 分钟后再试", "Too many attempts. Try again in \((seconds + 59) / 60) min.")
