@@ -197,8 +197,9 @@ internal sealed class LibraryWindow : Window
             var groups = new (string title, List<TemplateEntry> items, bool byCategory)[]
             {
                 (Loc.T("我的模板", "My templates"), items.Where(e => !e.Builtin && !e.Partial).ToList(), false),
-                (Loc.T("内置", "Built-in"), items.Where(e => e.Builtin && !e.Partial).ToList(), true),
+                (Loc.T("内置", "Built-in"), items.Where(e => e.Builtin && !e.Partial && !e.Deleted).ToList(), true),
                 (Loc.T("公共片段", "Shared snippets"), items.Where(e => e.Partial).ToList(), false),
+                (Loc.T("已删除", "Deleted"), items.Where(e => e.Deleted).ToList(), false),
             };
             ListViewItem? selected = null;
             foreach (var (title, entries, byCategory) in groups)
@@ -215,7 +216,7 @@ internal sealed class LibraryWindow : Window
                     }
                     var item = Row(e);
                     list.Items.Add(item);
-                    if (e.Name == model.Selection) selected = item;
+                    if (LibraryModel.Key(e) == model.Selection) selected = item;
                 }
             }
             list.SelectedItem = selected;
@@ -253,7 +254,7 @@ internal sealed class LibraryWindow : Window
         if (!string.IsNullOrEmpty(e.Description))
             sp.Children.Add(new TextBlock { Text = e.Description, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
         var item = new ListViewItem { Content = sp, Tag = e };
-        AutomationProperties.SetAutomationId(item, "lib_item_" + e.Name);
+        AutomationProperties.SetAutomationId(item, "lib_item_" + (e.Deleted ? "deleted_" : "") + e.Name);
         AutomationProperties.SetName(item, e.Name);
         item.ContextFlyout = Menu(e);
         return item;
@@ -270,11 +271,13 @@ internal sealed class LibraryWindow : Window
         }
         Add(Loc.T("复制为新模板", "Duplicate as New Template"), () => _ = Guarded(() => model.Duplicate(e)));
         Add(Loc.T("导出…", "Export…"), () => _ = ExportOne(e));
-        if (e.Path is { } path)
-        {
+        if (e.Path is { } path && !e.Deleted)
             Add(Loc.T("在资源管理器中显示", "Show in File Explorer"), () => ShowInExplorer(path));
+        if (!e.Partial)
+        {
             m.Items.Add(new MenuFlyoutSeparator());
-            Add(e.OverridesBuiltin ? Loc.T("恢复内置版本", "Restore Built-in Version") : Loc.T("删除", "Delete"), () => _ = Delete(e));
+            if (e.Deleted || e.OverridesBuiltin) Add(Loc.T("恢复内置版本", "Restore Built-in Version"), () => _ = Restore(e));
+            if (!e.Deleted) Add(Loc.T("删除", "Delete"), () => _ = Delete(e));
         }
         return m;
     }
@@ -288,7 +291,7 @@ internal sealed class LibraryWindow : Window
     private async void OnListSelection(object sender, SelectionChangedEventArgs e)
     {
         if (suppressSelection) return;
-        var name = (list.SelectedItem as ListViewItem)?.Tag is TemplateEntry t ? t.Name : null;
+        var name = (list.SelectedItem as ListViewItem)?.Tag is TemplateEntry t ? LibraryModel.Key(t) : null;
         if (name is null || name == model.Selection) return;
         if (editor is { Dirty: true })
         {
@@ -398,7 +401,29 @@ internal sealed class LibraryWindow : Window
         split.Children.Add(tryBorder);
         detail.Children.Add(split);
 
-        if (ed.ReadOnly)
+        if (ed.Entry.Deleted)
+        {
+            var banner = new Grid { Padding = new Thickness(16, 8, 16, 8), ColumnSpacing = 10, Background = new SolidColorBrush(Theme.WithAlpha(Microsoft.UI.Colors.Orange, 0.12)) };
+            banner.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            banner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            banner.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            banner.Children.Add(new FontIcon { Glyph = "\uE74D", FontFamily = Theme.Icons, FontSize = 14 });
+            var msg = new TextBlock
+            {
+                Text = Loc.T("这个内置模板已删除，它的名称和别名可以给你自己的模板使用。", "This built-in template is deleted; its name and aliases are free for your own templates."),
+                TextWrapping = TextWrapping.Wrap, FontSize = 13, VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(msg, 1);
+            banner.Children.Add(msg);
+            var restore = new Button { Content = Loc.T("恢复", "Restore") };
+            AutomationProperties.SetAutomationId(restore, "lib_restore");
+            restore.Click += (_, _) => _ = Restore(ed.Entry);
+            Grid.SetColumn(restore, 2);
+            banner.Children.Add(restore);
+            Grid.SetRow(banner, 2);
+            detail.Children.Add(banner);
+        }
+        else if (ed.ReadOnly)
         {
             var banner = new Grid { Padding = new Thickness(16, 8, 16, 8), ColumnSpacing = 10, Background = new SolidColorBrush(Theme.WithAlpha(new Theme(false).Accent, 0.10)) };
             banner.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -443,14 +468,15 @@ internal sealed class LibraryWindow : Window
             m.Items.Add(i);
         }
         Add("lib_menu_duplicate", Loc.T("复制为新模板", "Duplicate as New Template"), "", () => _ = Guarded(() => model.Duplicate(e)));
-        if (e.Builtin) Add("lib_menu_customize", Loc.T("自定义此模板", "Customize This Template"), "", () => _ = Guarded(() => model.Customize(e)));
+        if (e.Builtin && !e.Deleted) Add("lib_menu_customize", Loc.T("自定义此模板", "Customize This Template"), "", () => _ = Guarded(() => model.Customize(e)));
         Add("lib_menu_export", Loc.T("导出…", "Export…"), "", () => _ = ExportOne(e));
-        if (e.Path is { } path)
-        {
+        if (e.Path is { } path && !e.Deleted)
             Add("lib_menu_reveal", Loc.T("在资源管理器中显示", "Show in File Explorer"), "", () => ShowInExplorer(path));
+        if (!e.Partial)
+        {
             m.Items.Add(new MenuFlyoutSeparator());
-            if (e.OverridesBuiltin) Add("lib_menu_restore", Loc.T("恢复内置版本", "Restore Built-in Version"), "", () => _ = Delete(e));
-            else Add("lib_menu_delete", Loc.T("删除", "Delete"), "", () => _ = Delete(e));
+            if (e.Deleted || e.OverridesBuiltin) Add("lib_menu_restore", Loc.T("恢复内置版本", "Restore Built-in Version"), "", () => _ = Restore(e));
+            if (!e.Deleted) Add("lib_menu_delete", Loc.T("删除", "Delete"), "", () => _ = Delete(e));
         }
         return m;
     }
@@ -460,6 +486,7 @@ internal sealed class LibraryWindow : Window
         if (editor is not { } ed || titleText is null || statusText is null || saveButton is null) return;
         titleText.Text = ed.Doc?.Name ?? ed.Entry.Name;
         statusText.Text = ed.SaveError ?? (ed.Dirty ? Loc.T("未保存", "Unsaved")
+            : ed.Entry.Deleted ? Loc.T("已删除的内置模板", "Deleted built-in template")
             : ed.ReadOnly ? Loc.T("内置模板", "Built-in template")
             : ed.Entry.OverridesBuiltin ? Loc.T("已自定义的内置模板", "Customized built-in template") : (ed.Entry.Path ?? ""));
         saveButton.IsEnabled = ed.CanSave;
@@ -971,18 +998,45 @@ internal sealed class LibraryWindow : Window
 
     private Task NewTemplate() => Guarded(model.NewTemplate);
 
+    /// 删除模板（docs/decisions.md D34）：用户模板移到回收站；内置模板（含修改过的）删除后可以恢复。
     private async Task Delete(TemplateEntry e)
     {
+        bool builtin = e.Builtin || e.OverridesBuiltin;
         var r = await Dialog(new ContentDialog
         {
-            Title = e.OverridesBuiltin ? Loc.T($"恢复「{e.Name}」为内置版本？", $"Restore “{e.Name}” to the built-in version?") : Loc.T($"删除模板「{e.Name}」？", $"Delete template “{e.Name}”?"),
-            Content = Loc.T("文件会被移到回收站。", "The file will be moved to the Recycle Bin."),
-            PrimaryButtonText = e.OverridesBuiltin ? Loc.T("恢复内置", "Restore") : Loc.T("删除", "Delete"),
+            Title = builtin ? Loc.T($"删除内置模板「{e.Name}」？", $"Delete the built-in template “{e.Name}”?") : Loc.T($"删除模板「{e.Name}」？", $"Delete template “{e.Name}”?"),
+            Content = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = !builtin ? Loc.T("文件会被移到回收站。", "The file will be moved to the Recycle Bin.")
+                    : e.OverridesBuiltin
+                        ? Loc.T("你的修改会移到回收站。之后可以在“已删除”中恢复内置版本，它的名称和别名在此期间可以给你自己的模板使用。", "Your changes go to the Recycle Bin. You can restore the built-in version from “Deleted” later; meanwhile its name and aliases are free for your own templates.")
+                        : Loc.T("之后可以在“已删除”中恢复。它的名称和别名在此期间可以给你自己的模板使用。", "You can restore it from “Deleted” later. Meanwhile its name and aliases are free for your own templates."),
+            },
+            PrimaryButtonText = Loc.T("删除", "Delete"),
             CloseButtonText = Loc.T("取消", "Cancel"),
             DefaultButton = ContentDialogButton.Close,
         });
         if (r != ContentDialogResult.Primary) return;
-        if (!model.Delete(e)) await Alert(Loc.T("无法移到回收站", "Couldn't move the file to the Recycle Bin"), e.Path);
+        if (model.Delete(e) is { } err) await Alert(Loc.T("删除失败", "Couldn't delete the template"), err);
+    }
+
+    /// 恢复内置模板：撤销删除，或丢弃修改（修改版本移到回收站，先确认）。
+    private async Task Restore(TemplateEntry e)
+    {
+        if (e.OverridesBuiltin)
+        {
+            var r = await Dialog(new ContentDialog
+            {
+                Title = Loc.T($"恢复「{e.Name}」为内置版本？", $"Restore “{e.Name}” to the built-in version?"),
+                Content = Loc.T("你的修改会移到回收站。", "Your changes will be moved to the Recycle Bin."),
+                PrimaryButtonText = Loc.T("恢复内置", "Restore"),
+                CloseButtonText = Loc.T("取消", "Cancel"),
+                DefaultButton = ContentDialogButton.Close,
+            });
+            if (r != ContentDialogResult.Primary) return;
+        }
+        if (model.Restore(e) is { } err) await Alert(Loc.T("恢复失败", "Couldn't restore the template"), err);
     }
 
     private T Init<T>(T picker)

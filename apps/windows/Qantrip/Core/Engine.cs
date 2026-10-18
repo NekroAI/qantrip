@@ -59,6 +59,18 @@ public sealed class Engine : IDisposable
         return (json is null ? null : JsonSerializer.Deserialize<CommandResult>(json, Json)) ?? new CommandResult { Ok = false, Error = "qt_run_command failed" };
     }
 
+    /// 删除模板（模板库的"删除"，与 /rm 相同，D34）。Outcome.TrashPath 由调用方移到回收站。
+    public CommandResult DeleteTemplate(string name) => Outcome(Native.qt_delete_template(handle, U8(name)), "qt_delete_template");
+
+    /// 恢复内置模板（撤销删除或修改，与 /restore 相同）。
+    public CommandResult RestoreTemplate(string name) => Outcome(Native.qt_restore_template(handle, U8(name)), "qt_restore_template");
+
+    private static CommandResult Outcome(IntPtr p, string fn)
+    {
+        var json = Take(p);
+        return (json is null ? null : JsonSerializer.Deserialize<CommandResult>(json, Json)) ?? new CommandResult { Ok = false, Error = fn + " failed" };
+    }
+
     public List<TemplateInfo> Templates()
     {
         var json = Take(Native.qt_templates(handle));
@@ -148,6 +160,8 @@ public sealed class Engine : IDisposable
         [DllImport(Dll)] public static extern void qt_clear_usage(IntPtr e);
         [DllImport(Dll)] public static extern void qt_set_clipboard(IntPtr e, byte[]? text);
         [DllImport(Dll)] public static extern IntPtr qt_run_command(IntPtr e, byte[]? input);
+        [DllImport(Dll)] public static extern IntPtr qt_delete_template(IntPtr e, byte[]? name);
+        [DllImport(Dll)] public static extern IntPtr qt_restore_template(IntPtr e, byte[]? name);
         [DllImport(Dll)] public static extern IntPtr qt_problems(IntPtr e);
         [DllImport(Dll)] public static extern IntPtr qt_entries(IntPtr e);
         [DllImport(Dll)] public static extern IntPtr qt_builtin_source(IntPtr e, byte[]? name);

@@ -177,13 +177,30 @@ pub extern "C" fn qt_set_clipboard(e: *const Engine, text: *const c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn qt_run_command(e: *const Engine, input: *const c_char) -> *mut c_char {
     let Some(e) = engine(e) else { return std::ptr::null_mut() };
-    guard(std::ptr::null_mut(), || {
-        let v = match e.run_command(str_or_empty(input)) {
-            Ok(o) => serde_json::json!({ "ok": true, "outcome": o }),
-            Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
-        };
-        out(Some(v.to_string()))
-    })
+    guard(std::ptr::null_mut(), || outcome_json(e.run_command(str_or_empty(input))))
+}
+
+/// 删除模板（模板库的"删除"，与 `/rm` 相同，docs/decisions.md D34）。返回值同 `qt_run_command`；
+/// `trash_path` 由外壳移到回收站。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_delete_template(e: *const Engine, name: *const c_char) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || outcome_json(e.delete_template(str_or_empty(name))))
+}
+
+/// 恢复内置模板（撤销删除或修改，与 `/restore` 相同）。返回值同 `qt_run_command`。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_restore_template(e: *const Engine, name: *const c_char) -> *mut c_char {
+    let Some(e) = engine(e) else { return std::ptr::null_mut() };
+    guard(std::ptr::null_mut(), || outcome_json(e.restore_template(str_or_empty(name))))
+}
+
+fn outcome_json(r: Result<qantrip_core::command::CommandOutcome, qantrip_core::DocError>) -> *mut c_char {
+    let v = match r {
+        Ok(o) => serde_json::json!({ "ok": true, "outcome": o }),
+        Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
+    };
+    out(Some(v.to_string()))
 }
 
 // MARK: - 模板库与编辑器（docs/decisions.md D19）
@@ -291,7 +308,7 @@ pub extern "C" fn qt_entries(e: *const Engine) -> *mut c_char {
                 serde_json::json!({
                     "name": t.name, "aliases": t.aliases, "description": t.description, "category": t.category,
                     "builtin": t.builtin, "overrides_builtin": t.overrides_builtin, "partial": t.partial,
-                    "path": t.path, "source": t.source,
+                    "path": t.path, "source": t.source, "deleted": t.deleted,
                 })
             })
             .collect();
@@ -420,6 +437,34 @@ mod tests {
 
     fn parse(p: *mut c_char) -> serde_json::Value {
         serde_json::from_str(&take(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn delete_restore_builtin() {
+        let dir = std::env::temp_dir().join(format!("qantrip-ffi-del-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = s(dir.to_str().unwrap());
+        let e = qt_engine_new(d.as_ptr(), std::ptr::null());
+        qt_set_locale(e, s("en").as_ptr(), s("en").as_ptr());
+        // 删除内置模板：写入标记，不需要移到回收站；条目以 deleted 列出
+        let r = parse(qt_delete_template(e, s("review").as_ptr()));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(r["outcome"]["trash_path"].is_null());
+        let entries = parse(qt_entries(e));
+        let review = entries.as_array().unwrap().iter().find(|t| t["name"] == "review").unwrap().clone();
+        assert_eq!(review["deleted"], true);
+        assert_eq!(review["builtin"], true);
+        assert!(review["path"].as_str().unwrap().ends_with(".deleted.md"));
+        // 恢复
+        let r = parse(qt_restore_template(e, s("review").as_ptr()));
+        assert_eq!(r["ok"], true, "{r}");
+        let entries = parse(qt_entries(e));
+        let review = entries.as_array().unwrap().iter().find(|t| t["name"] == "review").unwrap().clone();
+        assert_eq!(review["deleted"], false);
+        assert!(parse(qt_restore_template(e, s("review").as_ptr()))["ok"] == false);
+        qt_engine_free(e);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -106,7 +106,7 @@ public sealed class CommandOutcome
     public string Message { get; set; } = "";
     /// 需要在模板库中打开的模板
     public string? OpenEditor { get; set; }
-    /// 需要移到回收站的文件（/rm）
+    /// 需要移到回收站的文件（/rm、/restore、删除与恢复）
     public string? TrashPath { get; set; }
     /// 应用操作：sync、settings、library、lang:auto|zh|en
     public string? Action { get; set; }
@@ -174,6 +174,8 @@ public sealed class TemplateEntry
     public bool Partial { get; set; }
     public string? Path { get; set; }
     public string Source { get; set; } = "";
+    /// 已删除的内置模板（D34）：Builtin 为 true，Path 是删除标记文件
+    public bool Deleted { get; set; }
 }
 
 public sealed class ChoiceDoc
