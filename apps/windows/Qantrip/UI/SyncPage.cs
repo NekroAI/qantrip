@@ -18,7 +18,8 @@ namespace Qantrip.UI;
 internal sealed class SyncPage
 {
     private readonly FrameworkElement host;
-    private readonly StackPanel page = new() { Spacing = 4, MaxWidth = 860, Padding = new Thickness(28, 8, 28, 28) };
+    /// 与其他设置页相同的居中内容列
+    private readonly PageColumn page = SettingsView.Column();
     /// 当前页面中的输入框（按 id）；重建时新建输入框并还原文字与焦点（不移动旧元素：WinUI 中改换父元素容易失败）
     private Dictionary<string, TextBox> inputs = new();
     private readonly Dictionary<string, string> texts = new();
@@ -111,7 +112,8 @@ internal sealed class SyncPage
 
     private TextBox Input(string id, string placeholder, bool mono = false, double width = double.NaN, bool multiline = false)
     {
-        var t = new TextBox { PlaceholderText = placeholder, IsSpellCheckEnabled = false, Width = width, Text = texts.GetValueOrDefault(id, "") };
+        // 文字一律左对齐（校验码、确认码输入框也是）
+        var t = new TextBox { PlaceholderText = placeholder, IsSpellCheckEnabled = false, Width = width, Text = texts.GetValueOrDefault(id, ""), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         if (mono) t.FontFamily = Theme.Mono;
         if (multiline) { t.AcceptsReturn = true; t.TextWrapping = TextWrapping.Wrap; t.Height = 96; }
         AutomationProperties.SetAutomationId(t, "sync_" + id);
@@ -123,7 +125,7 @@ internal sealed class SyncPage
 
     private static Button Btn(string id, string text, Action click, bool accent = false, bool enabled = true)
     {
-        var b = new Button { Content = text, IsEnabled = enabled };
+        var b = new Button { Content = text, IsEnabled = enabled, VerticalAlignment = VerticalAlignment.Center };
         if (accent) b.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         AutomationProperties.SetAutomationId(b, "sync_" + id);
         b.Click += (_, _) => click();
@@ -153,14 +155,33 @@ internal sealed class SyncPage
     private static StackPanel Row(params UIElement[] children)
     {
         var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        foreach (var c in children) sp.Children.Add(c);
+        foreach (var c in children)
+        {
+            if (c is FrameworkElement f && f.ReadLocalValue(FrameworkElement.VerticalAlignmentProperty) == DependencyProperty.UnsetValue) f.VerticalAlignment = VerticalAlignment.Center;
+            sp.Children.Add(c);
+        }
         return sp;
+    }
+
+    /// 图标 + 可换行的文字（横向 StackPanel 会给文字无限宽度，长文字不换行而撑出卡片）
+    private static Grid IconRow(UIElement icon, UIElement content)
+    {
+        var g = new Grid { ColumnSpacing = 10 };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        if (icon is FrameworkElement fi) fi.VerticalAlignment = VerticalAlignment.Center;
+        g.Children.Add(icon);
+        Grid.SetColumn((FrameworkElement)content, 1);
+        g.Children.Add(content);
+        return g;
     }
 
     /// 左右两端对齐的一行
     private static Grid Spread(UIElement left, UIElement right)
     {
-        var g = new Grid();
+        var g = new Grid { ColumnSpacing = 16 };
+        if (right is FrameworkElement fr) fr.VerticalAlignment = VerticalAlignment.Center;
+        if (left is FrameworkElement fl) fl.VerticalAlignment = VerticalAlignment.Center;
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         g.Children.Add(left);
@@ -171,7 +192,7 @@ internal sealed class SyncPage
 
     private static TextBlock Big(string code, string id)
     {
-        var t = new TextBlock { Text = code, FontFamily = Theme.Mono, FontSize = 32, FontWeight = FontWeights.SemiBold, CharacterSpacing = 200, IsTextSelectionEnabled = true };
+        var t = new TextBlock { Text = code, FontFamily = Theme.Mono, FontSize = 32, FontWeight = FontWeights.SemiBold, CharacterSpacing = 200, IsTextSelectionEnabled = true, HorizontalAlignment = HorizontalAlignment.Left, TextAlignment = TextAlignment.Left };
         AutomationProperties.SetAutomationId(t, "sync_" + id);
         return t;
     }
@@ -180,7 +201,7 @@ internal sealed class SyncPage
 
     private void Build()
     {
-        page.Children.Add(new TextBlock { Text = Loc.T("同步", "Sync"), FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 4) });
+        page.Children.Add(SettingsView.Heading(Loc.T("同步", "Sync"), bottom: 4));
         page.Children.Add(Text(Loc.T("端到端加密：密钥只在你的设备上，服务器只保存无法解密的密文。", "End-to-end encrypted: keys stay on your devices, and the server only stores ciphertext it can't decrypt."), secondary: true, size: 13));
 
         if (sync.Working is { } working)
@@ -254,7 +275,7 @@ internal sealed class SyncPage
         else if (sync.RemoteVault == true)
         {
             page.Children.Add(Box(
-                Text(Loc.T("把这台电脑加入保险库", "Add this PC to your vault"), bold: true),
+                Text(Loc.T("把这台设备加入保险库", "Add this device to your vault"), bold: true),
                 Text(Loc.T("在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。", "On a device that already syncs, open Qantrip Settings › Sync and enter the code shown here."), secondary: true, size: 13),
                 Row(Btn("join", Loc.T("开始加入", "Start"), sync.StartJoin, accent: true, enabled: !Busy),
                     Btn("userecovery", Loc.T("改用恢复短语", "Use recovery phrase"), () => { recoverMode = true; Render(true); }))));
@@ -277,14 +298,14 @@ internal sealed class SyncPage
             case "enter_code_on_other_device":
                 items.Add(Text(Loc.T("在另一台设备上输入这个校验码", "Enter this code on your other device"), bold: true));
                 items.Add(Big(join.Sas ?? "", "sas"));
-                items.Add(Text(Loc.T("这台电脑上不需要任何确认。", "Nothing to confirm on this PC."), secondary: true, size: 13));
+                items.Add(Text(Loc.T("这台设备上不需要任何确认。", "Nothing to confirm on this device."), secondary: true, size: 13));
                 break;
             case "enter_code_here":
                 var code = Input("confirm", Loc.T("确认码", "Code"), mono: true, width: 220);
                 code.FontSize = 18;
                 items.Add(Text(Loc.T("输入另一台设备上显示的确认码", "Enter the code shown on your other device"), bold: true));
                 items.Add(Row(code, Btn("confirmjoin", Loc.T("加入", "Join"), () => { if (code.Text.Trim().Length >= 4) sync.ConfirmJoin(code.Text); }, accent: true, enabled: !Busy)));
-                items.Add(Text(Loc.T("两边互相输入校验码，确保这台电脑加入的是你自己的保险库。", "Entering a code on each side makes sure this PC joins your own vault."), secondary: true, size: 12));
+                items.Add(Text(Loc.T("两边互相输入校验码，确保这台设备加入的是你自己的保险库。", "Entering a code on each side makes sure this device joins your own vault."), secondary: true, size: 12));
                 break;
             case "completed":
                 items.Add(Text(Loc.T("已加入", "Joined"), bold: true));
@@ -351,7 +372,7 @@ internal sealed class SyncPage
         {
             page.Children.Add(SettingsView.Section(Loc.T("最后一步", "Last step")));
             page.Children.Add(Box(
-                Text(Loc.T("在新的设备上输入这个确认码", "Enter this code on the new device")),
+                Text(Loc.T("在新设备上输入这个确认码", "Enter this code on the new device"), bold: true),
                 Big(confirm, "confirmcode"),
                 Row(Btn("done_" + id, Loc.T("完成", "Done"), () => sync.DismissConfirmCode(id)))));
         }
@@ -389,7 +410,7 @@ internal sealed class SyncPage
                 var left = new StackPanel { Spacing = 2 };
                 left.Children.Add(Text(Loc.T("已退出登录的设备", "Signed-out device")));
                 left.Children.Add(Text(Loc.T("仍在保险库中。建议移除并轮换密钥。", "Still in the vault. Removing it rotates the keys."), secondary: true, size: 12));
-                devices.Add(Spread(Row(Icon(""), left),
+                devices.Add(Spread(IconRow(Icon(""), left),
                     Btn("revoke_" + Short(d.DeviceId), Loc.T("从保险库移除", "Remove from vault"), () => _ = ConfirmRevoke(device), enabled: !Busy)));
             }
             devices.Add(Text(Loc.T($"这个账号最多同时登录 {account.MaxDevices} 台设备。要添加设备，在新设备上登录同一个账号并按提示操作。",
@@ -400,12 +421,12 @@ internal sealed class SyncPage
         AutomationProperties.SetAutomationId(devicesBox, "sync_devices");
         page.Children.Add(devicesBox);
 
-        page.Children.Add(SettingsView.Section(Loc.T("密钥与本机", "Keys and this PC")));
+        page.Children.Add(SettingsView.Section(Loc.T("密钥与本机", "Keys and this device")));
         page.Children.Add(Box(
             Spread(Text(Loc.T("轮换密钥后，之前移除的设备即使保留了旧密钥，也无法读取之后的内容。", "After rotating keys, previously removed devices can't read anything new even if they kept old keys."), secondary: true, size: 13),
                 Btn("rotate", Loc.T("轮换密钥", "Rotate keys"), sync.RotateKeys, enabled: !Busy)),
-            Spread(Text(Loc.T("重置只删除这台电脑的同步身份，不影响模板文件，也不影响其他设备。", "Resetting only removes this PC's sync identity. Your template files and other devices are not affected."), secondary: true, size: 13),
-                Btn("reset", Loc.T("重置这台设备的同步", "Reset sync on this PC"), () => _ = ConfirmReset(), enabled: !Busy))));
+            Spread(Text(Loc.T("重置只删除这台设备的同步身份，不影响模板文件，也不影响其他设备。", "Resetting only removes this device's sync identity. Your template files and other devices are not affected."), secondary: true, size: 13),
+                Btn("reset", Loc.T("重置这台设备的同步", "Reset sync on this device"), () => _ = ConfirmReset(), enabled: !Busy))));
     }
 
     // MARK: 用量与账号设备
@@ -470,8 +491,8 @@ internal sealed class SyncPage
         };
     }
 
-    private static Windows.UI.Color Accent =>
-        Application.Current.Resources.TryGetValue("SystemAccentColor", out var c) && c is Windows.UI.Color color ? color : Microsoft.UI.Colors.SteelBlue;
+    /// 品牌色（与面板相同，不跟随系统强调色）
+    private Windows.UI.Color Accent => new Theme(host.ActualTheme == ElementTheme.Dark).Accent;
 
     /// 账号下的一台设备：名称、标签、系统 · Qantrip 版本 · 上次在线；右侧"解除"（本机为"退出登录"）
     private UIElement AccountDeviceRow(AccountDevice d)
@@ -490,7 +511,7 @@ internal sealed class SyncPage
         left.Children.Add(Text(string.Join(" · ", parts), secondary: true, size: 12));
         var icon = Icon(d.Platform.StartsWith("windows", StringComparison.OrdinalIgnoreCase) ? "" : "");
         var device = d;
-        var row = Spread(Row(icon, left), Btn("release_" + d.GrantId, d.IsSelf ? Loc.T("退出登录", "Sign out") : Loc.T("解除", "Release"), () => _ = ConfirmRelease(device), enabled: !Busy));
+        var row = Spread(IconRow(icon, left), Btn("release_" + d.GrantId, d.IsSelf ? Loc.T("退出登录", "Sign out") : Loc.T("解除", "Release"), () => _ = ConfirmRelease(device), enabled: !Busy));
         AutomationProperties.SetAutomationId(row, "sync_device_" + d.GrantId);
         return row;
     }
@@ -500,7 +521,7 @@ internal sealed class SyncPage
     {
         page.Children.Add(SettingsView.Section(Loc.T("设备数量", "Devices")));
         var items = new List<UIElement>();
-        var head = Row(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 16, Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange) },
+        var head = IconRow(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 16, Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange) },
             Text(Loc.T($"这个账号最多同时在 {max} 台设备上同步", $"This account can sync on up to {max} devices at a time"), bold: true));
         AutomationProperties.SetAutomationId(head, "sync_devicelimit");
         items.Add(head);
@@ -549,7 +570,7 @@ internal sealed class SyncPage
         var body = new StackPanel { Spacing = 10 };
         body.Children.Add(Spread(Text(Loc.T("服务器", "Server")), server));
         if (sync.Status?.DeviceId is { } id)
-            body.Children.Add(Spread(Text(Loc.T("本机标识", "This PC's ID")), Text(id, secondary: true, size: 12, mono: true)));
+            body.Children.Add(Spread(Text(Loc.T("本机标识", "This device's ID")), Text(id, secondary: true, size: 12, mono: true)));
         body.Children.Add(Text(Loc.T("可以把服务端部署到自己的 Cloudflare 账号，在这里填写地址。登录后不能修改。", "You can deploy the server to your own Cloudflare account and enter its address here. Locked while signed in."), secondary: true, size: 12));
         var exp = new Expander
         {
@@ -587,7 +608,7 @@ internal sealed class SyncPage
         {
             Title = d.IsSelf ? Loc.T("退出这台设备的登录？", "Sign out on this device?") : Loc.T("解除这台设备？", "Release this device?"),
             Content = d.IsSelf
-                ? Loc.T("这台设备会退出登录，不再上传或下载。本机的模板文件不受影响。", "This device will be signed out and stop uploading or downloading. Your template files stay on this PC.")
+                ? Loc.T("这台设备会退出登录，不再上传或下载。本机的模板文件不受影响。", "This device will be signed out and stop uploading or downloading. Your template files stay on this device.")
                 : limit
                     ? Loc.T("它会退出登录，无法再上传或下载。", "It will be signed out and can no longer upload or download.")
                     : Loc.T("它会退出登录，无法再上传或下载。如果它还在保险库中，之后可以在这里把它移除并轮换密钥。",
@@ -634,7 +655,7 @@ internal sealed class SyncPage
     {
         var r = await Dialog(new ContentDialog
         {
-            Title = Loc.T("重置这台设备的同步？", "Reset sync on this PC?"),
+            Title = Loc.T("重置这台设备的同步？", "Reset sync on this device?"),
             Content = Loc.T("之后需要重新加入保险库。", "You'll need to join the vault again afterwards."),
             PrimaryButtonText = Loc.T("重置", "Reset"),
             CloseButtonText = Loc.T("取消", "Cancel"),
@@ -652,7 +673,11 @@ internal sealed class SyncPage
         for (int r = 0; r < (words.Length + 3) / 4; r++) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         for (int i = 0; i < words.Length; i++)
         {
-            var cell = Row(Text($"{i + 1}", secondary: true, size: 11), Text(words[i], mono: true));
+            // 序号固定宽度、右对齐，各列的词左边缘对齐
+            var num = Text($"{i + 1}", secondary: true, size: 11);
+            num.Width = 18;
+            num.TextAlignment = TextAlignment.Right;
+            var cell = Row(num, Text(words[i], mono: true));
             cell.Spacing = 6;
             Grid.SetRow(cell, i / 4);
             Grid.SetColumn(cell, i % 4);

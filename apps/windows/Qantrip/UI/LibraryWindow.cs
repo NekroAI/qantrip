@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
@@ -149,6 +150,8 @@ internal sealed class LibraryWindow : Window
         titleLabel = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         search = new TextBox { Text = model.Search };
         list = new ListView();
+        listSignature = null;
+        rows.Clear();
         detail = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -183,7 +186,7 @@ internal sealed class LibraryWindow : Window
         search.PlaceholderText = Loc.T("搜索模板", "Search templates");
         AutomationProperties.SetAutomationId(search, "lib_search");
         AutomationProperties.SetName(search, search.PlaceholderText);
-        search.TextChanged += (_, _) => { model.Search = search.Text; RebuildList(); };
+        search.TextChanged += (_, _) => { model.Search = search.Text; RefreshList(); };
         search.Margin = new Thickness(0, 0, 0, 8);
         Grid.SetRow(search, 1);
         side.Children.Add(search);
@@ -258,7 +261,7 @@ internal sealed class LibraryWindow : Window
 
     private void Rebuild()
     {
-        RebuildList();
+        RefreshList();
         var page = SettingsView.PageOf(model.Selection);
         tools.Visibility = page is null ? Visibility.Visible : Visibility.Collapsed;
         // 窗口标题随所在部分变化（任务栏与 Alt+Tab 中可区分）
@@ -299,13 +302,53 @@ internal sealed class LibraryWindow : Window
 
     // MARK: 侧栏
 
-    private void RebuildList()
+    /// 当前列表内容的签名（显示的条目与其可见字段、界面语言）；不变时不重建列表
+    private string? listSignature;
+    /// 列表中的模板行（按 Key），选中项变化时就地更新
+    private readonly Dictionary<string, ListViewItem> rows = new();
+
+    private static string ListSignature(List<TemplateEntry> items)
     {
+        var b = new StringBuilder(Loc.En ? "en" : "zh");
+        foreach (var e in items)
+            b.Append('\u001e').Append(LibraryModel.Key(e)).Append('\u001f').Append(string.Join(",", e.Aliases)).Append('\u001f').Append(e.Description)
+                .Append('\u001f').Append(e.Category).Append('\u001f').Append(e.Builtin).Append(e.Partial).Append(e.Deleted).Append(e.OverridesBuiltin);
+        return b.ToString();
+    }
+
+    /// 刷新侧栏：模板集合（或筛选结果）没有变化时保留现有的行与滚动位置，只就地更新选中项；
+    /// 变化时（重新加载、搜索）重建列表，并保持滚动位置与选中项。
+    private void RefreshList()
+    {
+        var items = model.Filtered.ToList();
+        var sig = ListSignature(items);
+        if (sig != listSignature)
+        {
+            listSignature = sig;
+            RebuildList(items);
+        }
+        SyncListSelection();
+    }
+
+    /// 按 model.Selection 就地更新列表的选中项（不触发切换）
+    private void SyncListSelection()
+    {
+        var target = model.Selection is { } key && rows.TryGetValue(key, out var item) ? item : null;
+        if (ReferenceEquals(list.SelectedItem, target)) return;
+        suppressSelection = true;
+        try { list.SelectedItem = target; }
+        finally { suppressSelection = false; }
+    }
+
+    private void RebuildList(List<TemplateEntry> items)
+    {
+        var scroller = FindScrollViewer(list);
+        double offset = scroller?.VerticalOffset ?? 0;
         suppressSelection = true;
         try
         {
             list.Items.Clear();
-            var items = model.Filtered.ToList();
+            rows.Clear();
             var groups = new (string title, List<TemplateEntry> items, bool byCategory)[]
             {
                 (Loc.T("我的模板", "My templates"), items.Where(e => !e.Builtin && !e.Partial).ToList(), false),
@@ -313,7 +356,6 @@ internal sealed class LibraryWindow : Window
                 (Loc.T("公共片段", "Shared snippets"), items.Where(e => e.Partial).ToList(), false),
                 (Loc.T("已删除", "Deleted"), items.Where(e => e.Deleted).ToList(), false),
             };
-            ListViewItem? selected = null;
             foreach (var (title, entries, byCategory) in groups)
             {
                 if (entries.Count == 0) continue;
@@ -328,12 +370,31 @@ internal sealed class LibraryWindow : Window
                     }
                     var item = Row(e);
                     list.Items.Add(item);
-                    if (LibraryModel.Key(e) == model.Selection) selected = item;
+                    rows[LibraryModel.Key(e)] = item;
                 }
             }
-            list.SelectedItem = selected;
+            list.SelectedItem = null;
         }
         finally { suppressSelection = false; }
+        // 保持滚动位置（布局完成后再设置一次：虚拟化的容器要在布局后才生成）
+        if (offset > 0 && scroller != null)
+        {
+            list.UpdateLayout();
+            scroller.ChangeView(null, offset, null, true);
+            DispatcherQueue.TryEnqueue(() => scroller.ChangeView(null, offset, null, true));
+        }
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is ScrollViewer sv) return sv;
+            if (FindScrollViewer(c) is { } found) return found;
+        }
+        return null;
     }
 
     private static ListViewItem Header(string text, bool top) => new()
@@ -365,16 +426,23 @@ internal sealed class LibraryWindow : Window
         sp.Children.Add(top);
         if (!string.IsNullOrEmpty(e.Description))
             sp.Children.Add(new TextBlock { Text = e.Description, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
-        var item = new ListViewItem { Content = sp, Tag = e };
+        var key = LibraryModel.Key(e);
+        var item = new ListViewItem { Content = sp, Tag = key };
         AutomationProperties.SetAutomationId(item, "lib_item_" + (e.Deleted ? "deleted_" : "") + e.Name);
         AutomationProperties.SetName(item, e.Name);
-        item.ContextFlyout = Menu(e);
+        // 行跨重新加载保留：菜单在打开时按 Key 取最新的条目
+        var menu = new MenuFlyout();
+        menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+            if (model.Entries.FirstOrDefault(x => LibraryModel.Key(x) == key) is { } current) FillMenu(menu, current);
+        };
+        item.ContextFlyout = menu;
         return item;
     }
 
-    private MenuFlyout Menu(TemplateEntry e)
+    private void FillMenu(MenuFlyout m, TemplateEntry e)
     {
-        var m = new MenuFlyout();
         void Add(string text, Action click)
         {
             var i = new MenuFlyoutItem { Text = text };
@@ -391,7 +459,6 @@ internal sealed class LibraryWindow : Window
             if (e.Deleted || e.OverridesBuiltin) Add(Loc.T("恢复内置版本", "Restore Built-in Version"), () => _ = Restore(e));
             if (!e.Deleted) Add(Loc.T("删除", "Delete"), () => _ = Delete(e));
         }
-        return m;
     }
 
     private static void ShowInExplorer(string path)
@@ -403,12 +470,12 @@ internal sealed class LibraryWindow : Window
     private async void OnListSelection(object sender, SelectionChangedEventArgs e)
     {
         if (suppressSelection) return;
-        var name = (list.SelectedItem as ListViewItem)?.Tag is TemplateEntry t ? LibraryModel.Key(t) : null;
+        var name = (list.SelectedItem as ListViewItem)?.Tag as string;
         if (name is null || name == model.Selection) return;
         if (editor is { Dirty: true })
         {
             // 先恢复原选中项，确认放弃修改后再切换
-            RebuildList();
+            SyncListSelection();
             if (!await ConfirmDiscard()) return;
         }
         model.Select(name);
@@ -507,7 +574,8 @@ internal sealed class LibraryWindow : Window
         Grid.SetRow(split, 1);
         editHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
         split.Children.Add(editHost);
-        var tryScroll = new ScrollViewer { Content = BuildTryPanel(), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new Thickness(14, 0, 14, 14) };
+        // 内边距放在内容上：ScrollViewer.Padding 不会收窄内容的可用宽度，右侧会被裁掉
+        var tryScroll = new ScrollViewer { Content = BuildTryPanel(), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         var tryBorder = new Border { Child = tryScroll, BorderThickness = new Thickness(1, 0, 0, 0), BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush") };
         Grid.SetColumn(tryBorder, 1);
         split.Children.Add(tryBorder);
@@ -641,10 +709,11 @@ internal sealed class LibraryWindow : Window
     {
         var t = new TextBox
         {
-            Text = text, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
+            Text = text, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
             IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, VerticalAlignment = VerticalAlignment.Stretch,
         };
-        ScrollViewer.SetHorizontalScrollBarVisibility(t, ScrollBarVisibility.Auto);
+        // 长行自动换行（不出现横向滚动）
+        ScrollViewer.SetHorizontalScrollBarVisibility(t, ScrollBarVisibility.Disabled);
         ScrollViewer.SetVerticalScrollBarVisibility(t, ScrollBarVisibility.Auto);
         AutomationProperties.SetAutomationId(t, id);
         return t;
@@ -1018,7 +1087,7 @@ internal sealed class LibraryWindow : Window
 
     private FrameworkElement BuildTryPanel()
     {
-        var sp = new StackPanel { Spacing = 10, Padding = new Thickness(0, 12, 0, 0) };
+        var sp = new StackPanel { Spacing = 10, Padding = new Thickness(16, 12, 16, 16) };
         sp.Children.Add(new TextBlock { Text = Loc.T("试用", "Try it"), FontWeight = FontWeights.SemiBold, FontSize = 15 });
         var ed = editor;
         var input = new TextBox { FontFamily = Theme.Mono, IsSpellCheckEnabled = false, Text = ed?.TryInput ?? "" };
@@ -1069,10 +1138,18 @@ internal sealed class LibraryWindow : Window
             tryResults.Children.Add(new TextBlock { Text = c, FontFamily = Theme.Mono, FontSize = 11, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, Foreground = SettingsView.Res("TextFillColorTertiaryBrush") });
         if (a.Preview is { } pv)
         {
-            tryResults.Children.Add(new TextBlock { Text = Loc.T($"预览 · {pv.Chars} 字 · {pv.Lines} 行", $"Preview · {pv.Chars} chars · {pv.Lines} lines"), FontSize = 12, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
-            var text = new TextBlock { Text = pv.Text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 13, LineHeight = 20 };
+            var preview = new StackPanel { Spacing = 6 };
+            preview.Children.Add(new TextBlock { Text = Loc.T($"预览 · {pv.Chars} 字 · {pv.Lines} 行", $"Preview · {pv.Chars} chars · {pv.Lines} lines"), FontSize = 12, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
+            var text = new TextBlock { Text = pv.Text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 13, LineHeight = 20, HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetAutomationId(text, "lib_preview");
-            tryResults.Children.Add(new Border { Child = text, Padding = new Thickness(10), CornerRadius = new CornerRadius(8), Background = SettingsView.Res("CardBackgroundFillColorDefaultBrush") });
+            // 卡片：文字在内边距内换行，不会越过边框
+            preview.Children.Add(new Border
+            {
+                Child = text, Padding = new Thickness(14, 12, 14, 12), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = SettingsView.Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush"),
+            });
+            tryResults.Children.Add(preview);
         }
     }
 

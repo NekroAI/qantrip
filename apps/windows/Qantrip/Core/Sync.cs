@@ -149,7 +149,7 @@ public sealed class SyncException : Exception
             "network" => Loc.T("无法连接同步服务器，请检查网络", "Can't reach the sync server. Check your connection."),
             "server" => zh ? Message : $"Server error {Status} ({Code})",
             "no_vault" => Loc.T("还没有保险库", "There is no vault yet"),
-            "not_enrolled" => Loc.T("这台设备还没有加入保险库", "This PC hasn't joined the vault"),
+            "not_enrolled" => Loc.T("这台设备还没有加入保险库", "This device hasn't joined the vault"),
             "security" => zh ? Message : "Security check failed. Sync has been paused for safety.",
             "sas_mismatch" => Loc.T($"校验码不正确，还可以再试 {Remaining} 次", $"Wrong code. {Remaining} attempts left."),
             "cooldown" => Loc.T($"错误次数过多，请 {(Seconds + 59) / 60} 分钟后再试", $"Too many attempts. Try again in {(Seconds + 59) / 60} min."),
