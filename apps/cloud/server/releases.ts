@@ -36,7 +36,7 @@ export const downloadFile = async (env: Env, name: string): Promise<Response> =>
 }
 
 // 客户端的新版本提示：代为读取 GitHub 最新正式版本并缓存，国内网络访问 api.github.com 经常失败。
-// 缓存 1 小时；GitHub 不可用时退回最近一次成功的结果（保留 7 天）。
+// 缓存 10 分钟（新版本发布后很快可见）；GitHub 不可用时退回最近一次成功的结果（保留 7 天）。
 export interface PublicRelease {
   version: string
   tag: string
@@ -61,7 +61,7 @@ export const publicLatestRelease = async (ctx: { waitUntil(p: Promise<unknown>):
     const j = (await res.json()) as { tag_name?: string; html_url?: string; published_at?: string; draft?: boolean; prerelease?: boolean }
     if (!j.tag_name || !j.html_url || j.draft || j.prerelease) throw new Error('no release')
     const body: PublicRelease = { version: j.tag_name.replace(/^v/, ''), tag: j.tag_name, url: j.html_url, published_at: j.published_at ?? '' }
-    ctx.waitUntil(Promise.all([cache.put(FRESH_KEY, cached(body, 3600)), cache.put(STALE_KEY, cached(body, 7 * 86400))]))
+    ctx.waitUntil(Promise.all([cache.put(FRESH_KEY, cached(body, 600)), cache.put(STALE_KEY, cached(body, 7 * 86400))]))
     return body
   } catch {
     const stale = await cache.match(STALE_KEY)
