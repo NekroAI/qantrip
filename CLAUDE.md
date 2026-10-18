@@ -23,7 +23,7 @@
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
 | `docs/windows-spike.md` | Windows（WinUI 3）可行性报告：热键、面板、插入、输入法与绑定方式 |
-| `docs/install-macos.md` | macOS 安装说明（同时用作 Release 说明） |
+| `docs/install.md` | macOS 与 Windows 安装说明（同时用作 Release 说明） |
 | `docs/sync-design.md` | 同步与端到端加密安全设计 v0.3（含成本模型、两轮审查记录） |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。

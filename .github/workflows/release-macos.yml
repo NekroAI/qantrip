@@ -1,4 +1,4 @@
-name: Release macOS
+name: Release
 
 on:
   push:
@@ -40,26 +40,49 @@ jobs:
           path: dist/release/*.dmg
           if-no-files-found: error
 
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Rust 工具链
+        run: rustup toolchain install stable --profile minimal
+      - name: 打包 Windows x64
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File apps\windows\build.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $v = (Get-Content VERSION -Raw).Trim()
+          Copy-Item dist\windows\Qantrip-Windows-x64.zip "dist\windows\Qantrip-$v-Windows-x64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qantrip-windows-x64
+          path: dist/windows/Qantrip-*-Windows-x64.zip
+          if-no-files-found: error
+
   release:
-    needs: package
+    needs: [package, package-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: dmgs
+          path: assets
           merge-multiple: true
       - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # 固定文件名的副本：官网直链 releases/latest/download/Qantrip-macOS-<arch>.dmg 始终指向最新版本
-          for arch in arm64 x86_64; do cp dmgs/Qantrip-*-"$arch".dmg "dmgs/Qantrip-macOS-$arch.dmg"; done
-          (cd dmgs && sha256sum *.dmg > SHA256SUMS.txt)
+          for arch in arm64 x86_64; do cp assets/Qantrip-*-"$arch".dmg "assets/Qantrip-macOS-$arch.dmg"; done
+          cp assets/Qantrip-*-Windows-x64.zip assets/Qantrip-Windows-x64.zip
+          (cd assets && sha256sum *.dmg *.zip > SHA256SUMS.txt)
           # 不标记为预发布：GitHub 的 releases/latest 不包含预发布版本
-          gh release create "$GITHUB_REF_NAME" dmgs/*.dmg dmgs/SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" assets/*.dmg assets/*.zip assets/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "Nekro Qantrip $GITHUB_REF_NAME" \
-            --notes-file docs/install-macos.md \
+            --notes-file docs/install.md \
             --latest

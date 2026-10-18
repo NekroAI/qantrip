@@ -184,7 +184,7 @@
 
 - **签名：** 新建发布证书「Nekro Qantrip Release」（自签名，有效期至 2046 年）。p12 与密码存入仓库 Actions Secrets（`MACOS_SIGNING_P12` / `MACOS_SIGNING_PASSWORD`），负责人另行离线备份；不进入 git。开发构建继续使用本机的「Qantrip Dev」证书。
 - **架构：** 负责人要求 arm64 与 x86_64 分别打包（`Qantrip-<版本>-<架构>.dmg`），方便下载，不做通用二进制。
-- **流程：** 推送 `v*` 标签 → GitHub Actions 两个架构分别构建、测试、签名、打 DMG → 创建预发布 Release，附 SHA256 与安装说明（`docs/install-macos.md`）。
+- **流程：** 推送 `v*` 标签 → GitHub Actions 两个架构分别构建、测试、签名、打 DMG → 创建预发布 Release，附 SHA256 与安装说明（原 `docs/install-macos.md`，现为 `docs/install.md`）。
 - **版本：** 根目录 `VERSION` 为版本号，构建号取 git 提交数。
 - **限制：** 仓库私有期间应用无法匿名检查更新，自动更新提示待开源后实现。Mac mini 未安装 Rosetta，x86_64 版本只在 CI 中构建、未实机运行。
 - **内存：** 空闲占用约 45MB（字体约 6MB，其余为 SwiftUI 面板常驻内容）。在可接受范围，不再为此牺牲字体或首次唤起速度。

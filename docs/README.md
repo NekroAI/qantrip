@@ -9,4 +9,4 @@ Design documents are written in Chinese. Short English summaries are given below
 | [input-grammar.md](input-grammar.md) | The command grammar shared by the panel and a future CLI: matching tiers, options, positional values, free text, errors and canonical form. |
 | [sync-design.md](sync-design.md) | End-to-end encrypted sync: threat model, key hierarchy, record format, protocol, device join, rotation, server-visible metadata, cost model and the adversarial review log. |
 | [spike-report.md](spike-report.md) | macOS feasibility report: hotkey, non-activating panel, paste-based insertion, latency and resource measurements. |
-| [install-macos.md](install-macos.md) | Installation guide for macOS (also used as release notes). |
+| [install.md](install.md) | Installation guide for macOS and Windows (also used as release notes). |
