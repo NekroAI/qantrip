@@ -74,8 +74,44 @@ jobs:
             dist/windows/Qantrip-*-Windows-x64-Setup.exe
           if-no-files-found: error
 
+  package-linux:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建依赖（GTK 4.14 / libadwaita 1.5，Ubuntu 24.04 为最低支持版本）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libfontconfig-dev rpm imagemagick desktop-file-utils file
+      - name: Rust 工具链
+        run: rustup toolchain install stable --profile minimal
+      - name: 测试
+        run: |
+          cargo test --manifest-path core/Cargo.toml
+          cargo test --locked --manifest-path apps/linux/Cargo.toml
+      - name: 打包 Linux ${{ matrix.arch }}（AppImage、deb、rpm）
+        run: |
+          scripts/package-linux.sh
+          v=$(tr -d '[:space:]' < VERSION)
+          # 发布必须同时有三种包
+          for ext in AppImage deb rpm; do test -s "dist/linux/Qantrip-$v-Linux-${{ matrix.arch }}.$ext"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qantrip-linux-${{ matrix.arch }}
+          path: |
+            dist/linux/Qantrip-*-Linux-*.AppImage
+            dist/linux/Qantrip-*-Linux-*.deb
+            dist/linux/Qantrip-*-Linux-*.rpm
+          if-no-files-found: error
+
   release:
-    needs: [package, package-windows]
+    needs: [package, package-windows, package-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -92,9 +128,13 @@ jobs:
           for arch in arm64 x86_64; do cp assets/Qantrip-*-"$arch".dmg "assets/Qantrip-macOS-$arch.dmg"; done
           cp assets/Qantrip-*-Windows-x64.zip assets/Qantrip-Windows-x64.zip
           cp assets/Qantrip-*-Windows-x64-Setup.exe assets/Qantrip-Windows-x64-Setup.exe
-          (cd assets && sha256sum *.dmg *.zip *.exe > SHA256SUMS.txt)
+          for arch in x86_64 aarch64; do
+            for ext in AppImage deb rpm; do cp assets/Qantrip-*-Linux-"$arch"."$ext" "assets/Qantrip-Linux-$arch.$ext"; done
+          done
+          chmod +x assets/*.AppImage
+          (cd assets && sha256sum *.dmg *.zip *.exe *.AppImage *.deb *.rpm > SHA256SUMS.txt)
           # 不标记为预发布：GitHub 的 releases/latest 不包含预发布版本
-          gh release create "$GITHUB_REF_NAME" assets/*.dmg assets/*.zip assets/*.exe assets/SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" assets/*.dmg assets/*.zip assets/*.exe assets/*.AppImage assets/*.deb assets/*.rpm assets/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "Nekro Qantrip $GITHUB_REF_NAME" \
             --notes-file docs/install.md \

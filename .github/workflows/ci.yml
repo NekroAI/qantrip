@@ -21,6 +21,23 @@ jobs:
       - name: 构建 macOS 应用（开发签名）
         run: scripts/build-macos.sh
 
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libfontconfig-dev
+      - name: Rust 工具链
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - name: Linux 外壳测试
+        run: cargo test --locked --manifest-path apps/linux/Cargo.toml
+      - name: Clippy
+        run: |
+          cargo clippy --locked --manifest-path apps/linux/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --locked --manifest-path apps/linux/Cargo.toml --all-targets --features debug-hooks -- -D warnings
+
   cloud:
     runs-on: ubuntu-latest
     defaults:
