@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-19
+
 ### Added
 - Linux preview (x86_64 and ARM64): a native GTK4 / libadwaita app with the same panel, command mode, template library, settings, welcome guide, tray menu, end-to-end encrypted sync and update notice as on macOS and Windows. Ctrl+Q opens the panel — registered through the desktop's global shortcuts portal on GNOME and KDE (Wayland), grabbed directly on X11, or bound to `qantrip toggle` in your keyboard settings elsewhere. Auto-paste uses the remote desktop portal on Wayland (allowed once, then remembered) and XTest on X11; terminals get Ctrl+Shift+V. Distributed as AppImage, .deb and .rpm; needs GTK 4.14+ and libadwaita 1.5+.
 - `qantrip list`, `qantrip render <input>` and `qantrip complete <input>` on Linux use the same templates and grammar from the command line.
@@ -113,7 +115,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.4.0
 [0.3.6]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.6
 [0.3.5]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.5
 [0.3.4]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.4
