@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-10-18
+
+### Changed
+- Enter inserts what the preview shows — including fuzzy matches — and never rewrites the input; Tab completes (the highlighted suggestion, the grey hint, or a missing required option). In command mode an unambiguous prefix like `/sy` runs on Enter.
+- Download in the update notice starts downloading the installer for your platform directly.
+- Sync wording says "device" instead of "Mac"; code fields are left-aligned.
+- About shows that Qantrip is made by NekroAI, with a link to nekro.ai.
+
+### Fixed
+- Windows: the template list no longer flickers or loses its scroll position when you pick a template or switch settings pages.
+- Windows: aligned panel input, centered settings pages, Try preview inside its card, word wrap in the template body and source editors, brand purple instead of the system accent color.
+
 ## [0.3.5] — 2026-10-18
 
 ### Fixed
@@ -93,7 +105,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.6
 [0.3.5]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.5
 [0.3.4]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.4
 [0.3.3]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.3
