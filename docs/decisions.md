@@ -183,7 +183,7 @@
 ### D22 打包与发布（2026-10-17）
 
 - **签名：** 新建发布证书「Nekro Qantrip Release」（自签名，有效期至 2046 年）。p12 与密码存入仓库 Actions Secrets（`MACOS_SIGNING_P12` / `MACOS_SIGNING_PASSWORD`），负责人另行离线备份；不进入 git。开发构建继续使用本机的「Qantrip Dev」证书。
-- **架构：** 负责人要求 arm64 与 x86_64 分别打包（`Qantrip-<版本>-<架构>.dmg`），方便下载，不做通用二进制。
+- **架构：** 负责人要求 arm64 与 x86_64 分别打包（文件名见 D38），方便下载，不做通用二进制。
 - **流程：** 推送 `v*` 标签 → GitHub Actions 两个架构分别构建、测试、签名、打 DMG → 创建预发布 Release，附 SHA256 与安装说明（原 `docs/install-macos.md`，现为 `docs/install.md`）。
 - **版本：** 根目录 `VERSION` 为版本号，构建号取 git 提交数。
 - **限制：** 仓库私有期间应用无法匿名检查更新，自动更新提示待开源后实现。Mac mini 未安装 Rosetta，x86_64 版本只在 CI 中构建、未实机运行。
@@ -239,7 +239,7 @@
   - **文案：** 只讲用户能感知的价值；删除"剪贴板会还原""多行不会被提交"等实现细节类卖点。
   - **安全页：** 一句话核心"即使是我们也看不到你的模板"，用动画示意"本机加密 → 云端只有乱码 → 你的设备解密"；技术细节链接到设计文档。
   - **文档页：** 以交互控件为主：可点的命令拆解、在浏览器中实时渲染的模板编辑器（WebAssembly 核心）、内置模板浏览器、快捷键卡片。
-  - **下载：** 首页按钮自动识别系统与芯片一键下载，可展开其他版本（将来含 Windows）；下载页直接列出 Release 直链。发布时额外上传固定文件名（如 `Qantrip-macOS-arm64.dmg`），使 `releases/latest/download/…` 直链长期有效。
+  - **下载：** 首页按钮自动识别系统与芯片一键下载，可展开其他版本（将来含 Windows）；下载页直接列出 Release 直链。发布时额外上传固定文件名（如 `Qantrip-macOS-arm64.dmg`），使 `releases/latest/download/…` 直链长期有效。（0.4.1 起由 D38 取代：改为官网 `/dl/<平台>` 跳转。）
   - **国际化：** 官网按浏览器语言、应用按系统语言自动选择中文或英文，均可手动切换；17 个内置模板提供英文版，模板语言可在设置中单独指定。Rust 核心的提示信息也做双语。
   - **同步：** 按 `docs/sync-design.md` v0.2 实现客户端（Rust 核心）与 macOS 同步界面，负责人随后整体测试。
 - **实现补充（同日）：**
@@ -325,6 +325,14 @@
 - **验证：** 在 Ubuntu 26.04 ARM64 虚拟机（GNOME 50、KDE Plasma 6.6，含 Plasma X11 会话，IBus 智能拼音与 Fcitx5 拼音）中实测；以 Ubuntu 24.04 的 GTK 4.14 / libadwaita 1.5 构建、测试并打包通过（与 CI 相同的最低版本）。同步全部流程在本地测试服务端上与命令行设备（`sync_cli`）互相验证；真实的 GitHub 登录需要浏览器授权，留给负责人。
 - **资源（release，虚拟机内无 GPU）：** 空闲常驻约 100MB（匿名内存约 50MB），多次唤起后约 165MB；处理唤起到面板显示 7–24ms（启动后首次约 90ms）；二进制 9MB，AppImage 6MB。
 - **调试钩子：** 与 macOS 的 QANTRIP_DEBUG_HOOKS 对应，只编译进 debug 构建且打开 `debug-hooks` 特性时、运行中的实例以 `QANTRIP_DEBUG_HOOKS=1` 启动才生效（`qantrip debug …`），release 构建不包含。
+
+### D38 发布文件命名：每个安装包一个带版本号的文件，架构统一为 arm64 / x64（2026-10-19）
+
+- **决定（负责人确认）：** 发布文件统一为 `Qantrip-<版本>-<系统>-<架构>[-Setup].<扩展名>`，系统为 `macOS` / `Windows` / `Linux`，架构各平台统一写 `arm64` / `x64`。例如 `Qantrip-0.4.1-macOS-arm64.dmg`、`Qantrip-0.4.1-Windows-x64-Setup.exe`、`Qantrip-0.4.1-Linux-x64.AppImage`。每个安装包只上传这一个文件，加上 `SHA256SUMS.txt`。
+- **理由：** 0.4.0 之前每个安装包都有带版本号和不带版本号两份，macOS 带版本号的那份没有系统名，架构写法混用 arm64 / aarch64 / x86_64 / x64，发布页难以辨认。
+- **固定地址：** 不再依赖 GitHub 的 `releases/latest/download/<固定文件名>`。官网提供 `https://qantrip.nekro.ai/dl/<平台标识>`，服务端按最新正式版本（`/api/v1/update` 的同一份缓存）302 跳转到对应文件。平台标识：`macos-arm64`、`macos-x64`、`windows-x64`、`windows-zip-x64`、`linux-<x64|arm64>`（AppImage）、`linux-deb-<x64|arm64>`、`linux-rpm-<x64|arm64>`，定义在 `apps/cloud/app/lib/assets.ts`。README、官网下载按钮、llms.txt 都用这个地址；下载页按最新版本号显示完整文件名。
+- **客户端：** 更新提示的「下载」按新文件名直接下载指定版本；不知道版本时用 `/dl/` 地址。
+- **代价（负责人接受）：** 已安装 0.4.0 及更早版本的 macOS，以及 0.4.0 的 Linux，更新提示里的「下载」按旧文件名拼地址，从 0.4.1 起会打开 404；从发布页或官网下载即可。Windows 的文件名没有变化，不受影响。
 
 ---
 

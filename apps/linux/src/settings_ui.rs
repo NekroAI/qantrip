@@ -841,7 +841,7 @@ impl SettingsView {
             row.set_halign(gtk::Align::Center);
             let dl = gtk::Button::with_label(&l("下载", "Download"));
             dl.add_css_class("suggested-action");
-            dl.set_tooltip_text(Some(&update::asset_name(Some(&r.version))));
+            dl.set_tooltip_text(Some(&update::asset_name(&r.version)));
             let uu = u.clone();
             dl.connect_clicked(move |_| uu.open_download());
             row.append(&dl);

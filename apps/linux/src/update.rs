@@ -53,21 +53,32 @@ pub fn package_kind() -> Package {
     Package::AppImage
 }
 
+/// 发布文件名中的架构（docs/decisions.md D38：各平台统一为 arm64 / x64）
 pub fn arch() -> &'static str {
-    if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }
+    if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" }
 }
 
-/// 发布文件名（与发布工作流一致）
-pub fn asset_name(version: Option<&str>) -> String {
-    let ext = match package_kind() {
+fn ext() -> &'static str {
+    match package_kind() {
         Package::AppImage => "AppImage",
         Package::Deb => "deb",
         Package::Rpm => "rpm",
-    };
-    match version {
-        Some(v) => format!("Qantrip-{v}-Linux-{}.{ext}", arch()),
-        None => format!("Qantrip-Linux-{}.{ext}", arch()),
     }
+}
+
+/// 发布文件名（与发布工作流一致）：Qantrip-<版本>-Linux-<arm64|x64>.<扩展名>
+pub fn asset_name(version: &str) -> String {
+    format!("Qantrip-{version}-Linux-{}.{}", arch(), ext())
+}
+
+/// 官网的固定下载地址，跳转到最新版本（与 apps/cloud/server/releases.ts 的平台标识一致）
+fn latest_url() -> String {
+    let kind = match package_kind() {
+        Package::AppImage => "",
+        Package::Deb => "deb-",
+        Package::Rpm => "rpm-",
+    };
+    format!("https://qantrip.nekro.ai/dl/linux-{kind}{}", arch())
 }
 
 /// 按数字逐段比较版本号（如 0.3.10 > 0.3.9）
@@ -229,8 +240,8 @@ impl UpdateChecker {
     /// 直接下载与当前安装方式对应的安装包（浏览器开始下载），不打开发布页
     pub fn download_url(&self) -> String {
         match self.available.borrow().as_ref() {
-            Some(r) => format!("https://github.com/NekroAI/qantrip/releases/download/v{}/{}", r.version, asset_name(Some(&r.version))),
-            None => format!("https://github.com/NekroAI/qantrip/releases/latest/download/{}", asset_name(None)),
+            Some(r) => format!("https://github.com/NekroAI/qantrip/releases/download/v{}/{}", r.version, asset_name(&r.version)),
+            None => latest_url(),
         }
     }
 

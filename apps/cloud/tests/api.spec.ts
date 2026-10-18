@@ -4,6 +4,7 @@ import { api } from '../server/api.js'
 import { approveDesktop, parseDesktopAuthorize, type UserRow } from '../server/auth.js'
 import { dailyCleanup, TOMBSTONE_TTL } from '../server/cleanup.js'
 import { b64u, sha256 } from '../server/http.js'
+import { releaseAssetUrl } from '../server/releases.js'
 
 const ctx = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext
 const call = (path: string, init?: RequestInit) => api.request(path, init, env, ctx)
@@ -433,5 +434,16 @@ describe('admin', () => {
     expect(s.signups).toHaveLength(30)
     const list = await listUsers(e, { q: user.login })
     expect(list.users.map((u) => u.id)).toContain(user.id)
+  })
+})
+
+describe('downloads', () => {
+  it('release asset names and the /dl redirect', async () => {
+    const r = { version: '0.4.1', tag: 'v0.4.1', url: '', published_at: '' }
+    expect(releaseAssetUrl(r, 'macos-x64')).toBe('https://github.com/NekroAI/qantrip/releases/download/v0.4.1/Qantrip-0.4.1-macOS-x64.dmg')
+    expect(releaseAssetUrl(r, 'windows-x64')).toBe('https://github.com/NekroAI/qantrip/releases/download/v0.4.1/Qantrip-0.4.1-Windows-x64-Setup.exe')
+    expect(releaseAssetUrl(r, 'linux-deb-arm64')).toBe('https://github.com/NekroAI/qantrip/releases/download/v0.4.1/Qantrip-0.4.1-Linux-arm64.deb')
+    expect((await call('/dl/macos-x86_64')).status).toBe(404)
+    expect((await call('/dl/toString')).status).toBe(404)
   })
 })

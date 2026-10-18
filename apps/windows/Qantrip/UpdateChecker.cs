@@ -176,7 +176,6 @@ internal sealed class UpdateChecker
         return false;
     }
 
-    /// 在默认浏览器中打开发布页
     /// 直接下载这个版本的安装程序（浏览器开始下载），不打开发布页
     public static void OpenReleasePage(Release r)
     {

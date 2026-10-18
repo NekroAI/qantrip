@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+- Release files have one consistent name per package: `Qantrip-<version>-<macOS|Windows|Linux>-<arm64|x64>`, e.g. `Qantrip-0.4.1-macOS-arm64.dmg`. Unversioned copies are gone; stable download links are now `qantrip.nekro.ai/dl/<platform>` (for example `/dl/macos-arm64`). The update notice in 0.4.0 and earlier on macOS, and 0.4.0 on Linux, can't download 0.4.1 directly — get it from the website instead.
+
 ## [0.4.0] — 2026-10-19
 
 ### Added

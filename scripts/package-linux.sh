@@ -3,7 +3,7 @@
 #
 #   scripts/package-linux.sh
 #
-# 产物：dist/linux/Qantrip-<版本>-Linux-<架构>.{AppImage,deb,rpm}
+# 产物：dist/linux/Qantrip-<版本>-Linux-<arm64|x64>.{AppImage,deb,rpm}
 # 依赖：Rust 工具链、libgtk-4-dev（≥ 4.14）、libadwaita-1-dev（≥ 1.5）、dpkg-deb、ImageMagick；
 #       rpmbuild 可选（没有时跳过 .rpm）；appimagetool 可选（环境变量 APPIMAGETOOL 指定，没有时下载官方版本）。
 #
@@ -16,14 +16,15 @@ cd "$ROOT"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64) DEB_ARCH=amd64 ;;
-  aarch64 | arm64) ARCH=aarch64; DEB_ARCH=arm64 ;;
+  x86_64) DEB_ARCH=amd64; LABEL=x64 ;;
+  aarch64 | arm64) ARCH=aarch64; DEB_ARCH=arm64; LABEL=arm64 ;;
   *) echo "不支持的架构：$ARCH" >&2; exit 1 ;;
 esac
 
 OUT="$ROOT/dist/linux"
 STAGE="$OUT/stage"
-NAME="Qantrip-$VERSION-Linux-$ARCH"
+# 发布文件名统一为 Qantrip-<版本>-<系统>-<arm64|x64>.<扩展名>（docs/decisions.md D38）
+NAME="Qantrip-$VERSION-Linux-$LABEL"
 rm -rf "$STAGE" "$OUT/AppDir" "$OUT/rpmbuild"
 mkdir -p "$OUT"
 

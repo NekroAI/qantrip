@@ -1,5 +1,6 @@
 // 版本信息与安装包下载（docs/decisions.md D23：官网公开，下载暂不公开，由 PUBLIC_DOWNLOADS 开关控制）。
 // R2 中的约定：releases/latest.json（发布工作流写入）与 releases/<文件名>。
+import { assetName, type ClientId } from '../app/lib/assets.js'
 import { HttpError } from './http.js'
 
 export interface LatestRelease {
@@ -69,3 +70,6 @@ export const publicLatestRelease = async (ctx: { waitUntil(p: Promise<unknown>):
     throw new HttpError(502, 'release_unavailable', '暂时无法获取最新版本')
   }
 }
+
+/** 最新正式版本中某个平台安装包的下载地址 */
+export const releaseAssetUrl = (r: PublicRelease, id: ClientId) => `https://github.com/NekroAI/qantrip/releases/download/${r.tag}/${assetName(id, r.version)}`

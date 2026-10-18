@@ -9,7 +9,7 @@
 - 同步联调：`cargo run --example sync_cli -- <server> <dir> <命令>` 在命令行扮演一台设备（见文件头注释）
 
 - 开发构建：`scripts/build-macos.sh`（产物在 `dist/`，本机开发证书签名）
-- 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布
+- 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`、`scripts/package-linux.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布。发布文件命名见 D38
 - 云服务：`cd apps/cloud && pnpm test`（契约测试）、`pnpm deploy:staging` / `pnpm deploy:production`（从 Mac mini 部署，wrangler 已登录）
 - Windows 构建（在 Windows 上）：`apps\windows\build.ps1`，说明见 `apps/windows/README.md`；回归脚本在 `tests/windows/`
 - Linux 构建（在 Linux 上，需要 GTK 4.14+ / libadwaita 1.5+ 开发包）：`cargo run --manifest-path apps/linux/Cargo.toml`；打包：`scripts/package-linux.sh`；调试钩子：`cargo build --features debug-hooks` 后以 `QANTRIP_DEBUG_HOOKS=1` 运行，再执行 `qantrip debug …`（见 `apps/linux/src/debug.rs`）

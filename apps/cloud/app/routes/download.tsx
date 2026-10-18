@@ -1,4 +1,6 @@
 import { Link } from 'react-router'
+import { publicLatestRelease } from '../../server/releases.js'
+import { assetName } from '../lib/assets'
 import { CLIENTS, RELEASES_URL, client, useDetectedClient } from '../lib/downloads'
 import { type Locale, localeOf, seo, useHref, useLocale } from '../lib/i18n'
 import type { Route } from './+types/download'
@@ -61,7 +63,20 @@ export const meta: Route.MetaFunction = ({ location }) => {
   return seo({ locale, path: '/download', title: T[locale].title, description: T[locale].description })
 }
 
-export default function Download() {
+/** 最新版本号，用于显示文件名；取不到时只显示不带版本号的名称 */
+export const loader = async () => {
+  const pending: Promise<unknown>[] = []
+  try {
+    const release = await publicLatestRelease({ waitUntil: (p) => pending.push(p) })
+    await Promise.all(pending)
+    return { version: release.version }
+  } catch {
+    return { version: null }
+  }
+}
+
+export default function Download({ loaderData }: Route.ComponentProps) {
+  const { version } = loaderData
   const locale = useLocale()
   const t = T[locale]
   const href = useHref()
@@ -81,7 +96,7 @@ export default function Download() {
           <span className="label">{t.forYou}</span>
           <b>{best.name[locale]}</b>
           <span className="muted">
-            {best.detail[locale]} · {best.file}
+            {best.detail[locale]} · {assetName(best.id, version)}
           </span>
           {!detected.url && <span className="muted">{t.notAvailable(detected.name[locale])}</span>}
         </div>
@@ -101,7 +116,7 @@ export default function Download() {
               </span>
               {c.url ? (
                 <a className="btn small" href={c.url} download>
-                  {c.file}
+                  {assetName(c.id, version)}
                 </a>
               ) : (
                 <span className="muted">{t.soon}</span>

@@ -54,13 +54,13 @@ r security --scope=staged -s focus on the auth module
 
 ## Install
 
-Download the DMG — [Apple silicon](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-arm64.dmg) or [Intel](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-x86_64.dmg) — open it and drag **Qantrip** into Applications. Requires macOS 14 or later.
+Download the DMG — [Apple silicon](https://qantrip.nekro.ai/dl/macos-arm64) or [Intel](https://qantrip.nekro.ai/dl/macos-x64) — open it and drag **Qantrip** into Applications. Requires macOS 14 or later.
 
 Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 
-**Windows:** download and run [Qantrip-Windows-x64-Setup.exe](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64-Setup.exe) (no admin rights needed; a portable [zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip) is also available), then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
+**Windows:** download and run [the installer](https://qantrip.nekro.ai/dl/windows-x64) (no admin rights needed; a portable [zip](https://qantrip.nekro.ai/dl/windows-zip-x64) is also available), then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
 
-**Linux (preview):** download the AppImage — [x86_64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.AppImage) or [ARM64](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-aarch64.AppImage) — make it executable and run it, or install the [.deb](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.deb) / [.rpm](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Linux-x86_64.rpm) (ARM64: `Qantrip-Linux-aarch64.deb` / `.rpm`). Press <kbd>Ctrl+Q</kbd>; on GNOME and KDE (Wayland) the system asks you to confirm the shortcut, and the welcome guide lets you allow auto-paste once. Requires GTK 4.14+ and libadwaita 1.5+ (Ubuntu 24.04, Debian 13, Fedora 40 or later). See [docs/install.md](docs/install.md).
+**Linux (preview):** download the AppImage — [x64](https://qantrip.nekro.ai/dl/linux-x64) or [ARM64](https://qantrip.nekro.ai/dl/linux-arm64) — make it executable and run it, or install the [.deb](https://qantrip.nekro.ai/dl/linux-deb-x64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-x64) (ARM64: [.deb](https://qantrip.nekro.ai/dl/linux-deb-arm64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-arm64)). Press <kbd>Ctrl+Q</kbd>; on GNOME and KDE (Wayland) the system asks you to confirm the shortcut, and the welcome guide lets you allow auto-paste once. Requires GTK 4.14+ and libadwaita 1.5+ (Ubuntu 24.04, Debian 13, Fedora 40 or later). See [docs/install.md](docs/install.md).
 
 ## Writing a template
 
@@ -100,7 +100,7 @@ The full format is described in the [input grammar](docs/input-grammar.md) and o
 | End-to-end encrypted sync | ✅ macOS, Windows, Linux — [design](docs/sync-design.md) |
 | Command mode for creating templates in the panel | ✅ |
 | Windows | ✅ Windows 10/11 x64 (installer or portable zip) |
-| Linux | 🧪 preview (x86_64 / ARM64; AppImage, .deb, .rpm; GNOME, KDE Plasma, X11) |
+| Linux | 🧪 preview (x64 / ARM64; AppImage, .deb, .rpm; GNOME, KDE Plasma, X11) |
 | AI-assisted template editing | 📝 planned |
 
 ## Architecture

@@ -4,7 +4,7 @@
 
 Requires macOS 14 or later.
 
-1. Download the DMG: `Qantrip-macOS-arm64.dmg` for Apple silicon (M series), `Qantrip-macOS-x86_64.dmg` for Intel.
+1. Download the DMG: `Qantrip-<version>-macOS-arm64.dmg` for Apple silicon (M series), `Qantrip-<version>-macOS-x64.dmg` for Intel.
 2. Open it and drag **Qantrip** into Applications.
 3. Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway** at the bottom.
 4. Follow the welcome guide to confirm the shortcut (⌃Q by default) and allow Accessibility so Qantrip can paste for you. Without it, prompts are copied and you paste them yourself.
@@ -24,11 +24,11 @@ Prefer not to install? Download `Qantrip-Windows-x64.zip` instead, extract it an
 
 ## Linux (preview)
 
-Requires GTK 4.14+ and libadwaita 1.5+: Ubuntu 24.04, Debian 13, Fedora 40 or later. x86_64 and ARM64 (aarch64). Tested on GNOME and KDE Plasma (Wayland) and on X11; Sway, Hyprland and other wlroots desktops are best effort.
+Requires GTK 4.14+ and libadwaita 1.5+: Ubuntu 24.04, Debian 13, Fedora 40 or later. x64 and ARM64. Tested on GNOME and KDE Plasma (Wayland) and on X11; Sway, Hyprland and other wlroots desktops are best effort.
 
 1. Download one of:
-   - `Qantrip-Linux-x86_64.AppImage` / `Qantrip-Linux-aarch64.AppImage` — works on most distributions. Make it executable (`chmod +x`, or Properties → Allow executing) and open it. On first launch it adds itself to your app menu.
-   - `Qantrip-Linux-<arch>.deb` (Debian, Ubuntu) or `Qantrip-Linux-<arch>.rpm` (Fedora, openSUSE): install with your package manager, e.g. `sudo apt install ./Qantrip-Linux-x86_64.deb`.
+   - `Qantrip-<version>-Linux-x64.AppImage` / `Qantrip-<version>-Linux-arm64.AppImage` — works on most distributions. Make it executable (`chmod +x`, or Properties → Allow executing) and open it. On first launch it adds itself to your app menu.
+   - `Qantrip-<version>-Linux-<arch>.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE): install with your package manager, e.g. `sudo apt install ./Qantrip-<version>-Linux-x64.deb`.
 2. Press **Ctrl+Q** anywhere. On recent GNOME (tested with GNOME 50) and KDE Plasma (Wayland), the system asks you once to allow the shortcut. If your desktop can't register it, add a custom shortcut in your keyboard settings that runs `qantrip toggle` (Settings › General shows the exact command).
 3. Auto-paste: on X11 it just works. On Wayland, allow it once in the welcome guide (the system asks for "remote interaction"; keep "remember" checked). Without it, prompts are copied and you press Ctrl+V.
 
@@ -44,7 +44,7 @@ Known limits on Wayland: the clipboard keeps the prompt after pasting (it is res
 
 需要 macOS 14 或更新版本。
 
-1. 下载安装包：Apple 芯片（M 系列）选 `Qantrip-macOS-arm64.dmg`，Intel 芯片选 `Qantrip-macOS-x86_64.dmg`。
+1. 下载安装包：Apple 芯片（M 系列）选 `Qantrip-<版本>-macOS-arm64.dmg`，Intel 芯片选 `Qantrip-<版本>-macOS-x64.dmg`。
 2. 打开 DMG，把 **Qantrip** 拖进「应用程序」。
 3. Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性**，在页面底部点 **仍要打开**。
 4. 跟随引导确认唤起快捷键（默认 ⌃Q），并授予「辅助功能」权限以便自动粘贴；不授权也能用，Prompt 会复制到剪贴板。
@@ -64,11 +64,11 @@ Known limits on Wayland: the clipboard keeps the prompt after pasting (it is res
 
 ## Linux（预览版）
 
-需要 GTK 4.14+ 与 libadwaita 1.5+：Ubuntu 24.04、Debian 13、Fedora 40 或更新版本，支持 x86_64 与 ARM64（aarch64）。已在 GNOME、KDE Plasma（Wayland）与 X11 上测试；Sway、Hyprland 等 wlroots 桌面尽力支持。
+需要 GTK 4.14+ 与 libadwaita 1.5+：Ubuntu 24.04、Debian 13、Fedora 40 或更新版本，支持 x64 与 ARM64。已在 GNOME、KDE Plasma（Wayland）与 X11 上测试；Sway、Hyprland 等 wlroots 桌面尽力支持。
 
 1. 下载其中一种：
-   - `Qantrip-Linux-x86_64.AppImage` / `Qantrip-Linux-aarch64.AppImage`：适用于大多数发行版。设为可执行（`chmod +x`，或在文件属性中允许执行）后打开，首次运行会把自己加入应用菜单。
-   - `Qantrip-Linux-<架构>.deb`（Debian、Ubuntu）或 `Qantrip-Linux-<架构>.rpm`（Fedora、openSUSE）：用软件包管理器安装，例如 `sudo apt install ./Qantrip-Linux-x86_64.deb`。
+   - `Qantrip-<版本>-Linux-x64.AppImage` / `Qantrip-<版本>-Linux-arm64.AppImage`：适用于大多数发行版。设为可执行（`chmod +x`，或在文件属性中允许执行）后打开，首次运行会把自己加入应用菜单。
+   - `Qantrip-<版本>-Linux-<架构>.deb`（Debian、Ubuntu）或 `.rpm`（Fedora、openSUSE）：用软件包管理器安装，例如 `sudo apt install ./Qantrip-<版本>-Linux-x64.deb`。
 2. 在任何地方按 **Ctrl+Q**。较新的 GNOME（已在 GNOME 50 上测试）与 KDE Plasma（Wayland）会请你确认一次快捷键；桌面不支持应用注册快捷键时，在系统的键盘设置中添加一个自定义快捷键，命令为 `qantrip toggle`（设置 › 通用中有完整命令）。
 3. 自动粘贴：X11 下直接可用；Wayland 下在引导中授权一次（系统会询问“远程交互”，保持勾选“记住”）。不授权时 Prompt 会复制到剪贴板，按 Ctrl+V 粘贴。
 

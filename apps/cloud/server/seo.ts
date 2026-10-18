@@ -46,9 +46,9 @@ const SUMMARY = (o: string) => `# Nekro Qantrip
 
 - Website: ${o}/ (English), ${o}/zh (中文)
 - Source code: ${REPO} (app and core GPL-3.0-or-later, sync server AGPL-3.0-or-later)
-- Download (macOS 14+): ${REPO}/releases/latest/download/Qantrip-macOS-arm64.dmg (Apple silicon), ${REPO}/releases/latest/download/Qantrip-macOS-x86_64.dmg (Intel)
-- Download (Windows 10/11 x64): ${REPO}/releases/latest/download/Qantrip-Windows-x64-Setup.exe (installer, no admin rights) or Qantrip-Windows-x64.zip (portable); shortcut Ctrl+Q
-- Download (Linux x86_64 / ARM64, preview): ${REPO}/releases/latest/download/Qantrip-Linux-x86_64.AppImage or Qantrip-Linux-aarch64.AppImage; also .deb and .rpm (Qantrip-Linux-<arch>.deb / .rpm); needs GTK 4.14+ and libadwaita 1.5+; shortcut Ctrl+Q
+- Download (macOS 14+): ${o}/dl/macos-arm64 (Apple silicon), ${o}/dl/macos-x64 (Intel)
+- Download (Windows 10/11 x64): ${o}/dl/windows-x64 (installer, no admin rights) or ${o}/dl/windows-zip-x64 (portable); shortcut Ctrl+Q
+- Download (Linux x64 / ARM64, preview): ${o}/dl/linux-x64 or ${o}/dl/linux-arm64 (AppImage); also .deb and .rpm at ${o}/dl/linux-deb-<x64|arm64> and ${o}/dl/linux-rpm-<x64|arm64>; needs GTK 4.14+ and libadwaita 1.5+; shortcut Ctrl+Q
 - Platforms: macOS, Windows, Linux (preview).
 - Made by NekroAI (https://github.com/NekroAI). Pronounced like "cantrip".
 

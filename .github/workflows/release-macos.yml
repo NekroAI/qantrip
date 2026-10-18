@@ -63,9 +63,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # 发布必须同时有安装程序与 zip
           if (-not (Test-Path dist\windows\Qantrip-Windows-x64-Setup.exe)) { throw "没有生成安装程序" }
+          # 发布文件名带版本号（docs/decisions.md D38）
           $v = (Get-Content VERSION -Raw).Trim()
-          Copy-Item dist\windows\Qantrip-Windows-x64.zip "dist\windows\Qantrip-$v-Windows-x64.zip"
-          Copy-Item dist\windows\Qantrip-Windows-x64-Setup.exe "dist\windows\Qantrip-$v-Windows-x64-Setup.exe"
+          Move-Item dist\windows\Qantrip-Windows-x64.zip "dist\windows\Qantrip-$v-Windows-x64.zip"
+          Move-Item dist\windows\Qantrip-Windows-x64-Setup.exe "dist\windows\Qantrip-$v-Windows-x64-Setup.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: qantrip-windows-x64
@@ -78,9 +79,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: x86_64
+          - arch: x64
             runner: ubuntu-24.04
-          - arch: aarch64
+          - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
@@ -124,13 +125,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 固定文件名的副本：官网直链 releases/latest/download/Qantrip-macOS-<arch>.dmg 始终指向最新版本
-          for arch in arm64 x86_64; do cp assets/Qantrip-*-"$arch".dmg "assets/Qantrip-macOS-$arch.dmg"; done
-          cp assets/Qantrip-*-Windows-x64.zip assets/Qantrip-Windows-x64.zip
-          cp assets/Qantrip-*-Windows-x64-Setup.exe assets/Qantrip-Windows-x64-Setup.exe
-          for arch in x86_64 aarch64; do
-            for ext in AppImage deb rpm; do cp assets/Qantrip-*-Linux-"$arch"."$ext" "assets/Qantrip-Linux-$arch.$ext"; done
+          # 每个安装包只有一个文件：Qantrip-<版本>-<系统>-<arm64|x64>.<扩展名>（docs/decisions.md D38）。
+          # 固定地址由官网 qantrip.nekro.ai/dl/<平台> 跳转到最新版本，不再上传无版本号的副本。
+          v=$(tr -d '[:space:]' < VERSION)
+          for f in macOS-arm64.dmg macOS-x64.dmg Windows-x64-Setup.exe Windows-x64.zip \
+                   Linux-x64.AppImage Linux-x64.deb Linux-x64.rpm Linux-arm64.AppImage Linux-arm64.deb Linux-arm64.rpm; do
+            test -s "assets/Qantrip-$v-$f"
           done
+          test "$(ls assets | wc -l)" -eq 10
           chmod +x assets/*.AppImage
           (cd assets && sha256sum *.dmg *.zip *.exe *.AppImage *.deb *.rpm > SHA256SUMS.txt)
           # 不标记为预发布：GitHub 的 releases/latest 不包含预发布版本

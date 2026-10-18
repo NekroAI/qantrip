@@ -5,7 +5,8 @@ import {
 } from './auth.js'
 import { HttpError, safeReturnPath } from './http.js'
 import { HARD, policyOf } from './limits.js'
-import { downloadFile, latestRelease, publicLatestRelease } from './releases.js'
+import { isClientId } from '../app/lib/assets.js'
+import { downloadFile, latestRelease, publicLatestRelease, releaseAssetUrl } from './releases.js'
 import {
   activeJoins, appendRoster, cancelJoin, changes, createJoin, createVault, envelopesFor, getJoin, isJoinStep,
   ownedVault, pendingJoins, postJoinStep, pushRecords, putEnvelope, raiseMinEpoch, rosterSince, vaultOf, type VaultRow,
@@ -14,7 +15,7 @@ import {
 type AppEnv = { Bindings: Env; Variables: { auth: DeviceAuth } }
 
 export const handlesPath = (pathname: string): boolean =>
-  pathname.startsWith('/api/') || pathname.startsWith('/auth/') || pathname.startsWith('/download/')
+  pathname.startsWith('/api/') || pathname.startsWith('/auth/') || pathname.startsWith('/download/') || pathname.startsWith('/dl/')
 
 export const api = new Hono<AppEnv>()
 
@@ -41,6 +42,13 @@ api.get('/api/v1/update', async (c) => {
   return c.json(body, 200, { 'cache-control': 'public, max-age=600' })
 })
 api.get('/download/:file', (c) => downloadFile(c.env, c.req.param('file')))
+// 固定下载地址（docs/decisions.md D38）：跳转到最新正式版本中对应平台的文件
+api.get('/dl/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!isClientId(id)) throw new HttpError(404, 'not_found', '没有这个平台的安装包')
+  const r = await publicLatestRelease(c.executionCtx)
+  return new Response(null, { status: 302, headers: { location: releaseAssetUrl(r, id), 'cache-control': 'public, max-age=600' } })
+})
 
 // MARK: 官网登录
 

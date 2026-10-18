@@ -144,15 +144,15 @@ final class UpdateChecker {
         }
     }
 
-    /// 直接下载对应芯片的 DMG（浏览器开始下载），不打开发布页
+    /// 直接下载对应芯片的 DMG（浏览器开始下载），不打开发布页。文件名见 docs/decisions.md D38
     func openDownload() {
         #if arch(arm64)
         let arch = "arm64"
         #else
-        let arch = "x86_64"
+        let arch = "x64"
         #endif
-        let url = available.map { URL(string: "https://github.com/NekroAI/qantrip/releases/download/v\($0.version)/Qantrip-\($0.version)-\(arch).dmg")! }
-            ?? URL(string: "https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-macOS-\(arch).dmg")!
+        let url = available.map { URL(string: "https://github.com/NekroAI/qantrip/releases/download/v\($0.version)/Qantrip-\($0.version)-macOS-\(arch).dmg")! }
+            ?? URL(string: "https://qantrip.nekro.ai/dl/macos-\(arch)")!
         NSWorkspace.shared.open(url)
     }
 }
