@@ -300,6 +300,26 @@ public partial class App : Application
             if (!trashed) message = Loc.T($"无法移到回收站：{Path.GetFileName(path)}", $"Could not move {Path.GetFileName(path)} to the Recycle Bin");
         }
         if (outcome.OpenEditor is string name) ShowLibrary(name);
+        switch (outcome.Action)
+        {
+            case "sync":
+                if (SyncService.Shared.Enrolled)
+                {
+                    SyncService.Shared.SyncNow();
+                    message = Loc.T("正在同步…", "Syncing…");
+                }
+                else ActivateSettings();
+                break;
+            case "settings":
+                ShowSettings();
+                break;
+            case "library":
+                ShowLibrary(null);
+                break;
+            case string a when a.StartsWith("lang:"):
+                Settings.TemplateLanguage = a[5..]; // 触发 Settings.Changed → 重新加载内置模板
+                break;
+        }
         Log.Event("command", new() { ["open_editor"] = outcome.OpenEditor is not null, ["trash"] = outcome.TrashPath is not null, ["trashed"] = trashed });
         if (Settings.DebugHooks) Log.Event("debug_command", new() { ["message"] = message, ["trash_path"] = outcome.TrashPath, ["open_editor"] = outcome.OpenEditor });
         if (!string.IsNullOrEmpty(message)) (hud ??= new Hud()).Show(message);

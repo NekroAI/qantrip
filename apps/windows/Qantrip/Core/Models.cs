@@ -108,6 +108,8 @@ public sealed class CommandOutcome
     public string? OpenEditor { get; set; }
     /// 需要移到回收站的文件（/rm）
     public string? TrashPath { get; set; }
+    /// 应用操作：sync、settings、library、lang:auto|zh|en
+    public string? Action { get; set; }
 }
 
 /// qt_run_command 的返回值：成功时带 outcome，失败时带 error。

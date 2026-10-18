@@ -149,7 +149,32 @@ final class LauncherController: NSObject, NSWindowDelegate {
         if let name = outcome.openEditor {
             LibraryWindow.show(select: name)
         }
-        if !outcome.message.isEmpty { hud.show(outcome.message) }
+        var message = outcome.message
+        switch outcome.action ?? "" {
+        case "sync":
+            let started = MainActor.assumeIsolated { () -> Bool in
+                let sync = SyncService.shared
+                guard sync.enrolled else { return false }
+                sync.syncNow()
+                return true
+            }
+            if started {
+                message = L("正在同步…", "Syncing…")
+            } else {
+                (NSApp.delegate as? AppDelegate)?.openSyncSettings()
+            }
+        case "settings":
+            (NSApp.delegate as? AppDelegate)?.openSettings()
+        case "library":
+            LibraryWindow.show()
+        case let a where a.hasPrefix("lang:"):
+            if let choice = LanguageChoice(rawValue: String(a.dropFirst(5))) {
+                AppSettings.shared.templateLanguage = choice
+            }
+        default:
+            break
+        }
+        if !message.isEmpty { hud.show(message) }
     }
 
     func insert(_ text: String, target override: NSRunningApplication? = nil, expand: Bool = false) {

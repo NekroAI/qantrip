@@ -26,6 +26,8 @@ pub struct CommandOutcome {
     pub open_editor: Option<String>,
     /// 需要移到废纸篓的文件（`/rm`）
     pub trash_path: Option<String>,
+    /// 由外壳执行的应用操作：`sync`、`settings`、`library`、`lang:auto|zh|en`（内置模板语言）
+    pub action: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,9 +37,26 @@ enum Cmd {
     Dup,
     Alias,
     Rm,
+    Sync,
+    Settings,
+    Library,
+    Lang,
 }
 
-const COMMANDS: &[(Cmd, &str)] = &[(Cmd::New, "new"), (Cmd::Edit, "edit"), (Cmd::Dup, "dup"), (Cmd::Alias, "alias"), (Cmd::Rm, "rm")];
+const COMMANDS: &[(Cmd, &str)] = &[
+    (Cmd::New, "new"),
+    (Cmd::Edit, "edit"),
+    (Cmd::Dup, "dup"),
+    (Cmd::Alias, "alias"),
+    (Cmd::Rm, "rm"),
+    (Cmd::Sync, "sync"),
+    (Cmd::Settings, "settings"),
+    (Cmd::Library, "library"),
+    (Cmd::Lang, "lang"),
+];
+
+/// `/lang` 的取值：(值, 中文说明, 英文说明)
+const LANGS: &[(&str, &str, &str)] = &[("auto", "跟随界面语言", "Same as the interface"), ("zh", "中文", "Chinese"), ("en", "English", "English")];
 
 impl Cmd {
     fn usage(self, loc: Locale) -> String {
@@ -47,6 +66,10 @@ impl Cmd {
             Cmd::Dup => tr!(loc, "/dup 名称 新名称", "/dup name new-name"),
             Cmd::Alias => tr!(loc, "/alias 名称 别名", "/alias name alias"),
             Cmd::Rm => tr!(loc, "/rm 名称", "/rm name"),
+            Cmd::Sync => "/sync".into(),
+            Cmd::Settings => "/settings".into(),
+            Cmd::Library => tr!(loc, "/library [名称]", "/library [name]"),
+            Cmd::Lang => "/lang auto|zh|en".into(),
         }
     }
 
@@ -60,6 +83,10 @@ impl Cmd {
                 let (zh, en) = trash_word();
                 tr!(loc, "删除模板（移到{zh}）", "Delete a template (moves it to the {en})")
             }
+            Cmd::Sync => tr!(loc, "立即同步", "Sync now"),
+            Cmd::Settings => tr!(loc, "打开设置", "Open settings"),
+            Cmd::Library => tr!(loc, "打开模板库", "Open the template library"),
+            Cmd::Lang => tr!(loc, "切换内置模板的语言", "Switch the built-in templates' language"),
         }
     }
 }
@@ -262,6 +289,7 @@ enum Plan {
     Write { path: PathBuf, source: String, message: String, open: Option<String> },
     Open { name: String },
     Trash { path: PathBuf, name: String },
+    Action { action: String, message: String },
 }
 
 struct Outcome {
@@ -353,7 +381,8 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         ctx.token(TokenKind::CommandUnknown, first.start, first.end);
         if a.candidates.is_empty() {
             let w = first.text;
-            ctx.error(tr!(loc, "未知指令 {w}，可用：/new /edit /dup /alias /rm", "Unknown command {w}. Available: /new /edit /dup /alias /rm"), first.start, first.end, !ends_ws);
+            let all = COMMANDS.iter().map(|(_, n)| format!("/{n}")).collect::<Vec<_>>().join(" ");
+            ctx.error(tr!(loc, "未知指令 {w}，可用：{all}", "Unknown command {w}. Available: {all}"), first.start, first.end, !ends_ws);
         }
         a.hint = tr!(loc, "指令模式", "Command mode");
         return finish(ctx, a, None);
@@ -590,12 +619,92 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 }
             }
         }
+        Cmd::Sync | Cmd::Settings => {
+            if let Some(w) = arg(1) {
+                ctx.error(tr!(loc, "这个指令不需要参数", "This command takes no arguments"), w.start, input.len(), false);
+                return finish(ctx, a, None);
+            }
+            let (action, hint) = match cmd {
+                Cmd::Sync => ("sync", tr!(loc, "↩ 立即同步", "↩ sync now")),
+                _ => ("settings", tr!(loc, "↩ 打开设置", "↩ open settings")),
+            };
+            a.hint = hint;
+            Some(Plan::Action { action: action.into(), message: String::new() })
+        }
+        Cmd::Library => {
+            suggest_templates(&mut a, 1, false);
+            match arg(1) {
+                None => {
+                    a.hint = tr!(loc, "↩ 打开模板库", "↩ open the template library");
+                    Some(Plan::Action { action: "library".into(), message: String::new() })
+                }
+                Some(w) => {
+                    ctx.token(TokenKind::Positional, w.start, w.end);
+                    match find_template(lib, w.text) {
+                        None => {
+                            let n = w.text;
+                            ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                            None
+                        }
+                        Some(t) => {
+                            let n = t.name.clone();
+                            a.template = Some(template_info(t));
+                            a.preview = Some(plain_preview(&t.source));
+                            a.hint = tr!(loc, "↩ 在模板库中打开 {n}", "↩ open {n} in the library");
+                            Some(Plan::Open { name: n })
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::Lang => {
+            let current = arg(1).filter(|_| ws.len() == 2 && !ends_ws);
+            if current.is_some() || (ws.len() == 1 && ends_ws) {
+                let prefix = current.map(|w| w.text.to_lowercase()).unwrap_or_default();
+                let (start, end) = current.map(|w| (w.start, w.end)).unwrap_or((input.len(), input.len()));
+                for (v, zh, en) in LANGS.iter().filter(|(v, _, _)| v.starts_with(&prefix)) {
+                    a.candidates.push(Candidate {
+                        kind: CandidateKind::Choice,
+                        key: v.to_string(),
+                        title: v.to_string(),
+                        subtitle: if loc == Locale::Zh { zh.to_string() } else { en.to_string() },
+                        detail: String::new(),
+                        edit: Edit { start: u16(input, start), end: u16(input, end), text: v.to_string() },
+                        tier: Some(MatchTier::Prefix),
+                        active: false,
+                        section: String::new(),
+                    });
+                }
+                if let (Some(w), Some(c)) = (current, a.candidates.first())
+                    && c.title.len() > w.text.len()
+                {
+                    a.ghost = Some(c.title[w.text.len()..].to_string());
+                }
+            }
+            let Some(w) = arg(1) else {
+                a.hint = tr!(loc, "选择 auto、zh 或 en", "Choose auto, zh or en");
+                return finish(ctx, a, None);
+            };
+            ctx.token(TokenKind::OptionValue, w.start, w.end);
+            match LANGS.iter().find(|(v, _, _)| *v == w.text.to_lowercase()) {
+                None => {
+                    ctx.error(tr!(loc, "可选：auto、zh、en", "Options: auto, zh, en"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                    None
+                }
+                Some((v, zh, en)) => {
+                    let label = if loc == Locale::Zh { *zh } else { *en };
+                    a.hint = tr!(loc, "↩ 内置模板改用：{label}", "↩ built-in templates in: {label}");
+                    Some(Plan::Action { action: format!("lang:{v}"), message: tr!(loc, "内置模板语言：{label}", "Built-in templates: {label}") })
+                }
+            }
+        }
     };
     finish(ctx, a, plan)
 }
 
 fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
+    let hard_errors = ctx.diags.iter().any(|d| d.severity == Severity::Error && !d.at_cursor);
     a.tokens = ctx.tokens;
     a.diagnostics = ctx.diags;
     let plan = plan.filter(|_| !errors);
@@ -604,7 +713,8 @@ fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
         Some(_) => EnterAction::Run { confirm: false },
         // 正在输入指令名：回车补全为第一个候选
         None => match a.candidates.first() {
-            Some(c) if c.kind == CandidateKind::Template && !errors => EnterAction::Complete { edit: c.edit.clone() },
+            // 正在输入的词上的错误不妨碍补全
+            Some(c) if !hard_errors => EnterAction::Complete { edit: c.edit.clone() },
             _ => EnterAction::Blocked,
         },
     };
@@ -631,9 +741,10 @@ pub fn run(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Optio
             }
             let tmp = path.with_extension("md.tmp");
             std::fs::write(&tmp, &source).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())?;
-            Ok(CommandOutcome { message, open_editor: open, trash_path: None })
+            Ok(CommandOutcome { message, open_editor: open, trash_path: None, action: None })
         }
-        Plan::Open { name } => Ok(CommandOutcome { message: String::new(), open_editor: Some(name), trash_path: None }),
+        Plan::Open { name } => Ok(CommandOutcome { message: String::new(), open_editor: Some(name), trash_path: None, action: None }),
+        Plan::Action { action, message } => Ok(CommandOutcome { message, open_editor: None, trash_path: None, action: Some(action) }),
         Plan::Trash { path, name } => Ok(CommandOutcome {
             message: {
                 let (zh, en) = trash_word();
@@ -641,6 +752,7 @@ pub fn run(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Optio
             },
             open_editor: None,
             trash_path: Some(path.to_string_lossy().to_string()),
+            action: None,
         }),
     }
 }
@@ -733,10 +845,28 @@ mod tests {
     }
 
     #[test]
+    fn app_actions() {
+        let lib = Library::load(None);
+        let act = |input: &str| run(&lib, None, input, None).map(|o| o.action);
+        assert_eq!(act("/sync").unwrap().as_deref(), Some("sync"));
+        assert_eq!(act("/settings").unwrap().as_deref(), Some("settings"));
+        assert_eq!(act("/library").unwrap().as_deref(), Some("library"));
+        assert_eq!(run(&lib, None, "/library review", None).unwrap().open_editor.as_deref(), Some("review"));
+        assert_eq!(act("/lang EN").unwrap().as_deref(), Some("lang:en"));
+        assert!(act("/lang fr").is_err());
+        assert!(act("/sync now").is_err());
+        let a = analyze(&lib, None, "/lang ", None);
+        assert_eq!(a.candidates.len(), 3);
+        assert_eq!(analyze(&lib, None, "/lang z", None).ghost.as_deref(), Some("h"));
+        assert!(matches!(analyze(&lib, None, "/lang z", None).enter, EnterAction::Complete { .. }));
+        assert_eq!(analyze(&lib, None, "/s", None).candidates.len(), 2);
+    }
+
+    #[test]
     fn command_completion() {
         let lib = Library::load(None);
         let a = analyze(&lib, None, "/", None);
-        assert_eq!(a.candidates.len(), 5);
+        assert_eq!(a.candidates.len(), 9);
         let a = analyze(&lib, None, "/n", None);
         assert_eq!(a.ghost.as_deref(), Some("ew "));
         assert!(matches!(a.enter, EnterAction::Complete { .. }));
