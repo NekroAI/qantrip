@@ -177,9 +177,11 @@ internal sealed class UpdateChecker
     }
 
     /// 在默认浏览器中打开发布页
+    /// 直接下载这个版本的安装程序（浏览器开始下载），不打开发布页
     public static void OpenReleasePage(Release r)
     {
-        try { Process.Start(new ProcessStartInfo(r.Url) { UseShellExecute = true }); }
+        var url = $"https://github.com/NekroAI/qantrip/releases/download/v{r.Version}/Qantrip-{r.Version}-Windows-x64-Setup.exe";
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception e) { Log.Error("open_release", e); }
     }
 }
