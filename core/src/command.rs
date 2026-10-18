@@ -92,9 +92,15 @@ impl Cmd {
     }
 }
 
-/// 系统回收站的叫法（中文, 英文）
+/// 系统回收站的叫法（中文, 英文）：macOS 为废纸篓，Windows 为回收站，Linux 桌面（GNOME / KDE）为回收站 / Trash
 fn trash_word() -> (&'static str, &'static str) {
-    if cfg!(target_os = "windows") { ("回收站", "Recycle Bin") } else { ("废纸篓", "Trash") }
+    if cfg!(target_os = "windows") {
+        ("回收站", "Recycle Bin")
+    } else if cfg!(target_os = "macos") {
+        ("废纸篓", "Trash")
+    } else {
+        ("回收站", "Trash")
+    }
 }
 
 fn is_builtin_name(lib: &Library, name: &str) -> bool {
@@ -704,7 +710,8 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                     a.preview = Some(plain_preview(src));
                 }
                 a.hint = if changed.is_some() {
-                    tr!(loc, "↩ 恢复 {n} 的内置版本（你的修改移到废纸篓）", "↩ restore the built-in {n} (your version goes to the Trash)")
+                    let (zh, en) = trash_word();
+                    tr!(loc, "↩ 恢复 {n} 的内置版本（你的修改移到{zh}）", "↩ restore the built-in {n} (your version goes to the {en})")
                 } else {
                     tr!(loc, "↩ 恢复 {n}", "↩ restore {n}")
                 };
