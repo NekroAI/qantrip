@@ -91,6 +91,25 @@ D9 的目标在微软拼音下达成。模拟 Shift 依赖输入法的中英切�
 - 同步状态与密钥文件已移到 `%LOCALAPPDATA%`（不漫游），避免域环境的漫游配置文件把设备身份带到另一台电脑。
 - 模板库窗口在界面语言切换后不会即时重建（重新打开即可）；源码编辑器没有语法高亮。
 
+## 第四轮（2026-10-18）：按触发原因同步、账号设备、排除的程序
+
+| 项 | 结果 | 依据 |
+|---|---|---|
+| C ABI | 通过 | `qt_sync_new` 增加设备名称 / 平台 / 应用版本三个参数（核心 `DeviceLabel`）；`qt_sync_call` 新增 `maybe_sync`（`trigger`：`manual` / `timer` / `panel_opened` / `local_change` / `launch` / `wake`，未发请求时返回 `null`）、`account_devices`、`release_device`（`grant_id`）、`account_usage`；状态增加 `usage`、`pending_joins`、`policy`、`next_push_at`、`device_limit`，错误增加 `device_limit`（带 `max_devices`）。Windows 上核心 110 项、`qantrip-ffi` 10 项测试通过（新增：未登录时各自动触发返回 `null` 且不联网、未知触发原因与缺少 / 非法 `grant_id` 返回 `invalid_input`、新状态字段的默认值、`device_limit` 错误与账号设备的 JSON 形状）。不需要修改 `core/src` |
+| 同步触发 | 已构建，未实测 | 与 macOS 相同：60 秒定时 `timer`（锁屏 `WTS_SESSION_LOCK`、睡眠 `PBT_APMSUSPEND`、显示器关闭 `GUID_CONSOLE_DISPLAY_STATE` 时跳过，三者都恢复后 `wake`）、启动 `launch`、唤起面板 `panel_opened`（后台执行）、模板目录变化 8 秒后 `local_change`、在 `next_push_at` 再试一次上传；加入请求只在 `pending_joins > 0` 或同步页可见时查询 |
+| 设置 › 同步 | 已构建，未实测 | 云端用量条、自动上传时间、账号设备列表（标签、相对时间、解除需确认，本机为退出登录）、已退出登录但仍在保险库中的设备"从保险库移除"、超出设备上限页面；`QANTRIP_DEBUG_SYNC_MOCK=limit` 模拟超出上限，`enrolled` 增加了用量与设备数据 |
+| 排除的程序（D35） | 已构建，未实测 | 设置 › 通用 › 排除的程序（`excludedApps`: `[{path, name}]`，保留其他键）；`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 进程外回调 → `QueryFullProcessImageName` → 在排除列表中时 `UnregisterHotKey`，切到其他程序或 Qantrip 自己的窗口时重新注册；托盘菜单"在「X」中停用 / 恢复快捷键" |
+
+实现要点：
+
+- **前台跟踪：** 回调在创建钩子的 UI 线程上分发，不跳过本进程（切到 Qantrip 自己的窗口时也要恢复快捷键）。UWP 应用的顶层窗口属于 `ApplicationFrameHost.exe`，取其中 `Windows.UI.Core.CoreWindow` 子窗口的进程。点击托盘图标时前台先变成任务栏（`Shell_TrayWnd` 等外壳窗口），托盘菜单项因此针对"最后一个既不是 Qantrip、也不是外壳窗口"的前台程序；此时快捷键已经恢复（前台是任务栏），菜单关闭后回到该程序才重新暂停。
+- **暂停与录制：** `HotKey.SetPaused` 只恢复由它注销的热键；录制新快捷键时的注销不会被前台变化意外恢复（录制期间前台是设置窗口）。
+- **锁屏 / 睡眠：** 隐藏的消息窗口是顶层窗口（不是 message-only），因此能收到 `WM_POWERBROADCAST`；现代待机下不一定有 `PBT_APMSUSPEND`，显示器关闭通知覆盖了这种情况。
+
+注意：
+
+- 本轮只在负责人的电脑上通过 SSH 构建并运行单元测试（负责人可能正在使用这台电脑，没有运行界面、热键或剪贴板测试）。排除的程序、托盘菜单项、锁屏 / 唤醒触发、同步页新界面都需要在交互会话中验证；真实的设备上限与解除需要服务端配合。
+
 ## 测试方法
 
 - 通过 SSH 启动的进程在非交互会话（session 0），看不到窗口、热键也注册不到桌面。`tests/windows/irun.ps1` 注册一个"仅交互"计划任务，经 `wscript`（GUI 子系统，不弹控制台、不抢前台）在已登录桌面上运行测试脚本并收集输出。

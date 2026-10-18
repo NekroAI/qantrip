@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Qantrip.Core;
 using Qantrip.Platform;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using Windows.System;
 using Windows.UI.Core;
 using static Qantrip.Platform.Win32;
@@ -33,6 +34,8 @@ internal sealed class SettingsWindow : Window
     private NavigationView? nav;
     private HotKeyRecorder? recorder;
     private SyncPage? syncPage;
+    /// 通用页中"排除的程序"列表的容器（列表变化时只重建它）
+    private StackPanel? excludedHost;
     /// 当前页面：general / sync
     private string page = "general";
 
@@ -205,6 +208,13 @@ internal sealed class SettingsWindow : Window
                 "Simulates one Shift press (the Chinese/English toggle of Microsoft Pinyin and most IMEs). Turn it off if you changed your IME’s toggle key."),
             shift));
 
+        // 排除的程序（D35）
+        page.Children.Add(Section(Loc.T("排除的程序", "Excluded apps")));
+        excludedHost = new StackPanel { Spacing = 4 };
+        AutomationProperties.SetAutomationId(excludedHost, "excludedApps");
+        page.Children.Add(excludedHost);
+        BuildExcludedApps();
+
         // 隐私
         page.Children.Add(Section(Loc.T("隐私", "Privacy")));
         page.Children.Add(Card("", Loc.T("记录使用习惯", "Record usage"),
@@ -217,6 +227,122 @@ internal sealed class SettingsWindow : Window
         page.Children.Add(Section(Loc.T("关于", "About")));
         page.Children.Add(About());
         return page;
+    }
+
+    // MARK: 排除的程序（D35）
+
+    /// 重建排除列表（设置或托盘菜单修改 excludedApps 后调用）。推迟到当前事件处理结束，避免在按钮 / 菜单的事件中移除它自己。
+    public void RefreshExcludedApps() => DispatcherQueue.TryEnqueue(BuildExcludedApps);
+
+    private void BuildExcludedApps()
+    {
+        if (excludedHost is null) return;
+        excludedHost.Children.Clear();
+        foreach (var app in Settings.ExcludedApps) excludedHost.Children.Add(ExcludedRow(app));
+
+        var menu = new MenuFlyout();
+        menu.Opening += (_, _) => FillAddMenu(menu);
+        var add = new DropDownButton { Content = Loc.T("添加程序…", "Add app…"), Flyout = menu };
+        AutomationProperties.SetAutomationId(add, "excludedAdd");
+        var text = new TextBlock
+        {
+            Text = Loc.T("在这些程序里按快捷键不会唤起 Qantrip，按键照常交给程序本身（例如 Outlook 的 Ctrl+Q）。也可以在托盘菜单中一键停用当前程序；从托盘打开面板不受影响。",
+                "In these apps the shortcut doesn't open Qantrip and goes to the app as usual (for example Ctrl+Q in Outlook). You can also disable the current app from the tray menu; opening the panel from the tray still works."),
+            FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center,
+        };
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(text);
+        Grid.SetColumn(add, 1);
+        add.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(add);
+        excludedHost.Children.Add(CardBorder(grid));
+    }
+
+    private static Border CardBorder(UIElement child) => new()
+    {
+        Child = child, Padding = new Thickness(16, 12, 16, 12), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
+        Background = Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"),
+    };
+
+    /// 一个排除的程序：图标 | 名称 + 路径 | 移除
+    private FrameworkElement ExcludedRow(ExcludedApp app)
+    {
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = new Grid { Width = 24, Height = 24, VerticalAlignment = VerticalAlignment.Center };
+        icon.Children.Add(new FontIcon { Glyph = "\uECAA", FontSize = 18, FontFamily = Theme.Icons });
+        var image = new Image { Width = 24, Height = 24 };
+        icon.Children.Add(image);
+        LoadIcon(image, app.Path);
+        grid.Children.Add(icon);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = app.Name, TextTrimming = TextTrimming.CharacterEllipsis });
+        var path = new TextBlock { Text = app.Path, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = Res("TextFillColorSecondaryBrush") };
+        ToolTipService.SetToolTip(path, app.Path);
+        text.Children.Add(path);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        var remove = new Button { Content = Loc.T("移除", "Remove"), VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAutomationId(remove, "excludedRemove_" + Path.GetFileNameWithoutExtension(app.Path));
+        AutomationProperties.SetName(remove, Loc.T($"移除 {app.Name}", $"Remove {app.Name}"));
+        remove.Click += (_, _) => Settings.SetExcluded(app.Path, app.Name, false); // Settings.Changed → RefreshExcludedApps
+        Grid.SetColumn(remove, 2);
+        grid.Children.Add(remove);
+        return CardBorder(grid);
+    }
+
+    /// 程序图标（外壳缩略图）；文件不存在或读取失败时保留默认图标。
+    private static async void LoadIcon(Image image, string path)
+    {
+        try
+        {
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+            using var thumb = await file.GetThumbnailAsync(Windows.Storage.FileProperties.ThumbnailMode.SingleItem, 32);
+            if (thumb is null) return;
+            var bmp = new BitmapImage();
+            await bmp.SetSourceAsync(thumb);
+            image.Source = bmp;
+        }
+        catch { }
+    }
+
+    /// "添加程序"菜单：有可见窗口的正在运行的程序 + 浏览 .exe
+    private void FillAddMenu(MenuFlyout menu)
+    {
+        menu.Items.Clear();
+        List<(string Path, string Name)> running;
+        try { running = Apps.WithVisibleWindows().Where(a => !Settings.IsExcluded(a.Path)).ToList(); }
+        catch (Exception e) { Log.Error("running_apps", e); running = new(); }
+        if (running.Count == 0)
+            menu.Items.Add(new MenuFlyoutItem { Text = Loc.T("没有其他正在运行的程序", "No other running apps"), IsEnabled = false });
+        foreach (var (path, name) in running)
+        {
+            var item = new MenuFlyoutItem { Text = name };
+            ToolTipService.SetToolTip(item, path);
+            item.Click += (_, _) => Settings.SetExcluded(path, name, true);
+            menu.Items.Add(item);
+        }
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var browse = new MenuFlyoutItem { Text = Loc.T("浏览程序文件…", "Browse for a program…"), Icon = new FontIcon { Glyph = "\uE8DA", FontFamily = Theme.Icons } };
+        AutomationProperties.SetAutomationId(browse, "excludedBrowse");
+        browse.Click += async (_, _) =>
+        {
+            try
+            {
+                var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder };
+                picker.FileTypeFilter.Add(".exe");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+                var file = await picker.PickSingleFileAsync();
+                if (file is null) return;
+                Settings.SetExcluded(file.Path, Apps.DisplayName(file.Path), true);
+            }
+            catch (Exception e) { Log.Error("exclude_browse", e); }
+        };
+        menu.Items.Add(browse);
     }
 
     internal static TextBlock Section(string title) => new()
@@ -319,7 +445,7 @@ internal sealed class SettingsWindow : Window
 
     // MARK: 关于
 
-    private static string Version
+    internal static string Version
     {
         get
         {

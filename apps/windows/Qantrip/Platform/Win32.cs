@@ -108,6 +108,38 @@ internal static class Win32
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 8;
     public const int TokenElevation = 20;
 
+    // MARK: 前台跟踪与窗口枚举（排除的程序，D35）
+
+    public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr param);
+    [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc proc, uint pid, uint thread, uint flags);
+    [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr param);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string? cls, string? name);
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int value, int size);
+    public const uint EVENT_SYSTEM_FOREGROUND = 3, WINEVENT_OUTOFCONTEXT = 0;
+    public const uint GW_OWNER = 4;
+    public const int DWMWA_CLOAKED = 14;
+
+    // MARK: 会话与电源（同步：锁屏、睡眠、显示器关闭时暂停定时检查）
+
+    [DllImport("wtsapi32.dll")] public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, uint flags);
+    [DllImport("wtsapi32.dll")] public static extern bool WTSUnRegisterSessionNotification(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr RegisterPowerSettingNotification(IntPtr recipient, ref Guid setting, uint flags);
+    [DllImport("user32.dll")] public static extern bool UnregisterPowerSettingNotification(IntPtr handle);
+    public const uint NOTIFY_FOR_THIS_SESSION = 0, DEVICE_NOTIFY_WINDOW_HANDLE = 0;
+    public const int WM_WTSSESSION_CHANGE = 0x02B1, WTS_SESSION_LOCK = 7, WTS_SESSION_UNLOCK = 8;
+    public const int WM_POWERBROADCAST = 0x0218, PBT_APMSUSPEND = 4, PBT_APMRESUMESUSPEND = 7, PBT_APMRESUMEAUTOMATIC = 0x12, PBT_POWERSETTINGCHANGE = 0x8013;
+    /// 显示器状态（0 关闭、1 打开、2 变暗）
+    public static Guid GUID_CONSOLE_DISPLAY_STATE = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
+
+    // MARK: 计算机名
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool GetComputerNameEx(int type, char[]? buf, ref int size);
+    public const int ComputerNamePhysicalDnsHostname = 5;
+
     // MARK: 消息窗口与托盘
 
     public delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);

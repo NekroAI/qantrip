@@ -98,6 +98,43 @@ internal static class Settings
     /// 首次启动引导已完成
     public static bool OnboardingDone { get => Bool("onboardingDone", false); set => Set("onboardingDone", value); }
 
+    private static List<ExcludedApp>? excluded;
+
+    /// 排除的程序（D35，按 exe 完整路径）：前台是这些程序时暂停唤起快捷键。`excludedApps`: [{"path","name"}]
+    public static IReadOnlyList<ExcludedApp> ExcludedApps
+    {
+        get
+        {
+            if (excluded != null) return excluded;
+            var list = new List<ExcludedApp>();
+            if (values.TryGetValue("excludedApps", out var v) && v.ValueKind == JsonValueKind.Array)
+                foreach (var e in v.EnumerateArray())
+                {
+                    if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("path", out var p) || p.ValueKind != JsonValueKind.String) continue;
+                    var path = p.GetString()!;
+                    if (path.Length == 0 || list.Any(a => a.Is(path))) continue;
+                    var name = e.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString()! : Path.GetFileNameWithoutExtension(path);
+                    list.Add(new ExcludedApp(path, name));
+                }
+            return excluded = list;
+        }
+        set
+        {
+            excluded = null;
+            Set("excludedApps", value.Select(a => new { path = a.Path, name = a.Name }).ToList());
+        }
+    }
+
+    public static bool IsExcluded(string? path) => path != null && ExcludedApps.Any(a => a.Is(path));
+
+    /// 加入或移出排除列表
+    public static void SetExcluded(string path, string name, bool exclude)
+    {
+        var list = ExcludedApps.Where(a => !a.Is(path)).ToList();
+        if (exclude) list.Add(new ExcludedApp(path, name));
+        ExcludedApps = list;
+    }
+
     /// 调试钩子（仅开发测试）：记录最后一次插入的文本，便于回归脚本比对
     public static bool DebugHooks => Environment.GetEnvironmentVariable("QANTRIP_DEBUG_HOOKS") == "1";
 
@@ -120,8 +157,14 @@ internal static class Settings
     {
         ["hotKey"] = HotKey, ["language"] = Language, ["templateLanguage"] = TemplateLanguage, ["copyOnly"] = CopyOnly,
         ["expandPasteEnabled"] = ExpandPasteEnabled, ["forceAsciiInput"] = ForceAsciiInput, ["imeShiftToggle"] = ImeShiftToggle,
-        ["recordUsage"] = RecordUsage,
+        ["recordUsage"] = RecordUsage, ["excludedApps"] = ExcludedApps.Count,
     };
+}
+
+/// 排除的程序：exe 完整路径与显示名称（添加时的文件说明）。路径不区分大小写。
+internal sealed record ExcludedApp(string Path, string Name)
+{
+    public bool Is(string path) => string.Equals(Path, path, StringComparison.OrdinalIgnoreCase);
 }
 
 /// 界面文字：按界面语言选择中文或英文。

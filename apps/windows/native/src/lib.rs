@@ -521,7 +521,15 @@ mod tests {
         let tpl = s(dir.join("templates").to_str().unwrap());
         let secrets = s(dir.join("sync").join("secrets.bin").to_str().unwrap());
         // 不可达的地址：构造与读取状态都不发网络请求
-        let c = sync::qt_sync_new(s("http://127.0.0.1:9").as_ptr(), data.as_ptr(), tpl.as_ptr(), secrets.as_ptr());
+        let c = sync::qt_sync_new(
+            s("http://127.0.0.1:9").as_ptr(),
+            data.as_ptr(),
+            tpl.as_ptr(),
+            secrets.as_ptr(),
+            s("TEST-PC").as_ptr(),
+            s("Windows 11 26200").as_ptr(),
+            s("0.0.0").as_ptr(),
+        );
         assert!(!c.is_null());
         let call = |op: &str, args: &str| parse(sync::qt_sync_call(c, s(op).as_ptr(), s(args).as_ptr()));
         let st = call("status", "{}");
@@ -530,6 +538,27 @@ mod tests {
         assert_eq!(st["value"]["has_vault"], false);
         assert_eq!(st["value"]["enrolled"], false);
         assert!(st["value"]["alerts"].as_array().unwrap().is_empty());
+        // v0.4 新字段：未收到服务端策略前为默认值
+        assert!(st["value"]["usage"].is_null());
+        assert_eq!(st["value"]["pending_joins"], 0);
+        assert_eq!(st["value"]["policy"]["check_interval_secs"], 3600);
+        assert_eq!(st["value"]["policy"]["panel_check_secs"], 900);
+        assert_eq!(st["value"]["policy"]["min_push_interval_secs"], 900);
+        assert!(st["value"]["next_push_at"].is_null());
+        assert!(st["value"]["device_limit"].is_null());
+        // 未登录、没有保险库：自动触发不发请求，返回 null
+        for t in ["timer", "panel_opened", "local_change", "launch", "wake"] {
+            let r = call("maybe_sync", &format!(r#"{{"trigger":"{t}"}}"#));
+            assert_eq!(r["ok"], true, "{t}: {r}");
+            assert!(r["value"].is_null(), "{t}: {r}");
+        }
+        assert_eq!(call("maybe_sync", r#"{"trigger":"bogus"}"#)["error"]["kind"], "invalid_input");
+        assert_eq!(call("maybe_sync", "{}")["error"]["kind"], "invalid_input");
+        // 账号设备与用量需要登录；解除设备先校验参数
+        assert_eq!(call("account_devices", "{}")["ok"], false);
+        assert_eq!(call("account_usage", "{}")["ok"], false);
+        assert_eq!(call("release_device", "{}")["error"]["kind"], "invalid_input");
+        assert_eq!(call("release_device", r#"{"grant_id":"../x"}"#)["error"]["kind"], "invalid_input");
         // 需要登录的操作返回结构化错误
         let r = call("sync_now", "{}");
         assert_eq!(r["ok"], false);

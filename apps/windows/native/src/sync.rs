@@ -8,7 +8,8 @@ use std::ffi::c_char;
 use std::sync::Arc;
 
 use qantrip_core::sync::{
-    DeviceInfo, JoinProgress, JoinRequest, JoinRequestStatus, JoinStage, PhraseLanguage, SyncClient, SyncError, SyncReport, SyncStatus,
+    AccountDevice, AccountDevices, DeviceInfo, DeviceLabel, JoinProgress, JoinRequest, JoinRequestStatus, JoinStage, PhraseLanguage, SyncClient,
+    SyncError, SyncReport, SyncStatus, SyncTrigger, SyncUsage,
 };
 use serde_json::{Value, json};
 
@@ -26,6 +27,51 @@ fn status_json(s: &SyncStatus) -> Value {
         "writes_blocked": s.writes_blocked,
         "alerts": s.alerts.iter().map(|a| json!({ "code": a.code, "message": a.message, "at": a.at })).collect::<Vec<_>>(),
         "busy": s.busy,
+        "usage": s.usage.as_ref().map(usage_json),
+        "pending_joins": s.pending_joins,
+        "policy": {
+            "check_interval_secs": s.policy.check_interval_secs,
+            "panel_check_secs": s.policy.panel_check_secs,
+            "min_push_interval_secs": s.policy.min_push_interval_secs,
+        },
+        "next_push_at": s.next_push_at,
+        "device_limit": s.device_limit,
+    })
+}
+
+fn usage_json(u: &SyncUsage) -> Value {
+    json!({ "bytes": u.bytes, "quota_bytes": u.quota_bytes, "records": u.records })
+}
+
+fn account_device_json(d: &AccountDevice) -> Value {
+    json!({
+        "grant_id": d.grant_id,
+        "device_id": d.device_id,
+        "name": d.name,
+        "platform": d.platform,
+        "app_version": d.app_version,
+        "created_at": d.created_at,
+        "last_seen_at": d.last_seen_at,
+        "is_self": d.is_self,
+        "limited": d.limited,
+        "in_vault": d.in_vault,
+    })
+}
+
+fn account_devices_json(a: &AccountDevices) -> Value {
+    json!({ "max_devices": a.max_devices, "devices": a.devices.iter().map(account_device_json).collect::<Vec<_>>() })
+}
+
+/// 触发原因的名称（snake_case，与 `SyncTrigger` 的变体对应）。
+fn trigger_of(name: &str) -> Option<SyncTrigger> {
+    Some(match name {
+        "manual" => SyncTrigger::Manual,
+        "timer" => SyncTrigger::Timer,
+        "panel_opened" => SyncTrigger::PanelOpened,
+        "local_change" => SyncTrigger::LocalChange,
+        "launch" => SyncTrigger::Launch,
+        "wake" => SyncTrigger::Wake,
+        _ => return None,
     })
 }
 
@@ -86,6 +132,7 @@ pub fn error_json(e: &SyncError) -> Value {
         SyncError::InvalidInput { .. } => json!({ "kind": "invalid_input", "message": msg }),
         SyncError::InvalidState { .. } => json!({ "kind": "invalid_state", "message": msg }),
         SyncError::Storage { .. } => json!({ "kind": "storage", "message": msg }),
+        SyncError::DeviceLimit { max_devices } => json!({ "kind": "device_limit", "max_devices": max_devices, "message": msg }),
     }
 }
 
@@ -137,6 +184,17 @@ pub fn dispatch(c: &SyncClient, op: &str, args: &Value) -> Result<Value, SyncErr
             Value::Null
         }
         "sync_now" => report_json(&c.sync_now()?),
+        "maybe_sync" => {
+            let name = arg(args, "trigger")?;
+            let trigger = trigger_of(&name).ok_or_else(|| invalid(&format!("未知的触发原因 {name}")))?;
+            c.maybe_sync(trigger)?.as_ref().map_or(Value::Null, report_json)
+        }
+        "account_devices" => account_devices_json(&c.account_devices()?),
+        "release_device" => {
+            c.release_device(arg(args, "grant_id")?)?;
+            Value::Null
+        }
+        "account_usage" => c.account_usage()?.as_ref().map_or(Value::Null, usage_json),
         "devices" => Value::Array(c.devices()?.iter().map(device_json).collect()),
         "revoke_device" => {
             let phrase = args.get("recovery_phrase").and_then(Value::as_str).map(str::to_string);
@@ -158,17 +216,22 @@ fn client<'a>(p: *const SyncClient) -> Option<&'a SyncClient> {
 }
 
 /// 创建同步客户端。`server_url`：后端地址；`data_dir`：同步状态目录；`template_dir`：用户模板目录；
-/// `secrets_path`：DPAPI 加密的密钥文件。失败返回空指针。
+/// `secrets_path`：DPAPI 加密的密钥文件；`device_name` / `platform` / `app_version`：登录与刷新令牌时上报的设备信息
+/// （如 "DESKTOP-01" / "Windows 11 26200" / "0.3.1"；核心负责清理与截断）。失败返回空指针。
 #[unsafe(no_mangle)]
 pub extern "C" fn qt_sync_new(
     server_url: *const c_char,
     data_dir: *const c_char,
     template_dir: *const c_char,
     secrets_path: *const c_char,
+    device_name: *const c_char,
+    platform: *const c_char,
+    app_version: *const c_char,
 ) -> *const SyncClient {
     guard(std::ptr::null(), || {
         let store = Arc::new(DpapiStore::new(str_or_empty(secrets_path)));
-        Arc::into_raw(SyncClient::new(str_or_empty(server_url), str_or_empty(data_dir), str_or_empty(template_dir), store))
+        let device = DeviceLabel { name: str_or_empty(device_name), platform: str_or_empty(platform), app_version: str_or_empty(app_version) };
+        Arc::into_raw(SyncClient::new(str_or_empty(server_url), str_or_empty(data_dir), str_or_empty(template_dir), store, device))
     })
 }
 
@@ -192,4 +255,61 @@ pub extern "C" fn qt_sync_call(c: *const SyncClient, op: *const c_char, args: *c
         Err(e) => json!({ "ok": false, "error": error_json(&e) }),
     };
     out(Some(v.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_limit_error() {
+        let e = error_json(&SyncError::DeviceLimit { max_devices: 3 });
+        assert_eq!(e["kind"], "device_limit");
+        assert_eq!(e["max_devices"], 3);
+        assert!(e["message"].as_str().unwrap().contains('3'));
+    }
+
+    #[test]
+    fn triggers() {
+        for (name, t) in [
+            ("manual", SyncTrigger::Manual),
+            ("timer", SyncTrigger::Timer),
+            ("panel_opened", SyncTrigger::PanelOpened),
+            ("local_change", SyncTrigger::LocalChange),
+            ("launch", SyncTrigger::Launch),
+            ("wake", SyncTrigger::Wake),
+        ] {
+            assert_eq!(trigger_of(name), Some(t));
+        }
+        assert_eq!(trigger_of("Timer"), None);
+        assert_eq!(trigger_of(""), None);
+    }
+
+    #[test]
+    fn account_devices_shape() {
+        let a = AccountDevices {
+            max_devices: 3,
+            devices: vec![AccountDevice {
+                grant_id: "g1".into(),
+                device_id: "D1".into(),
+                name: "DESKTOP".into(),
+                platform: "Windows 11 26200".into(),
+                app_version: "0.3.1".into(),
+                created_at: 10,
+                last_seen_at: 20,
+                is_self: true,
+                limited: false,
+                in_vault: true,
+            }],
+        };
+        let v = account_devices_json(&a);
+        assert_eq!(v["max_devices"], 3);
+        let d = &v["devices"][0];
+        assert_eq!(d["grant_id"], "g1");
+        assert_eq!(d["platform"], "Windows 11 26200");
+        assert_eq!(d["last_seen_at"], 20);
+        assert_eq!(d["is_self"], true);
+        assert_eq!(d["in_vault"], true);
+        assert_eq!(usage_json(&SyncUsage { bytes: 5, quota_bytes: 10, records: 2 })["quota_bytes"], 10);
+    }
 }

@@ -4,8 +4,8 @@ using static Qantrip.Platform.Win32;
 namespace Qantrip.Platform;
 
 /// <summary>
-/// 隐藏的顶层窗口（从不显示），接收全局热键、托盘图标回调、资源管理器重启（TaskbarCreated）
-/// 与第二个实例发来的"打开面板"消息。在 UI 线程创建，由 WinUI 的消息循环分发。
+/// 隐藏的顶层窗口（从不显示），接收全局热键、托盘图标回调、资源管理器重启（TaskbarCreated）、
+/// 第二个实例发来的"打开面板"消息，以及锁屏 / 睡眠 / 显示器开关通知。在 UI 线程创建，由 WinUI 的消息循环分发。
 /// </summary>
 internal sealed class MessageWindow : IDisposable
 {
@@ -24,8 +24,12 @@ internal sealed class MessageWindow : IDisposable
     public event Action? ShowRequested;
     public event Action? SettingsRequested;
     public event Action? LibraryRequested;
+    /// 锁屏、系统睡眠或显示器关闭时为 true，三者都恢复后为 false（只在状态变化时触发）
+    public event Action<bool>? AsleepChanged;
 
     private readonly WndProc proc; // 防止委托被回收
+    private bool locked, suspended, displayOff;
+    private IntPtr displayNotification;
 
     public MessageWindow()
     {
@@ -40,6 +44,18 @@ internal sealed class MessageWindow : IDisposable
         RegisterClassEx(ref wc);
         // WS_EX_TOOLWINDOW：不出现在任务栏与 Alt+Tab
         Handle = CreateWindowEx((uint)WS_EX_TOOLWINDOW, ClassName, "Nekro Qantrip", 0, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
+        // 隐藏的顶层窗口（不是 message-only 窗口）才能收到 WM_POWERBROADCAST
+        WTSRegisterSessionNotification(Handle, NOTIFY_FOR_THIS_SESSION);
+        displayNotification = RegisterPowerSettingNotification(Handle, ref GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE);
+    }
+
+    public bool Asleep => locked || suspended || displayOff;
+
+    private void SetAsleep(ref bool flag, bool value)
+    {
+        bool before = Asleep;
+        flag = value;
+        if (Asleep != before) AsleepChanged?.Invoke(Asleep);
     }
 
     private IntPtr Proc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -52,12 +68,36 @@ internal sealed class MessageWindow : IDisposable
             if (msg == ShowPanelMessage) { ShowRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowSettingsMessage) { SettingsRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowLibraryMessage) { LibraryRequested?.Invoke(); return IntPtr.Zero; }
+            if (msg == WM_WTSSESSION_CHANGE)
+            {
+                if ((int)wParam == WTS_SESSION_LOCK) SetAsleep(ref locked, true);
+                else if ((int)wParam == WTS_SESSION_UNLOCK) SetAsleep(ref locked, false);
+            }
+            else if (msg == WM_POWERBROADCAST)
+            {
+                switch ((int)wParam)
+                {
+                    case PBT_APMSUSPEND: SetAsleep(ref suspended, true); break;
+                    case PBT_APMRESUMESUSPEND or PBT_APMRESUMEAUTOMATIC: SetAsleep(ref suspended, false); break;
+                    case PBT_POWERSETTINGCHANGE when lParam != IntPtr.Zero:
+                        // POWERBROADCAST_SETTING：Guid（16 字节）、DataLength（4 字节）、Data
+                        var guid = Marshal.PtrToStructure<Guid>(lParam);
+                        if (guid == GUID_CONSOLE_DISPLAY_STATE) SetAsleep(ref displayOff, Marshal.ReadInt32(lParam, 20) == 0);
+                        break;
+                }
+                return (IntPtr)1;
+            }
         }
         catch (Exception e) { Log.Error("wndproc", e); }
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
-    public void Dispose() => DestroyWindow(Handle);
+    public void Dispose()
+    {
+        WTSUnRegisterSessionNotification(Handle);
+        if (displayNotification != IntPtr.Zero) UnregisterPowerSettingNotification(displayNotification);
+        DestroyWindow(Handle);
+    }
 }
 
 /// 基于 RegisterHotKey 的全局热键（无需任何权限；被占用时注册失败，不会抢占其他程序）。
@@ -69,6 +109,8 @@ internal sealed class HotKey : IDisposable
     public uint Key { get; private set; }
     public int LastError { get; private set; }
     public bool IsRegistered { get; private set; }
+    /// 因前台是排除的程序而暂时注销（D35）
+    public bool Paused { get; private set; }
     public event Action<int>? Pressed;
 
     public HotKey(MessageWindow window)
@@ -80,6 +122,7 @@ internal sealed class HotKey : IDisposable
     public bool Register(uint mods, uint vk)
     {
         Unregister();
+        Paused = false;
         Modifiers = mods; Key = vk;
         IsRegistered = RegisterHotKey(window.Handle, Id, mods | MOD_NOREPEAT, vk);
         LastError = IsRegistered ? 0 : Marshal.GetLastWin32Error();
@@ -90,6 +133,20 @@ internal sealed class HotKey : IDisposable
     {
         if (IsRegistered) UnregisterHotKey(window.Handle, Id);
         IsRegistered = false;
+    }
+
+    /// 前台切到排除的程序时暂停（注销，按键原样交给该程序），切走后重新注册（docs/decisions.md D35）。
+    /// 只恢复由暂停注销的热键；录制新快捷键时的注销（<see cref="Unregister"/>）不受影响。
+    public void SetPaused(bool pause)
+    {
+        if (pause == Paused) return;
+        if (pause)
+        {
+            if (!IsRegistered) return;
+            Unregister();
+            Paused = true;
+        }
+        else Register(Modifiers, Key);
     }
 
     public string Describe() => HotKeySpec.Format(Modifiers, Key);
@@ -113,6 +170,9 @@ internal sealed class TrayIcon : IDisposable
     public Func<string>? OpenLabel, SettingsLabel, LibraryLabel, GuideLabel, QuitLabel;
     /// 有设备等待加入同步时显示的菜单项（null 表示不显示）
     public Func<string?>? SyncLabel;
+    /// "在「X」中停用 / 恢复快捷键"（null 表示不显示）；在菜单打开前取值（此时前台已经变成任务栏）
+    public Func<string?>? ExclusionLabel;
+    public event Action? ToggleExclusion;
 
     public TrayIcon(MessageWindow window, string iconPath, string tip)
     {
@@ -161,6 +221,7 @@ internal sealed class TrayIcon : IDisposable
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, (UIntPtr)1, OpenLabel?.Invoke() ?? "Open");
         if (SyncLabel?.Invoke() is { } sync) AppendMenu(menu, MF_STRING, (UIntPtr)6, sync);
+        if (ExclusionLabel?.Invoke() is { } exclusion) AppendMenu(menu, MF_STRING, (UIntPtr)7, exclusion);
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING, (UIntPtr)4, LibraryLabel?.Invoke() ?? "Template Library…");
         AppendMenu(menu, MF_STRING, (UIntPtr)3, SettingsLabel?.Invoke() ?? "Settings…");
@@ -179,6 +240,7 @@ internal sealed class TrayIcon : IDisposable
         if (cmd == 4) OpenLibrary?.Invoke();
         if (cmd == 5) OpenGuide?.Invoke();
         if (cmd == 6) OpenSync?.Invoke();
+        if (cmd == 7) ToggleExclusion?.Invoke();
     }
 
     public void Dispose()

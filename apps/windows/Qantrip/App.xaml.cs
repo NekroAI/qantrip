@@ -27,6 +27,7 @@ public partial class App : Application
     private FileSystemWatcher? watcher;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? reloadTimer;
     private Hud? hud;
+    private ForegroundWatcher? foreground;
     private bool submitting;
 
     public Engine? Engine => engine;
@@ -84,6 +85,7 @@ public partial class App : Application
             LibraryLabel = () => Loc.T("模板库…", "Template Library…"),
             GuideLabel = () => Loc.T("使用引导…", "Welcome Guide…"),
             SyncLabel = () => SyncService.Shared.PendingJoinCount > 0 ? Loc.T("有设备请求加入同步…", "A device wants to join sync…") : null,
+            ExclusionLabel = TrayExclusionLabel,
             QuitLabel = () => Loc.T("退出 Nekro Qantrip", "Quit Nekro Qantrip"),
         };
         tray.Open += () => Show("tray", -1);
@@ -91,6 +93,7 @@ public partial class App : Application
         tray.OpenLibrary += () => ShowLibrary(null);
         tray.OpenGuide += ShowOnboarding;
         tray.OpenSync += ActivateSettings;
+        tray.ToggleExclusion += ToggleExclusion;
         tray.Quit += Quit;
         Settings.Changed += OnSettingChanged;
         if (!hotKey.IsRegistered)
@@ -115,8 +118,14 @@ public partial class App : Application
         });
         Prewarm();
         WatchTemplates();
+        // 排除的程序（D35）：前台切到这些程序时暂停快捷键，让按键原样交给程序
+        foreground = new ForegroundWatcher();
+        foreground.Changed += _ => ApplyExclusion();
+        ApplyExclusion();
         // 同步：拉取到新内容后重新加载模板（D29 / sync-design）；启动只读本地状态，已加入时才联网
         SyncService.Shared.OnTemplatesChanged = ReloadTemplates;
+        messages.AsleepChanged += SyncService.Shared.SetAsleep;
+        SyncService.Shared.SetAsleep(messages.Asleep);
         SyncService.Shared.Start();
         if (Program.OpenSettingsOnLaunch) ShowSettings();
         if (Program.OpenLibraryOnLaunch) ShowLibrary(null);
@@ -209,6 +218,8 @@ public partial class App : Application
         panel.PlaceOn(target?.Hwnd ?? IntPtr.Zero);
         bool ok = panel.ShowActivated(out var method);
         var tShown = sw.Elapsed.TotalMilliseconds;
+        // 距上次检查足够久时在后台检查一次同步（核心按策略决定，面板不等待）
+        SyncService.Shared.PanelOpened();
         var fields = new Dictionary<string, object?>
         {
             ["source"] = source,
@@ -273,6 +284,7 @@ public partial class App : Application
     private void Quit()
     {
         watcher?.Dispose();
+        foreground?.Dispose();
         libraryWindow?.Close();
         onboarding?.Close();
         tray?.Dispose();
@@ -389,6 +401,10 @@ public partial class App : Application
             case "expandPasteEnabled":
                 panel?.ApplyLanguage();
                 break;
+            case "excludedApps":
+                ApplyExclusion();
+                settingsWindow?.RefreshExcludedApps();
+                break;
         }
         Log.Event("setting", new() { ["key"] = key });
     }
@@ -405,6 +421,37 @@ public partial class App : Application
         if (hotKey is null || hotKey.IsRegistered) return;
         var (mods, vk) = HotKeySpec.Parse(Settings.HotKey);
         hotKey.Register(mods, vk);
+        ApplyExclusion();
+    }
+
+    // MARK: 排除的程序（D35）
+
+    /// 前台程序在排除列表中时暂停快捷键（本程序的窗口除外）。从托盘显式打开面板不受影响。
+    private void ApplyExclusion()
+    {
+        if (hotKey is null || foreground is null) return;
+        bool pause = Settings.IsExcluded(foreground.Current);
+        if (pause == hotKey.Paused) return;
+        hotKey.SetPaused(pause);
+        Log.Event("hotkey_paused", new() { ["paused"] = hotKey.Paused, ["registered"] = hotKey.IsRegistered });
+    }
+
+    /// 托盘菜单项：针对打开托盘菜单之前用户正在使用的程序（点击托盘时前台已经变成任务栏）。
+    private string? TrayExclusionLabel()
+    {
+        if (foreground?.LastExternal is not { } path) return null;
+        var name = Apps.DisplayName(path).Replace("&", "&&"); // 菜单文字中 & 是助记符
+        return Settings.IsExcluded(path)
+            ? Loc.T($"在「{name}」中恢复快捷键", $"Re-enable Shortcut in “{name}”")
+            : Loc.T($"在「{name}」中停用快捷键", $"Disable Shortcut in “{name}”");
+    }
+
+    private void ToggleExclusion()
+    {
+        if (foreground?.LastExternal is not { } path) return;
+        bool exclude = !Settings.IsExcluded(path);
+        Settings.SetExcluded(path, Apps.DisplayName(path), exclude);
+        Log.Event("exclusion_toggle", new() { ["excluded"] = exclude });
     }
 
     /// 改用新的快捷键：注册成功才保存；失败（被其他程序占用）时恢复原快捷键并返回错误码。
