@@ -15,11 +15,11 @@ use zeroize::Zeroizing;
 use super::codec::{self, Fields};
 use super::crypto::{self, DeviceKeys};
 use super::files;
-use super::net::{Api, WireEnvelope, WireRecord, WriteReq, WriteResult};
+use super::net::{Api, Head, WireEnvelope, WireRecord, WireUsage, WriteReq, WriteResult};
 use super::record::{Body, Kind, MAX_COUNTER, Plaintext, StateEntry};
 use super::roster::Roster;
-use super::state::{LocalState, PeerEntry, RecordMeta, StoredAlert};
-use super::{SecretStore, SyncError, SyncReport};
+use super::state::{LocalState, PeerEntry, RecordMeta, StoredAlert, StoredPolicy, StoredUsage};
+use super::{SecretStore, SyncError, SyncReport, SyncTrigger};
 
 pub const SECRET_DEVICE_KEYS: &str = "device_keys";
 pub const SECRET_KEYRING: &str = "vault_keyring";
@@ -187,6 +187,23 @@ pub struct Core {
     pub login: Option<super::join::PendingLogin>,
     pub join_n: Option<super::join::JoinN>,
     pub join_e: BTreeMap<String, super::join::JoinE>,
+    /// 本地有尚未上传的变化（由 [`Core::has_local_changes`] 计算的缓存，供状态查询使用）
+    pub pending_local: bool,
+    /// 本进程发出的推送请求数（判断一轮同步是否真的上传过）
+    pub push_requests: u64,
+}
+
+/// 服务端下发的策略只接受合理范围内的值（服务端不可信：过小的间隔会让客户端频繁请求）。
+fn clamp_policy(p: &super::net::WirePolicy) -> StoredPolicy {
+    StoredPolicy {
+        check_interval_secs: p.check_interval_secs.clamp(60, 7 * 86_400),
+        panel_check_secs: p.panel_check_secs.clamp(60, 7 * 86_400),
+        min_push_interval_secs: p.min_push_interval_secs.min(86_400),
+    }
+}
+
+pub fn usage_of(u: &WireUsage) -> StoredUsage {
+    StoredUsage { bytes: u.bytes, quota_bytes: u.quota_bytes, records: u.records }
 }
 
 impl Core {
@@ -198,7 +215,7 @@ impl Core {
         });
         let join_n = super::join::load_join_n(&*secrets);
         let join_e = super::join::load_join_e(&*secrets);
-        Core {
+        let mut core = Core {
             api,
             secrets,
             server: server.to_string(),
@@ -211,7 +228,11 @@ impl Core {
             login: None,
             join_n,
             join_e,
-        }
+            pending_local: false,
+            push_requests: 0,
+        };
+        core.pending_local = core.has_local_changes();
+        core
     }
 
     pub fn now(&self) -> i64 {
@@ -650,22 +671,111 @@ impl Core {
 
     // MARK: 同步（§5）
 
+    /// 完整同步：版本检查、有变化时拉取、推送全部本地变化（手动同步，不受节流限制）。
     pub fn sync(&mut self) -> Result<SyncReport, SyncError> {
+        self.sync_with(true)
+    }
+
+    /// 按触发原因与服务端策略决定是否同步（§5.1）。返回 None 表示本次没有发出任何请求。
+    ///
+    /// - `Manual`：立即完整同步，不受节流限制。
+    /// - `Timer` / `PanelOpened`：距上次版本检查达到 `check_interval_secs` / `panel_check_secs` 才检查。
+    /// - `Launch` / `Wake`：立即检查。
+    /// - `LocalChange`：不单独检查。
+    ///
+    /// 任何触发下，只要本地有未上传的变化且距上次上传达到 `min_push_interval_secs`，都会上传
+    /// （上传前总是先做一次版本检查与必要的拉取）；否则只计算 `next_push_at`。
+    pub fn maybe_sync(&mut self, trigger: SyncTrigger) -> Result<Option<SyncReport>, SyncError> {
+        if trigger == SyncTrigger::Manual {
+            return self.sync().map(Some);
+        }
+        if self.state.vault_id.is_none() || self.roster.is_none() || !self.api.signed_in()? {
+            return Ok(None);
+        }
+        let now = self.now();
+        let policy = self.state.policy;
+        // 时钟回拨时视为已到期
+        let elapsed = |t: Option<i64>, secs: u32| t.is_none_or(|t| now < t || now - t >= secs as i64);
+        let check_due = match trigger {
+            SyncTrigger::Timer => elapsed(self.state.last_check, policy.check_interval_secs),
+            SyncTrigger::PanelOpened => elapsed(self.state.last_check, policy.panel_check_secs),
+            SyncTrigger::Launch | SyncTrigger::Wake => true,
+            SyncTrigger::LocalChange | SyncTrigger::Manual => false,
+        };
+        self.pending_local = self.has_local_changes();
+        // 超出设备数量限制时保险库请求都会被拒绝，不为本地变化单独发请求
+        let push = self.pending_local
+            && self.state.device_limit.is_none()
+            && self.state.writes_blocked.is_none()
+            && elapsed(self.state.last_auto_push, policy.min_push_interval_secs);
+        if !check_due && !push {
+            return Ok(None);
+        }
+        self.sync_with(push).map(Some)
+    }
+
+    /// 下次自动上传本地变化的时间：没有待上传的变化（或暂时无法上传）时为 None。
+    pub fn next_push_at(&self) -> Option<i64> {
+        if !self.pending_local || self.state.vault_id.is_none() || self.state.writes_blocked.is_some() || self.state.device_limit.is_some() {
+            return None;
+        }
+        let now = self.now();
+        let interval = self.state.policy.min_push_interval_secs as i64;
+        Some(self.state.last_auto_push.map_or(now, |t| if t > now { now } else { (t + interval).max(now) }))
+    }
+
+    /// `push`：是否上传本地变化（为 false 时只检查与拉取）。
+    pub fn sync_with(&mut self, push: bool) -> Result<SyncReport, SyncError> {
         self.new_alerts = 0;
         let mut report = SyncReport::default();
-        let result = self.sync_inner(&mut report);
+        let before = self.push_requests;
+        let result = self.sync_inner(&mut report, push);
         if result.is_ok() {
             self.state.last_sync = Some(self.now());
         }
+        if self.push_requests != before {
+            self.state.last_auto_push = Some(self.now());
+        }
+        self.pending_local = self.has_local_changes();
         self.save()?;
         report.alerts = self.new_alerts;
         result.map(|_| report)
     }
 
-    fn sync_inner(&mut self, report: &mut SyncReport) -> Result<(), SyncError> {
+    /// 记录版本检查返回的附加信息（待处理加入请求、用量、策略）。
+    fn note_head(&mut self, head: &Head) {
+        self.state.last_check = Some(self.now());
+        self.state.pending_joins = head.pending_joins.min(1000);
+        if let Some(u) = &head.usage {
+            self.state.usage = Some(usage_of(u));
+        }
+        if let Some(p) = &head.policy {
+            self.state.policy = clamp_policy(p);
+        }
+    }
+
+    /// 版本检查（§5.1）：先取头部，花名册长度变化时才拉取花名册。没有任何变化时只有这一个请求。
+    fn check(&mut self) -> Result<Head, SyncError> {
         let vault = self.vault()?;
+        let head = self.api.head(&vault)?;
+        self.note_head(&head);
+        let local = self.roster()?.len();
+        if head.roster_index < local {
+            // 与花名册接口返回较短长度时相同：截断
+            self.alert("roster_truncated", "服务端返回的花名册比本机已验证的更短（疑似截断），已停止写入");
+            self.state.writes_blocked = Some(u32::MAX);
+            self.save()?;
+            return Err(security("花名册被截断"));
+        }
+        if head.roster_index > local {
+            self.refresh_roster()?;
+        }
+        Ok(head)
+    }
+
+    fn sync_inner(&mut self, report: &mut SyncReport, push: bool) -> Result<(), SyncError> {
         let me = self.me()?;
-        self.refresh_roster()?;
+        let head = self.check()?;
         if !self.roster()?.is_enrolled(&me) {
             if self.roster()?.member(&me).is_some() {
                 self.alert("revoked", "本机已被移出保险库，同步已停止");
@@ -681,8 +791,7 @@ impl Core {
         }
         super::rotate::handle_pending(self, report)?;
 
-        let head = self.api.head(&vault)?;
-        if self.state.needs_full || self.state.last_seq == 0 || head.seq != self.state.last_seq || head.roster_index != self.roster()?.len() {
+        if self.state.needs_full || head.seq != self.state.last_seq || head.roster_index != self.roster()?.len() {
             self.pull(report)?;
         }
         self.reconcile();
@@ -690,10 +799,83 @@ impl Core {
             report.writes_blocked = true;
             return Ok(());
         }
-        std::fs::create_dir_all(&self.template_dir).map_err(|e| SyncError::Storage { message: format!("无法创建模板目录：{e}") })?;
-        self.push_local(report)?;
-        self.write_own_state(report)?;
+        if push {
+            std::fs::create_dir_all(&self.template_dir).map_err(|e| SyncError::Storage { message: format!("无法创建模板目录：{e}") })?;
+            self.push_local(report)?;
+            self.write_own_state(report)?;
+        }
         Ok(())
+    }
+
+    /// 本地是否有尚未上传的变化（只看本地文件与状态，不发请求）：模板目录的新增、修改、删除，
+    /// 需要重新推送的记录，以及内容已变化的本机状态记录。与 `push_local` / `write_own_state` 的判断一致。
+    pub fn has_local_changes(&self) -> bool {
+        if self.state.vault_id.is_none() || self.roster.is_none() {
+            return false;
+        }
+        let dir = &self.template_dir;
+        let mut mapped = BTreeSet::new();
+        for m in self.state.records.values().filter(|m| m.kind == Kind::Template) {
+            if let Some(f) = &m.file {
+                mapped.insert(files::name_key(f));
+            }
+        }
+        for m in self.state.records.values().filter(|m| m.kind == Kind::Template && m.counter < MAX_COUNTER) {
+            let Some(f) = &m.file else {
+                if m.dirty && m.deleted {
+                    return true;
+                }
+                continue;
+            };
+            match files::read(dir, f) {
+                None if !m.deleted => return true,
+                Some(bytes) if (Some(&files::hash(&bytes)) != m.file_hash.as_ref() || m.dirty) && std::str::from_utf8(&bytes).is_ok() => return true,
+                _ => {}
+            }
+        }
+        for name in files::list(dir) {
+            if mapped.insert(files::name_key(&name))
+                && let Some(bytes) = files::read(dir, &name)
+                && std::str::from_utf8(&bytes).is_ok()
+            {
+                return true;
+            }
+        }
+        self.own_state_stale()
+    }
+
+    /// 本机状态记录的内容（§4.4）与其摘要。
+    fn own_state_body(&self) -> (Body, String) {
+        let entries: BTreeMap<String, StateEntry> = self
+            .state
+            .records
+            .iter()
+            .filter(|(_, m)| m.kind != Kind::DeviceState && m.seq.is_some())
+            .filter_map(|(id, m)| {
+                let hash: [u8; 32] = codec::from_b64u(&m.hash).ok()?.try_into().ok()?;
+                Some((id.clone(), StateEntry { counter: m.counter, hash, deleted: m.deleted }))
+            })
+            .collect();
+        let body = Body::DeviceState { entries };
+        let digest = codec::b64u(&crypto::sha256(&[&codec::encode(&body.encode())]));
+        (body, digest)
+    }
+
+    /// 本机状态记录是否需要重写：内容变化、服务端没有、需要重新推送，或停留在旧的密钥版本。
+    fn own_state_needs_write(&self, epoch: u32, digest: &str) -> bool {
+        let (Some(vault), Ok(me)) = (&self.state.vault_id, self.me()) else { return false };
+        let rid = crypto::state_record_id(vault, &me);
+        let current = self.state.records.get(&rid).is_some_and(|m| m.seq.is_some() && !m.dirty && m.epoch == epoch);
+        !(current && self.state.own_state_digest.as_deref() == Some(digest))
+    }
+
+    fn own_state_stale(&self) -> bool {
+        let Some(roster) = &self.roster else { return false };
+        if !self.me().is_ok_and(|me| roster.is_enrolled(&me)) {
+            return false;
+        }
+        let (_, digest) = self.own_state_body();
+        self.own_state_needs_write(roster.max_epoch(), &digest)
     }
 
     /// 拉取全部记录（全量对账）。返回服务端当前的全部记录。
@@ -986,6 +1168,7 @@ impl Core {
         while queue.peek().is_some() {
             let batch: Vec<Pending> = queue.by_ref().take(BATCH).collect();
             let reqs: Vec<WriteReq> = batch.iter().map(|p| p.req.clone()).collect();
+            self.push_requests += 1;
             let results = self.api.push(&vault, &reqs)?;
             for (p, r) in batch.into_iter().zip(results) {
                 ok += usize::from(self.handle_result(p, r, report)?);
@@ -1002,6 +1185,11 @@ impl Core {
                 let seq = r.seq.ok_or_else(|| security("服务端未返回 seq"))?;
                 let file = if p.pt.kind == Kind::Template { Some(p.file.clone()) } else { None };
                 self.ack(&rid, &p.pt, &p.hash, seq, p.req.epoch, file);
+                // 本机写入紧接在已拉取的位置之后（期间没有其他写入）：增量拉取位置随之前进，
+                // 下次版本检查不必为了取回自己的写入再拉取一次
+                if seq == self.state.last_seq + 1 && !self.state.needs_full {
+                    self.state.last_seq = seq;
+                }
                 report.pushed += 1;
                 return Ok(true);
             }
@@ -1036,6 +1224,7 @@ impl Core {
                 self.state.needs_full = true;
             }
             "stale_epoch" => report.deferred += 1,
+            "quota_exceeded" => self.alert("quota_exceeded", "保险库已满，部分本地变化没有上传"),
             _ => self.alert("push_rejected", "服务端拒绝了本机的写入"),
         }
         Ok(false)
@@ -1047,24 +1236,13 @@ impl Core {
         let vault = self.vault()?;
         let me = self.me()?;
         let rid = crypto::state_record_id(&vault, &me);
-        let entries: BTreeMap<String, StateEntry> = self
-            .state
-            .records
-            .iter()
-            .filter(|(_, m)| m.kind != Kind::DeviceState && m.seq.is_some())
-            .filter_map(|(id, m)| {
-                let hash: [u8; 32] = codec::from_b64u(&m.hash).ok()?.try_into().ok()?;
-                Some((id.clone(), StateEntry { counter: m.counter, hash, deleted: m.deleted }))
-            })
-            .collect();
-        let body = Body::DeviceState { entries };
-        let digest = codec::b64u(&crypto::sha256(&[&codec::encode(&body.encode())]));
+        let (body, digest) = self.own_state_body();
         for _ in 0..3 {
-            let meta = self.state.records.get(&rid).cloned();
-            let current = meta.as_ref().is_some_and(|m| m.seq.is_some() && !m.dirty && m.epoch == key.0);
-            if current && self.state.own_state_digest.as_deref() == Some(&digest) {
+            // 内容未变化且服务端已有当前版本时不重写
+            if !self.own_state_needs_write(key.0, &digest) {
                 return Ok(());
             }
+            let meta = self.state.records.get(&rid).cloned();
             let p = self.build_write(&rid, Kind::DeviceState, false, body.clone(), meta.as_ref(), &key)?;
             // 冲突时 push 会更新本地已知的 seq 与 counter，下一轮在其基础上重试
             if self.push(vec![p], report)? == 1 {

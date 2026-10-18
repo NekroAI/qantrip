@@ -53,6 +53,8 @@ pub enum SyncError {
     InvalidState { message: String },
     /// 本地文件或安全存储读写失败
     Storage { message: String },
+    /// 此账号同时同步的设备数量已达上限：本机在移除其他设备（`release_device`）之前不能访问保险库
+    DeviceLimit { max_devices: u32 },
 }
 
 impl SyncError {
@@ -77,6 +79,7 @@ impl std::fmt::Display for SyncError {
             | SyncError::Storage { message } => f.write_str(message),
             SyncError::SasMismatch { remaining } => write!(f, "校验码不正确，还可以再试 {remaining} 次"),
             SyncError::Cooldown { seconds } => write!(f, "校验码错误次数过多，请 {} 分钟后再试", seconds.div_ceil(60)),
+            SyncError::DeviceLimit { max_devices } => write!(f, "此账号最多同时在 {max_devices} 台设备上同步，请先移除不用的设备"),
         }
     }
 }
@@ -131,6 +134,90 @@ pub struct SyncAlert {
     pub at: i64,
 }
 
+/// 本机的设备信息：登录与刷新令牌时上报给服务端，显示在账号的设备列表中（服务端可见的明文元数据）。
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeviceLabel {
+    /// 设备名称（如"MacBook Pro"），最多 64 个字符
+    pub name: String,
+    /// 平台与系统版本（如"macOS 26.1"），最多 32 个字符
+    pub platform: String,
+    /// 应用版本，最多 32 个字符
+    pub app_version: String,
+}
+
+/// 去掉控制字符与格式字符（双向覆盖、零宽字符等），首尾去空白，按字符数截断。
+pub fn clean_label(s: &str, max: usize) -> String {
+    let kept: String = s.chars().filter(|c| !c.is_control() && !files::is_format_char(*c) && *c != '\u{2028}' && *c != '\u{2029}').collect();
+    kept.trim().chars().take(max).collect::<String>().trim().to_string()
+}
+
+impl DeviceLabel {
+    pub fn sanitized(&self) -> DeviceLabel {
+        DeviceLabel { name: clean_label(&self.name, 64), platform: clean_label(&self.platform, 32), app_version: clean_label(&self.app_version, 32) }
+    }
+}
+
+/// 保险库用量（服务端统计的密文大小与记录数）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct SyncUsage {
+    pub bytes: u64,
+    pub quota_bytes: u64,
+    pub records: u32,
+}
+
+/// 服务端下发的同步策略（未收到前为默认值 3600 / 900 / 900，之后保存最近一次的值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct SyncPolicy {
+    /// 定时检查的最小间隔
+    pub check_interval_secs: u32,
+    /// 唤起面板时顺带检查的最小间隔
+    pub panel_check_secs: u32,
+    /// 自动上传本地变化的最小间隔
+    pub min_push_interval_secs: u32,
+}
+
+/// 触发同步的原因，由 [`SyncClient::maybe_sync`] 结合策略决定是否发请求。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SyncTrigger {
+    /// 用户点击"立即同步"：完整同步，不受节流限制
+    Manual,
+    /// 应用内的定时器
+    Timer,
+    /// 唤起面板
+    PanelOpened,
+    /// 模板目录发生变化
+    LocalChange,
+    /// 应用启动
+    Launch,
+    /// 系统从睡眠中唤醒
+    Wake,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AccountDevice {
+    pub grant_id: String,
+    pub device_id: String,
+    /// 设备上报的名称（未上报时为空字符串）
+    pub name: String,
+    pub platform: String,
+    pub app_version: String,
+    /// unix 秒
+    pub created_at: i64,
+    pub last_seen_at: i64,
+    pub is_self: bool,
+    /// 超出设备数量限制，不能访问保险库
+    pub limited: bool,
+    /// 在本机已验证的花名册中在册（本机没有保险库状态时为 false）
+    pub in_vault: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AccountDevices {
+    pub max_devices: u32,
+    /// 已登录的设备，最近活跃的在前
+    pub devices: Vec<AccountDevice>,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SyncStatus {
     pub signed_in: bool,
@@ -146,6 +233,15 @@ pub struct SyncStatus {
     pub alerts: Vec<SyncAlert>,
     /// 正在执行其他操作（返回的是上一次的状态）
     pub busy: bool,
+    /// 保险库用量（最近一次版本检查或 `account_usage` 的结果）
+    pub usage: Option<SyncUsage>,
+    /// 其他设备发起的待处理加入请求数（最近一次版本检查）
+    pub pending_joins: u32,
+    pub policy: SyncPolicy,
+    /// 被节流的本地变化将自动上传的时间（unix 秒）；没有待上传的变化时为 None
+    pub next_push_at: Option<i64>,
+    /// 服务端报告本机超出设备数量限制时为 Some(上限)；之后任一保险库请求成功即清除
+    pub device_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
@@ -218,6 +314,10 @@ pub struct SyncClient {
     cached: Mutex<SyncStatus>,
 }
 
+fn policy_of(p: &state::StoredPolicy) -> SyncPolicy {
+    SyncPolicy { check_interval_secs: p.check_interval_secs, panel_check_secs: p.panel_check_secs, min_push_interval_secs: p.min_push_interval_secs }
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
@@ -231,8 +331,9 @@ impl SyncClient {
         secrets: Arc<dyn SecretStore>,
         transport: Arc<dyn Transport>,
         clock: Clock,
+        device: DeviceLabel,
     ) -> SyncClient {
-        let api = Api::new(transport, secrets.clone());
+        let api = Api::new(transport, secrets.clone(), device);
         let core = Core::new(api, secrets, server_url, data_dir, template_dir, clock);
         let client = SyncClient {
             core: Mutex::new(core),
@@ -246,6 +347,11 @@ impl SyncClient {
                 writes_blocked: false,
                 alerts: vec![],
                 busy: false,
+                usage: None,
+                pending_joins: 0,
+                policy: policy_of(&state::StoredPolicy::default()),
+                next_push_at: None,
+                device_limit: None,
             }),
         };
         let status = client.compute_status(&client.core.lock().unwrap());
@@ -264,6 +370,11 @@ impl SyncClient {
             writes_blocked: core.state.writes_blocked.is_some(),
             alerts: core.state.alerts.iter().map(|a| SyncAlert { code: a.code.clone(), message: a.message.clone(), at: a.at }).collect(),
             busy: false,
+            usage: core.state.usage.map(|u| SyncUsage { bytes: u.bytes, quota_bytes: u.quota_bytes, records: u.records }),
+            pending_joins: core.state.pending_joins,
+            policy: policy_of(&core.state.policy),
+            next_push_at: core.next_push_at(),
+            device_limit: core.state.device_limit,
         }
     }
 
@@ -271,6 +382,13 @@ impl SyncClient {
     fn run<T>(&self, f: impl FnOnce(&mut Core) -> Result<T, SyncError>) -> Result<T, SyncError> {
         let mut core = self.core.lock().unwrap_or_else(|e| e.into_inner());
         let result = f(&mut core);
+        // 设备数量限制：被拒绝时记下上限，之后任一保险库请求成功即清除
+        if let Some(event) = core.api.take_limit_event()
+            && core.state.device_limit != event
+        {
+            core.state.device_limit = event;
+            let _ = core.save();
+        }
         let status = self.compute_status(&core);
         *self.cached.lock().unwrap() = status;
         result
@@ -279,11 +397,12 @@ impl SyncClient {
 
 #[uniffi::export]
 impl SyncClient {
-    /// `server_url`：后端地址（如 `https://qantrip.nekro.ai`）；`data_dir`：存放同步状态；`template_dir`：用户模板目录。
+    /// `server_url`：后端地址（如 `https://qantrip.nekro.ai`）；`data_dir`：存放同步状态；`template_dir`：用户模板目录；
+    /// `device`：登录与刷新令牌时上报的设备名称、平台与应用版本。
     #[uniffi::constructor]
-    pub fn new(server_url: String, data_dir: String, template_dir: String, secrets: Arc<dyn SecretStore>) -> Arc<SyncClient> {
+    pub fn new(server_url: String, data_dir: String, template_dir: String, secrets: Arc<dyn SecretStore>, device: DeviceLabel) -> Arc<SyncClient> {
         let transport = Arc::new(UreqTransport::new(&server_url));
-        Arc::new(SyncClient::with_transport(&server_url, data_dir.into(), template_dir.into(), secrets, transport, Arc::new(now_secs)))
+        Arc::new(SyncClient::with_transport(&server_url, data_dir.into(), template_dir.into(), secrets, transport, Arc::new(now_secs), device))
     }
 
     /// 当前状态（不发网络请求）。其他操作进行中时返回缓存并标记 `busy`。
@@ -389,9 +508,65 @@ impl SyncClient {
         self.run(|c| join::recover(c, &phrase))
     }
 
-    /// 立即同步：拉取、应用到模板目录、推送本地变化、更新本机状态记录。
+    /// 立即同步（等同于 `maybe_sync(Manual)`）：版本检查、有变化时拉取并应用到模板目录、推送本地变化、更新本机状态记录。
     pub fn sync_now(&self) -> Result<SyncReport, SyncError> {
         self.run(|c| c.sync())
+    }
+
+    /// 按触发原因与服务端下发的策略决定是否同步；返回 None 表示没有发出任何请求。
+    /// 平台在定时器、唤起面板、模板目录变化、启动与唤醒时调用；规则见 `SyncTrigger` 与 docs/sync-design.md 5.1。
+    pub fn maybe_sync(&self, trigger: SyncTrigger) -> Result<Option<SyncReport>, SyncError> {
+        self.run(|c| c.maybe_sync(trigger))
+    }
+
+    /// 此账号已登录的设备（含超出设备数量限制的设备）。超出限制的设备也可以调用。
+    pub fn account_devices(&self) -> Result<AccountDevices, SyncError> {
+        self.run(|c| {
+            let d = c.api.account_devices()?;
+            let roster = c.roster.clone();
+            let devices = d
+                .devices
+                .into_iter()
+                .map(|x| AccountDevice {
+                    in_vault: roster.as_ref().is_some_and(|r| r.is_enrolled(&x.device_id)),
+                    grant_id: x.grant_id,
+                    device_id: clean_label(&x.device_id, 64),
+                    name: clean_label(x.device_name.as_deref().unwrap_or(""), 64),
+                    platform: clean_label(x.platform.as_deref().unwrap_or(""), 32),
+                    app_version: clean_label(x.app_version.as_deref().unwrap_or(""), 32),
+                    created_at: x.created_at,
+                    last_seen_at: x.last_seen_at,
+                    is_self: x.is_self,
+                    limited: x.limited,
+                })
+                .collect();
+            Ok(AccountDevices { max_devices: d.max_devices, devices })
+        })
+    }
+
+    /// 让一台设备退出此账号（吊销其登录授权，腾出名额）。是本机时等同于 `sign_out`。
+    /// 这不会把设备移出保险库的花名册；需要时另用 `revoke_device`。
+    pub fn release_device(&self, grant_id: String) -> Result<(), SyncError> {
+        self.run(|c| {
+            if c.api.release_device(&grant_id)? {
+                c.api.clear_tokens()?;
+                c.state.account = None;
+                c.save()?;
+            }
+            Ok(())
+        })
+    }
+
+    /// 账号的保险库用量（没有保险库时为 None），用于还没有加入保险库或超出设备数量限制的设备。
+    pub fn account_usage(&self) -> Result<Option<SyncUsage>, SyncError> {
+        self.run(|c| {
+            let usage = c.api.account()?.usage.map(|u| engine::usage_of(&u));
+            if usage.is_some() && usage != c.state.usage {
+                c.state.usage = usage;
+                c.save()?;
+            }
+            Ok(usage.map(|u| SyncUsage { bytes: u.bytes, quota_bytes: u.quota_bytes, records: u.records }))
+        })
     }
 
     /// 重新校验：重新拉取完整花名册与全部记录并逐条校验。全部通过时才解除"停止写入"，返回最新状态。

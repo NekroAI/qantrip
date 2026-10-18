@@ -151,6 +151,7 @@ func describe(_ error: Error) -> String {
     case let .InvalidInput(message): return AppSettings.shared.uiLocale == .zh ? message : "Invalid input"
     case let .InvalidState(message): return AppSettings.shared.uiLocale == .zh ? message : "Not possible right now"
     case let .Storage(message): return AppSettings.shared.uiLocale == .zh ? message : "Couldn't read or write the keychain"
+    case let .DeviceLimit(maxDevices): return L("此账号最多同时在 \(maxDevices) 台设备上同步", "This account can sync on up to \(maxDevices) devices at a time")
     }
 }
 
@@ -198,7 +199,13 @@ final class SyncService {
         let dataDir = support.appendingPathComponent("Qantrip/sync/\(host)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         let store = KeychainSecretStore(service: "ai.nekro.qantrip.sync.\(host)")
-        client = SyncClient(serverUrl: url, dataDir: dataDir.path, templateDir: AppServices.shared.templatesDir.path, secrets: store)
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let device = DeviceLabel(
+            name: Host.current().localizedName ?? "Mac",
+            platform: "macOS \(os.majorVersion).\(os.minorVersion)",
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        )
+        client = SyncClient(serverUrl: url, dataDir: dataDir.path, templateDir: AppServices.shared.templatesDir.path, secrets: store, device: device)
         status = client?.status()
         remoteVault = nil
         joinRequests = []

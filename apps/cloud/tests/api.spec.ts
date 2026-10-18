@@ -39,15 +39,17 @@ const authorizeParams = async (device: string, overrides: Record<string, string>
   })
 
 /** 走一遍桌面端 PKCE 登录，返回访问令牌与刷新令牌 */
-const signIn = async (user?: UserRow) => {
+const signIn = async (user?: UserRow, extra: Record<string, unknown> = {}, device = deviceId()) => {
   const u = user ?? (await makeUser())
-  const device = deviceId()
   const req = parseDesktopAuthorize(await authorizeParams(device))
   const code = new URL(await approveDesktop(env, u, req)).searchParams.get('code')!
-  const res = await call('/api/v1/oauth/token', json({ grant_type: 'authorization_code', code, code_verifier: VERIFIER, redirect_uri: req.redirectUri, device_id: device }))
+  const res = await call(
+    '/api/v1/oauth/token',
+    json({ grant_type: 'authorization_code', code, code_verifier: VERIFIER, redirect_uri: req.redirectUri, device_id: device, ...extra }),
+  )
   expect(res.status).toBe(200)
-  const tokens = (await res.json()) as { access_token: string; refresh_token: string }
-  return { user: u, device, ...tokens }
+  const tokens = (await res.json()) as { access_token: string; refresh_token: string; expires_in: number }
+  return { ...tokens, user: u, device }
 }
 
 // 每个测试使用不同的来源 IP，避免触发"每个 IP 每天 5 个保险库"的限制（该限制另有专门测试）
@@ -225,6 +227,143 @@ describe('花名册、信封与加入', () => {
     expect((await step('result')).status).toBe(204)
     const view = (await (await call(`/api/v1/vaults/${vault}/joins/${created.join_id}`, get(s.access_token))).json()) as Record<string, unknown>
     expect(view.result).toBeTypeOf('string')
+  })
+})
+
+const setLimits = (user: UserRow, limits: unknown) =>
+  env.DB.prepare('UPDATE users SET limits = ? WHERE id = ?').bind(typeof limits === 'string' ? limits : JSON.stringify(limits), user.id).run()
+
+type Head = { seq: number; pending_joins: number; usage: { bytes: number; quota_bytes: number; records: number }; policy: Record<string, number> }
+type Devices = { max_devices: number; devices: { grant_id: string; device_id: string; device_name: string | null; platform: string | null; app_version: string | null; is_self: boolean; limited: boolean; last_seen_at: number }[] }
+
+describe('按账号的限制', () => {
+  it('访问令牌 72 小时有效', async () => {
+    const s = await signIn()
+    expect(s.expires_in).toBe(72 * 3600)
+  })
+
+  it('保险库容量使用默认值，运营者可按账号覆盖，且不超过绝对上限', async () => {
+    const s = await signIn()
+    const vault = await newVault(s.access_token)
+    const head = async () => (await (await call(`/api/v1/vaults/${vault}/head`, get(s.access_token))).json()) as Head
+    expect((await head()).usage.quota_bytes).toBe(204800)
+    // 默认 200 KiB：一条 150 KB 的记录可以写入，第二条超出容量
+    expect((await push(s.access_token, vault, [write(rid(), null, { ciphertext: blob(150_000) })])).results[0]!.status).toBe('ok')
+    const over = (await push(s.access_token, vault, [write(rid(), null, { ciphertext: blob(150_000) })])).results[0] as { status: string; message?: string }
+    expect(over.status).toBe('quota_exceeded')
+    expect(over.message).not.toContain('10 MiB')
+    // 覆盖为 1 MiB 后可以写入；不合法的键与值被忽略
+    await setLimits(s.user, { quota_bytes: 1024 * 1024, max_devices: 'many', bogus: 1, check_interval_secs: 5 })
+    expect((await push(s.access_token, vault, [write(rid(), null, { ciphertext: blob(150_000) })])).results[0]!.status).toBe('ok')
+    const h = await head()
+    expect(h.usage).toMatchObject({ quota_bytes: 1024 * 1024, records: 2 })
+    expect(h.policy).toEqual({ check_interval_secs: 3600, panel_check_secs: 900, min_push_interval_secs: 900 })
+    // 超过绝对上限的覆盖值被忽略；损坏的 JSON 回到默认值
+    await setLimits(s.user, { quota_bytes: 50 * 1024 * 1024 })
+    expect((await head()).usage.quota_bytes).toBe(204800)
+    await setLimits(s.user, '{not json')
+    expect((await head()).usage.quota_bytes).toBe(204800)
+  })
+
+  it('同步策略可以按账号覆盖', async () => {
+    const s = await signIn()
+    await setLimits(s.user, { check_interval_secs: 600, panel_check_secs: 120, min_push_interval_secs: 0 })
+    const vault = await newVault(s.access_token)
+    const h = (await (await call(`/api/v1/vaults/${vault}/head`, get(s.access_token))).json()) as Head
+    expect(h.policy).toEqual({ check_interval_secs: 600, panel_check_secs: 120, min_push_interval_secs: 0 })
+  })
+
+  it('版本检查返回其他设备发起的加入请求数与用量', async () => {
+    const a = await signIn()
+    const b = await signIn(a.user)
+    const vault = await newVault(a.access_token)
+    const head = async (token: string) => (await (await call(`/api/v1/vaults/${vault}/head`, get(token))).json()) as Head
+    expect((await head(a.access_token)).pending_joins).toBe(0)
+    await call(`/api/v1/vaults/${vault}/joins`, json({ data: blob(64) }, b.access_token))
+    expect((await head(a.access_token)).pending_joins).toBe(1)
+    // 发起者自己不计入
+    expect((await head(b.access_token)).pending_joins).toBe(0)
+    await push(a.access_token, vault, [write(rid(), null, { ciphertext: blob(100) })])
+    expect((await head(a.access_token)).usage).toEqual({ bytes: 100, quota_bytes: 204800, records: 1 })
+  })
+
+  it('账号接口：没有保险库时 usage 为 null', async () => {
+    const s = await signIn()
+    const acc = async () => (await (await call('/api/v1/account', get(s.access_token))).json()) as { login: string; limits: Record<string, number>; usage: unknown }
+    const before = await acc()
+    expect(before.login).toBe(s.user.login)
+    expect(before.limits).toEqual({ quota_bytes: 204800, max_devices: 2, check_interval_secs: 3600, panel_check_secs: 900, min_push_interval_secs: 900 })
+    expect(before.usage).toBeNull()
+    await newVault(s.access_token)
+    expect((await acc()).usage).toEqual({ bytes: 0, quota_bytes: 204800, records: 0 })
+  })
+})
+
+describe('设备数量限制与设备管理', () => {
+  it('设备信息去除控制与格式字符并截断，刷新时可以更新', async () => {
+    const s = await signIn(undefined, { device_name: '  Work‮ Mac\u0000​  ', platform: 'macOS 26.1', app_version: '0.4.0' })
+    let list = (await (await call('/api/v1/account/devices', get(s.access_token))).json()) as Devices
+    expect(list.devices[0]).toMatchObject({ device_name: 'Work Mac', platform: 'macOS 26.1', app_version: '0.4.0', is_self: true, limited: false })
+    const long = await signIn(s.user, { device_name: 'x'.repeat(100), platform: 7 })
+    list = (await (await call('/api/v1/account/devices', get(long.access_token))).json()) as Devices
+    const mine = list.devices.find((d) => d.is_self)!
+    expect(mine.device_name).toHaveLength(64)
+    expect(mine.platform).toBeNull()
+    // 刷新令牌时上报新的版本；未上报的字段保持不变
+    const r = (await (await call('/api/v1/oauth/token', json({ grant_type: 'refresh_token', refresh_token: s.refresh_token, app_version: '0.5.0' }))).json()) as { access_token: string }
+    list = (await (await call('/api/v1/account/devices', get(r.access_token))).json()) as Devices
+    expect(list.devices.find((d) => d.is_self)).toMatchObject({ device_name: 'Work Mac', app_version: '0.5.0' })
+  })
+
+  it('超出设备数量的设备受限，移除其他设备后恢复', async () => {
+    const a = await signIn()
+    const b = await signIn(a.user, { device_name: 'B' })
+    const vault = await newVault(a.access_token)
+    const c = await signIn(a.user, { device_name: 'C' })
+    // 第三台设备不能访问保险库
+    for (const path of ['/api/v1/vault', `/api/v1/vaults/${vault}/head`]) {
+      const res = await call(path, get(c.access_token))
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({ error: 'device_limit', max_devices: 2 })
+    }
+    expect((await call(`/api/v1/vaults/${vault}/records`, json({ writes: [write(rid(), null)] }, c.access_token))).status).toBe(403)
+    // 但可以查看账号与设备
+    expect((await call('/api/v1/account', get(c.access_token))).status).toBe(200)
+    const list = (await (await call('/api/v1/account/devices', get(c.access_token))).json()) as Devices
+    expect(list.max_devices).toBe(2)
+    expect(list.devices).toHaveLength(3)
+    expect(list.devices.find((d) => d.is_self)).toMatchObject({ device_name: 'C', limited: true })
+    // 移除 B 后，C 的下一次请求解除受限
+    const bGrant = list.devices.find((d) => d.device_name === 'B')!.grant_id
+    const del = await call(`/api/v1/account/devices/${bGrant}`, { method: 'DELETE', headers: { authorization: `Bearer ${c.access_token}` } })
+    expect(await del.json()).toEqual({ is_self: false })
+    expect((await call('/api/v1/vault', get(b.access_token))).status).toBe(401)
+    expect((await call(`/api/v1/vaults/${vault}/head`, get(c.access_token))).status).toBe(200)
+    const after = (await (await call('/api/v1/account/devices', get(a.access_token))).json()) as Devices
+    expect(after.devices.map((d) => d.limited)).toEqual([false, false])
+    // 名额已满时，第四台设备再次受限；已占名额的设备重新登录仍保留名额
+    const d = await signIn(a.user)
+    expect((await call('/api/v1/vault', get(d.access_token))).status).toBe(403)
+    const again = await signIn(a.user, {}, a.device)
+    expect((await call('/api/v1/vault', get(again.access_token))).status).toBe(200)
+  })
+
+  it('运营者提高设备数量后受限设备自动恢复；只能移除本账号的设备；可以移除本机', async () => {
+    const a = await signIn()
+    await signIn(a.user)
+    const c = await signIn(a.user)
+    expect((await call('/api/v1/vault', get(c.access_token))).status).toBe(403)
+    await setLimits(a.user, { max_devices: 3 })
+    expect((await call('/api/v1/vault', get(c.access_token))).status).toBe(200)
+    // 其他账号的设备
+    const other = await signIn()
+    const otherGrant = ((await (await call('/api/v1/account/devices', get(other.access_token))).json()) as Devices).devices[0]!.grant_id
+    expect((await call(`/api/v1/account/devices/${otherGrant}`, { method: 'DELETE', headers: { authorization: `Bearer ${c.access_token}` } })).status).toBe(404)
+    // 本机
+    const self = ((await (await call('/api/v1/account/devices', get(c.access_token))).json()) as Devices).devices.find((d) => d.is_self)!.grant_id
+    const res = await call(`/api/v1/account/devices/${self}`, { method: 'DELETE', headers: { authorization: `Bearer ${c.access_token}` } })
+    expect(await res.json()).toEqual({ is_self: true })
+    expect((await call('/api/v1/account', get(c.access_token))).status).toBe(401)
   })
 })
 
