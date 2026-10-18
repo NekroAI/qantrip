@@ -91,7 +91,7 @@ r security --scope=staged -s focus on the auth module
 │ │        │              └ short flag (-s = --strict)
 │ │        └ option with a value (prefixes work: --sc=st; multiple values comma separated)
 │ └ positional value for the template's main option
-└ template name or alias (exact, prefix or fuzzy; a fuzzy match completes first, inserts on the second Enter)
+└ template name or alias (exact, prefix or fuzzy; Enter inserts what the preview shows, Tab completes)
 \`\`\`
 
 Shortcuts: ⌃Q summon · Tab accept suggestion · → accept inline hint · ↑↓ choose · Enter insert · ⌘Enter insert expanded in Claude Code · \`--\` list all options · Esc close.

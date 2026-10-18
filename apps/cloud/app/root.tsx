@@ -65,7 +65,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <footer className="footer">
           <div className="wrap">
             <div>
-              {t.footerAbout}
+              {t.footerAbout.split('NekroAI').map((part, i, arr) => (
+                <span key={i}>
+                  {part}
+                  {i < arr.length - 1 && <a href="https://nekro.ai">NekroAI</a>}
+                </span>
+              ))}
               <br />
               {t.footerLicense}
             </div>

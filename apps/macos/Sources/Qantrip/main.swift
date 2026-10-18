@@ -250,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let name = (note.userInfo?["name"] as? String) ?? ""
         if name == "settings" { openSettings() }
         else if name == "settings:sync" { openSyncSettings() }
+        else if name.hasPrefix("settings:"), let page = SettingsPage(rawValue: String(name.dropFirst(9))) { LibraryWindow.showSettings(page) }
         else if name == "onboarding" { Onboarding.show() }
         else if name.hasPrefix("library") { LibraryWindow.show(select: name.split(separator: ":").dropFirst().first.map(String.init)) }
     }

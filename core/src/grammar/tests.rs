@@ -127,7 +127,9 @@ fn command_tiers_and_enter() {
 
     let a = analyze(&l, "reveiw", None);
     assert_eq!(a.candidates[0].key, "review");
-    assert!(matches!(a.enter, EnterAction::Complete { ref edit } if edit.text == "review"));
+    // 回车直接插入高亮的模板（D36）
+    assert_eq!(a.enter, EnterAction::Insert);
+    assert!(render_final(&l, "reveiw", None).unwrap().len() > 10);
 
     // 锁定后显示已匹配提示
     let a = analyze(&l, "reveiw --strict", None);

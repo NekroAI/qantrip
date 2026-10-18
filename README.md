@@ -44,7 +44,7 @@ r security --scope=staged -s focus on the auth module
 
 ## Features
 
-- **Discoverable command line** — exact, prefix and fuzzy matching; inline ghost completion; type `--` to see every parameter; fuzzy matches complete first and insert on the second <kbd>↩</kbd>, so typos never insert the wrong prompt.
+- **Discoverable command line** — exact, prefix and fuzzy matching; inline ghost completion; type `--` to see every parameter; <kbd>↩</kbd> inserts exactly what the preview shows and <kbd>⇥</kbd> completes, so one keystroke is enough even with a typo.
 - **See what you'll insert** — a live preview highlights exactly which lines each parameter and your free text changed.
 - **Templates are Markdown files** — YAML front matter declares parameters (bool, enum, multi-select, string, number, text); the body is a [MiniJinja](https://github.com/mitsuhiko/minijinja) template. Edit them in any editor, or in the built-in library with a form editor, live preview and validation.
 - **Insertion that stays out of your way** — paste-based (terminals and AI agents won't treat newlines as <kbd>Enter</kbd>), your clipboard is restored afterwards and the prompt is marked transient so clipboard managers skip it. No Accessibility permission? It falls back to copy-only.

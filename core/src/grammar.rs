@@ -1134,12 +1134,11 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
         a.params = param_states(t, &BTreeMap::new(), loc);
         a.preview = preview(lib, t, &BTreeMap::new(), None).ok();
         a.canonical = Some(t.name.clone());
+        // 回车 = 插入右侧预览的内容（模糊匹配也直接插入高亮项）；改写输入交给 Tab（docs/decisions.md D36）
+        a.enter = EnterAction::Insert;
         if tier == MatchTier::Fuzzy && !cmd_text.eq_ignore_ascii_case(&t.name) {
-            a.enter = EnterAction::Complete { edit: Edit { start: ctx.u16(w.start), end: ctx.u16(w.end), text: t.name.clone() } };
             let name = &t.name;
-            a.hint = tr!(loc, "模糊匹配：↩ 补全为 {name}", "Fuzzy match: ↩ completes to {name}");
-        } else {
-            a.enter = EnterAction::Insert;
+            a.hint = tr!(loc, "模糊匹配：↩ 插入 {name}，⇥ 补全", "Fuzzy match: ↩ inserts {name}, ⇥ completes");
         }
         a.tokens = ctx.tokens;
         return a;
@@ -1149,7 +1148,7 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
     let w = cmd_word.unwrap();
     ctx.token(TokenKind::Command, w.start, w.end);
     let parsed = parse_params(t, &words[1..], ends_with_ws, &mut ctx);
-    let (fill, missing) = validate(t, &parsed, &mut ctx);
+    let (_fill, missing) = validate(t, &parsed, &mut ctx);
 
     let extra_started = parsed.extra_start.is_some();
     let partial = (!ends_with_ws).then(|| words.last()).flatten().filter(|lw| lw.start > w.start);
@@ -1164,18 +1163,15 @@ pub fn analyze(lib: &Library, usage: &Usage, input: &str, selected: Option<&str>
 
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
     let only_missing = errors && missing > 0 && ctx.diags.iter().filter(|d| d.severity == Severity::Error).count() == missing;
-    let enter = if !errors {
-        EnterAction::Insert
-    } else if only_missing {
-        EnterAction::Complete { edit: fill.unwrap() }
-    } else {
-        EnterAction::Blocked
-    };
+    // 回车不改写输入：缺少必填参数时不插入，由 Tab 应用诊断里的修正（补上 --参数=）
+    let enter = if !errors { EnterAction::Insert } else { EnterAction::Blocked };
     let pv = preview(lib, t, &parsed.values, parsed.extra.as_deref());
     if let Err(e) = &pv {
         ctx.diags.push(Diagnostic { severity: Severity::Error, message: e.clone(), start: 0, end: 0, at_cursor: false, fix: None });
     }
-    let hint = if tier == MatchTier::Fuzzy && !cmd_text.eq_ignore_ascii_case(&t.name) && !t.aliases.iter().any(|a| a.eq_ignore_ascii_case(cmd_text)) {
+    let hint = if only_missing {
+        tr!(loc, "缺少必填参数：⇥ 补上", "Missing required option: ⇥ adds it")
+    } else if tier == MatchTier::Fuzzy && !cmd_text.eq_ignore_ascii_case(&t.name) && !t.aliases.iter().any(|a| a.eq_ignore_ascii_case(cmd_text)) {
         let name = &t.name;
         tr!(loc, "已匹配为 {name}", "Matched {name}")
     } else {

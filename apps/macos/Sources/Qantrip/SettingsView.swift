@@ -329,6 +329,16 @@ private struct AboutView: View {
             Text("Nekro Qantrip").font(.qDisplay(26))
             Text(L("按 Q 施放一个戏法", "Press Q to cast a spell")).foregroundStyle(.secondary)
             Text(L("版本 \(version) · core \(coreVersion())", "Version \(version) · core \(coreVersion())")).font(.qMono(11)).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                Text(L("由", "Made by")).foregroundStyle(.secondary) + Text(" ")
+                    + Text(.init("[NekroAI](https://nekro.ai)")) + Text(L(" 开发", "")).foregroundStyle(.secondary)
+            }
+            .font(.callout)
+            HStack(spacing: 16) {
+                Link(L("官网", "Website"), destination: URL(string: "https://qantrip.nekro.ai")!)
+                Link("GitHub", destination: URL(string: "https://github.com/NekroAI/qantrip")!)
+            }
+            .font(.callout)
             UpdateSection().frame(width: 360)
             Divider().frame(width: 280)
             Text(L("以 GPL-3.0-or-later 许可开源\n内置字体 Monaspace Neon、Fraunces 以 SIL OFL 1.1 许可分发", "Open source under GPL-3.0-or-later\nBundled fonts Monaspace Neon and Fraunces are distributed under SIL OFL 1.1"))

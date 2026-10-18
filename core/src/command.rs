@@ -366,7 +366,15 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
     let typed = &first.text[slash..];
 
     // 指令名
-    let cmd = COMMANDS.iter().find(|(_, n)| *n == typed).map(|(c, _)| *c);
+    // 完整指令名，或无歧义的前缀（如 /sy → /sync），回车即按它执行（D36）
+    let typed_lc = typed.to_lowercase();
+    let cmd = COMMANDS.iter().find(|(_, n)| *n == typed_lc).map(|(c, _)| *c).or_else(|| {
+        let mut hits = COMMANDS.iter().filter(|(_, n)| !typed_lc.is_empty() && n.starts_with(&typed_lc));
+        match (hits.next(), hits.next()) {
+            (Some((c, _)), None) => Some(*c),
+            _ => None,
+        }
+    });
     let completing_cmd = ws.len() == 1 && !ends_ws;
     if completing_cmd || cmd.is_none() {
         let typed_lower = typed.to_lowercase();
@@ -770,7 +778,15 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::OptionValue, w.start, w.end);
-            match LANGS.iter().find(|(v, _, _)| *v == w.text.to_lowercase()) {
+            let lv = w.text.to_lowercase();
+            let lang = LANGS.iter().find(|(v, _, _)| *v == lv).or_else(|| {
+                let mut hits = LANGS.iter().filter(|(v, _, _)| v.starts_with(&lv));
+                match (hits.next(), hits.next()) {
+                    (Some(h), None) => Some(h),
+                    _ => None,
+                }
+            });
+            match lang {
                 None => {
                     ctx.error(tr!(loc, "可选：auto、zh、en", "Options: auto, zh, en"), w.start, w.end, ws.len() == 2 && !ends_ws);
                     None
@@ -792,19 +808,14 @@ fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
         a.preview = Some(plain_preview(&a.hint));
     }
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
-    let hard_errors = ctx.diags.iter().any(|d| d.severity == Severity::Error && !d.at_cursor);
     a.tokens = ctx.tokens;
     a.diagnostics = ctx.diags;
     let plan = plan.filter(|_| !errors);
     a.enter = match &plan {
         Some(Plan::Trash { .. } | Plan::MarkDeleted { .. }) => EnterAction::Run { confirm: true },
         Some(_) => EnterAction::Run { confirm: false },
-        // 正在输入指令名：回车补全为第一个候选
-        None => match a.candidates.first() {
-            // 正在输入的词上的错误不妨碍补全
-            Some(c) if !hard_errors => EnterAction::Complete { edit: c.edit.clone() },
-            _ => EnterAction::Blocked,
-        },
+        // 回车不改写输入；补全交给 Tab（D36）
+        None => EnterAction::Blocked,
     };
     Outcome { analysis: a, plan }
 }
@@ -1009,7 +1020,9 @@ mod tests {
         let a = analyze(&lib, None, "/lang ", None);
         assert_eq!(a.candidates.len(), 3);
         assert_eq!(analyze(&lib, None, "/lang z", None).ghost.as_deref(), Some("h"));
-        assert!(matches!(analyze(&lib, None, "/lang z", None).enter, EnterAction::Complete { .. }));
+        // 无歧义前缀直接执行（D36）
+        assert_eq!(act("/lang z").unwrap().as_deref(), Some("lang:zh"));
+        assert_eq!(act("/sy").unwrap().as_deref(), Some("sync"));
         assert_eq!(analyze(&lib, None, "/s", None).candidates.len(), 2);
     }
 
@@ -1020,7 +1033,7 @@ mod tests {
         assert_eq!(a.candidates.len(), 10);
         let a = analyze(&lib, None, "/n", None);
         assert_eq!(a.ghost.as_deref(), Some("ew "));
-        assert!(matches!(a.enter, EnterAction::Complete { .. }));
+        assert_eq!(a.enter, EnterAction::Blocked);
         let a = analyze(&lib, None, "/edit rev", None);
         assert_eq!(a.ghost.as_deref(), Some("iew"));
         let a = analyze(&lib, None, "/bogus", None);

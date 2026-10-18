@@ -31,7 +31,7 @@ const T = {
     commandH: 'Anatomy of a command',
     commandP: 'Click a part.',
     parts: [
-      ['r', 't-command', 'Template name or alias. Prefixes and typos are fine: a fuzzy match completes first and only inserts on the second ↩.'],
+      ['r', 't-command', 'Template name or alias. Prefixes and typos are fine: ↩ inserts what the preview shows, ⇥ completes the name.'],
       ['security', 't-positional', 'Positional value: type a choice directly, without the option name.'],
       ['--scope=staged', 't-optionname', 'Option with a value. Both name and value can be shortened: --sc=st. Separate multiple values with commas.'],
       ['-s', 't-shortflag', 'Short flag for a switch. -s is --strict.'],
@@ -112,7 +112,7 @@ const T = {
     commandH: '一条命令的组成',
     commandP: '点击各部分查看说明。',
     parts: [
-      ['r', 't-command', '模板名或别名。可以只输前缀，拼错也没关系：模糊匹配时第一次回车只补全，第二次才插入。'],
+      ['r', 't-command', '模板名或别名。可以只输前缀，拼错也没关系：↩ 插入右侧预览的内容，⇥ 补全名称。'],
       ['security', 't-positional', '位置参数：直接输入候选值，不用写参数名。'],
       ['--scope=staged', 't-optionname', '带值的参数。参数名和取值都可以只输前缀，如 --sc=st；多个值用逗号分隔。'],
       ['-s', 't-shortflag', '开关参数的单字母简写，-s 就是 --strict。'],
