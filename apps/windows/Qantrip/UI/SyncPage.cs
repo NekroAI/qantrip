@@ -30,9 +30,13 @@ internal sealed class SyncPage
 
     public FrameworkElement View => page;
 
-    public SyncPage(FrameworkElement host)
+    /// 所在窗口（文件保存对话框、剪贴板）
+    private readonly IntPtr hwnd;
+
+    public SyncPage(FrameworkElement host, IntPtr hwnd)
     {
         this.host = host;
+        this.hwnd = hwnd;
     }
 
     public void Attach()
@@ -129,7 +133,7 @@ internal sealed class SyncPage
     private static TextBlock Text(string text, bool secondary = false, double size = 14, bool bold = false, bool mono = false)
     {
         var t = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = size, IsTextSelectionEnabled = mono };
-        if (secondary) t.Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush");
+        if (secondary) t.Foreground = SettingsView.Res("TextFillColorSecondaryBrush");
         if (bold) t.FontWeight = FontWeights.SemiBold;
         if (mono) t.FontFamily = Theme.Mono;
         return t;
@@ -142,7 +146,7 @@ internal sealed class SyncPage
         return new Border
         {
             Child = sp, Padding = new Thickness(16, 14, 16, 14), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
-            Background = SettingsWindow.Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = SettingsWindow.Res("CardStrokeColorDefaultBrush"),
+            Background = SettingsView.Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush"),
         };
     }
 
@@ -204,7 +208,7 @@ internal sealed class SyncPage
 
     private void SignedOut()
     {
-        page.Children.Add(SettingsWindow.Section(Loc.T("账号", "Account")));
+        page.Children.Add(SettingsView.Section(Loc.T("账号", "Account")));
         page.Children.Add(Box(
             Text(Loc.T("在多台设备之间同步你的模板", "Sync your templates across your devices"), bold: true),
             Text(Loc.T("使用 GitHub 账号登录。登录在浏览器中完成，完成后回到 Qantrip。", "Sign in with your GitHub account. Sign-in happens in your browser; return to Qantrip afterwards."), secondary: true, size: 13),
@@ -213,7 +217,7 @@ internal sealed class SyncPage
 
     private void AccountCard()
     {
-        page.Children.Add(SettingsWindow.Section(Loc.T("账号", "Account")));
+        page.Children.Add(SettingsView.Section(Loc.T("账号", "Account")));
         page.Children.Add(Box(Spread(
             Row(Text(Loc.T("账号", "Account"), secondary: true), Text(sync.Status?.Account ?? "", bold: true)),
             Btn("signout", Loc.T("退出登录", "Sign out"), sync.SignOut, enabled: !Busy))));
@@ -222,7 +226,7 @@ internal sealed class SyncPage
     private void NoVault()
     {
         AccountCard();
-        page.Children.Add(SettingsWindow.Section(Loc.T("保险库", "Vault")));
+        page.Children.Add(SettingsView.Section(Loc.T("保险库", "Vault")));
         if (sync.Join is { } join)
         {
             JoinWaiting(join);
@@ -311,7 +315,7 @@ internal sealed class SyncPage
             page.Children.Add(bar);
         }
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("账号", "Account")));
+        page.Children.Add(SettingsView.Section(Loc.T("账号", "Account")));
         relative = Text("", bold: true);
         AutomationProperties.SetAutomationId(relative, "sync_lastsync");
         UpdateRelative();
@@ -337,7 +341,7 @@ internal sealed class SyncPage
 
         if (status.Alerts.Count > 0)
         {
-            page.Children.Add(SettingsWindow.Section(Loc.T("安全提醒", "Security alerts")));
+            page.Children.Add(SettingsView.Section(Loc.T("安全提醒", "Security alerts")));
             var items = status.Alerts.Select(a => (UIElement)Text(Loc.En ? a.Code.Replace('_', ' ') : a.Message, size: 13)).ToList();
             items.Add(Row(Btn("dismissalerts", Loc.T("知道了", "Dismiss"), sync.DismissAlerts)));
             page.Children.Add(Box(items.ToArray()));
@@ -345,7 +349,7 @@ internal sealed class SyncPage
 
         foreach (var (id, confirm) in sync.ConfirmCodes.OrderBy(kv => kv.Key))
         {
-            page.Children.Add(SettingsWindow.Section(Loc.T("最后一步", "Last step")));
+            page.Children.Add(SettingsView.Section(Loc.T("最后一步", "Last step")));
             page.Children.Add(Box(
                 Text(Loc.T("在新的设备上输入这个确认码", "Enter this code on the new device")),
                 Big(confirm, "confirmcode"),
@@ -355,7 +359,7 @@ internal sealed class SyncPage
         var requests = sync.JoinRequests.Where(r => r.Status != "handled_elsewhere" && !sync.ConfirmCodes.ContainsKey(r.JoinId)).ToList();
         if (requests.Count > 0)
         {
-            page.Children.Add(SettingsWindow.Section(Loc.T("新设备请求加入", "A new device wants to join")));
+            page.Children.Add(SettingsView.Section(Loc.T("新设备请求加入", "A new device wants to join")));
             foreach (var r in requests)
             {
                 if (r.Status == "waiting_for_new_device")
@@ -373,7 +377,7 @@ internal sealed class SyncPage
             }
         }
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("设备", "Devices")));
+        page.Children.Add(SettingsView.Section(Loc.T("设备", "Devices")));
         var devices = new List<UIElement>();
         if (sync.AccountDevices is { } account)
         {
@@ -396,7 +400,7 @@ internal sealed class SyncPage
         AutomationProperties.SetAutomationId(devicesBox, "sync_devices");
         page.Children.Add(devicesBox);
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("密钥与本机", "Keys and this PC")));
+        page.Children.Add(SettingsView.Section(Loc.T("密钥与本机", "Keys and this PC")));
         page.Children.Add(Box(
             Spread(Text(Loc.T("轮换密钥后，之前移除的设备即使保留了旧密钥，也无法读取之后的内容。", "After rotating keys, previously removed devices can't read anything new even if they kept old keys."), secondary: true, size: 13),
                 Btn("rotate", Loc.T("轮换密钥", "Rotate keys"), sync.RotateKeys, enabled: !Busy)),
@@ -494,7 +498,7 @@ internal sealed class SyncPage
     /// 本机超出设备上限：列出账号下的其他设备，解除一台后本机即可同步；旧设备丢失时也可以在这里直接解除。
     private void DeviceLimit(uint max)
     {
-        page.Children.Add(SettingsWindow.Section(Loc.T("设备数量", "Devices")));
+        page.Children.Add(SettingsView.Section(Loc.T("设备数量", "Devices")));
         var items = new List<UIElement>();
         var head = Row(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 16, Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange) },
             Text(Loc.T($"这个账号最多同时在 {max} 台设备上同步", $"This account can sync on up to {max} devices at a time"), bold: true));
@@ -655,11 +659,29 @@ internal sealed class SyncPage
             grid.Children.Add(cell);
         }
         AutomationProperties.SetAutomationId(grid, "sync_phrasegrid");
-        var check = new CheckBox { Content = Loc.T("我已经抄写并保存好了", "I've written it down") };
+        var check = new CheckBox { Content = Loc.T("我已经保存好了", "I've saved it") };
         AutomationProperties.SetAutomationId(check, "sync_phrasesaved");
         var content = new StackPanel { Spacing = 14, MinWidth = 480 };
-        content.Children.Add(Text(Loc.T("抄写下来，保存在安全的地方。所有设备都丢失时，只有它能找回你的同步数据；任何人（包括我们）都无法替你恢复。", "Write it down and keep it somewhere safe. If you lose every device, it's the only way to get your synced data back. Nobody, including us, can recover it for you."), secondary: true, size: 13));
-        content.Children.Add(new Border { Child = grid, CornerRadius = new CornerRadius(8), Background = SettingsWindow.Res("SubtleFillColorSecondaryBrush") });
+        content.Children.Add(Text(Loc.T("把它保存在安全的地方。所有设备都丢失时，只有它能找回你的同步数据；任何人（包括我们）都无法替你恢复。", "Keep it somewhere safe. If you lose every device, it's the only way to get your synced data back. Nobody, including us, can recover it for you."), secondary: true, size: 13));
+        content.Children.Add(new Border { Child = grid, CornerRadius = new CornerRadius(8), Background = SettingsView.Res("SubtleFillColorSecondaryBrush") });
+        // 复制（普通复制，留在剪贴板中，不加排除标记，也不定时清除）与保存为文件
+        var copyText = new TextBlock { Text = Loc.T("复制", "Copy") };
+        var copyIcon = new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 14 };
+        var copy = new Button { Content = Row(copyIcon, copyText) };
+        AutomationProperties.SetAutomationId(copy, "sync_phrasecopy");
+        AutomationProperties.SetName(copy, Loc.T("复制", "Copy"));
+        copy.Click += (_, _) =>
+        {
+            if (Platform.ClipboardStore.SetText(hwnd, phrase, exclude: false) == 0) return;
+            copyIcon.Glyph = "";
+            copyText.Text = Loc.T("已复制", "Copied");
+        };
+        var save = new Button { Content = Row(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 14 }, new TextBlock { Text = Loc.T("保存为文件…", "Save to File…") }) };
+        AutomationProperties.SetAutomationId(save, "sync_phrasesave");
+        AutomationProperties.SetName(save, Loc.T("保存为文件…", "Save to File…"));
+        save.Click += (_, _) => _ = SavePhrase(phrase);
+        content.Children.Add(Row(copy, save));
+        content.Children.Add(Text(Loc.T("请把它保存在只有你能访问的地方，例如密码管理器；不要发给任何人。", "Keep it somewhere only you can access, such as a password manager. Never share it."), secondary: true, size: 12));
         content.Children.Add(check);
         var dialog = new ContentDialog
         {
@@ -676,6 +698,31 @@ internal sealed class SyncPage
         if (await Dialog(dialog) is null) return;
         if (check.IsChecked == true) sync.Phrase = null;
         Render(true);
+    }
+
+    /// 保存恢复短语为文本文件：简短说明 + 编号的词（与 macOS 相同）。
+    private async Task SavePhrase(string phrase)
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileSavePicker
+            {
+                SuggestedFileName = Loc.T("Qantrip 恢复短语", "Qantrip recovery phrase"),
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+            };
+            picker.FileTypeChoices.Add(Loc.T("文本文件", "Text file"), new List<string> { ".txt" });
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
+            var words = phrase.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select((w, i) => $"{i + 1}. {w}");
+            var text = Loc.T("Nekro Qantrip 同步恢复短语\r\n所有设备都丢失时，用它找回同步数据。请妥善保管，不要发给任何人。\r\n\r\n",
+                "Nekro Qantrip sync recovery phrase\r\nUse it to recover your synced data if you lose every device. Keep it safe and never share it.\r\n\r\n")
+                + string.Join("\r\n", words) + "\r\n";
+            // 带 BOM 的 UTF-8：旧版记事本也能正确显示中文
+            await File.WriteAllTextAsync(file.Path, text, new UTF8Encoding(true));
+            Log.Event("sync_phrase_saved", new());
+        }
+        catch (Exception e) { Log.Error("save_phrase", e); }
     }
 }
 

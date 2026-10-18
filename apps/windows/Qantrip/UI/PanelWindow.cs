@@ -40,6 +40,10 @@ internal sealed class PanelWindow : Window
     private readonly TextBlock wand = new();
     private readonly Border targetPill = new();
     private readonly TextBlock targetText = new();
+    /// 顶栏右侧的快捷入口：模板库（Ctrl+L）、设置（Ctrl+,）
+    private readonly StackPanel quick = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+    /// 输入框为空时的占位文字：和灰字补全一样画在光标所在行的基线上（输入框自带的占位文字与光标不在同一基线）
+    private string placeholder = "";
     private readonly StackPanel list = new();
     private readonly ScrollViewer listScroll = new();
     private readonly TextBlock listEmpty = new();
@@ -194,6 +198,7 @@ internal sealed class PanelWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         wand.Text = ""; // Segoe Fluent Icons: LightningBolt 风格的"施法"图标
         wand.FontFamily = Theme.Icons;
         wand.FontSize = 20;
@@ -208,6 +213,9 @@ internal sealed class PanelWindow : Window
         ghost.VerticalAlignment = VerticalAlignment.Center;
         ghost.HorizontalAlignment = HorizontalAlignment.Left;
         ghost.Visibility = Visibility.Collapsed;
+        // 基线位置在布局完成后才能取得：尺寸变化时重新对齐
+        ghost.SizeChanged += (_, _) => UpdateGhost();
+        field.SizeChanged += (_, _) => UpdateGhost();
         fieldHost.Children.Add(ghost);
         Grid.SetColumn(fieldHost, 1);
         header.Children.Add(fieldHost);
@@ -221,6 +229,8 @@ internal sealed class PanelWindow : Window
         targetPill.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(targetPill, 2);
         header.Children.Add(targetPill);
+        Grid.SetColumn(quick, 3);
+        header.Children.Add(quick);
         root.Children.Add(header);
 
         var d1 = Divider(false); Grid.SetRow(d1, 1); root.Children.Add(d1);
@@ -280,7 +290,9 @@ internal sealed class PanelWindow : Window
         field.DisabledFormattingAccelerators = DisabledFormattingAccelerators.All;
         field.ClipboardCopyFormat = RichEditClipboardFormat.PlainText;
         field.BorderThickness = new Thickness(0);
-        field.Padding = new Thickness(0, 4, 0, 4);
+        // 不用内边距（用外边距留出上下空白）：灰字与占位文字按光标的客户区坐标定位，内边距为 0 时两者原点一致
+        field.Padding = new Thickness(0);
+        field.Margin = new Thickness(0, 4, 0, 4);
         field.MinHeight = 0;
         field.VerticalAlignment = VerticalAlignment.Center;
         field.SelectionFlyout = null;
@@ -335,21 +347,46 @@ internal sealed class PanelWindow : Window
         ghost.Foreground = Theme.B(theme.Tertiary);
         foreach (var d in dividers) d.Background = Theme.B(theme.Divider);
         BuildKeys();
+        BuildQuick();
+    }
+
+    private void BuildQuick()
+    {
+        quick.Children.Clear();
+        quick.Children.Add(HeaderIcon("\uE8F1", Loc.T("模板库（Ctrl+L）", "Template Library (Ctrl+L)"), "panel_library", () => Model.OnOpenLibrary?.Invoke()));
+        quick.Children.Add(HeaderIcon("\uE713", Loc.T("设置（Ctrl+,）", "Settings (Ctrl+,)"), "panel_settings", () => Model.OnOpenSettings?.Invoke()));
+    }
+
+    /// 顶栏的小图标按钮（不取得焦点，输入框保持焦点）
+    private FrameworkElement HeaderIcon(string glyph, string tip, string id, Action action)
+    {
+        var icon = new FontIcon { Glyph = glyph, FontFamily = Theme.Icons, FontSize = 14, Foreground = Theme.B(theme.Tertiary) };
+        var b = new Border
+        {
+            Child = icon, Width = 28, Height = 28, CornerRadius = new CornerRadius(7), Background = Theme.B(Colors.Transparent),
+        };
+        ToolTipService.SetToolTip(b, tip);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, tip);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(b, id);
+        b.PointerEntered += (_, _) => { b.Background = Theme.B(theme.Hover); icon.Foreground = Theme.B(theme.Text); };
+        b.PointerExited += (_, _) => { b.Background = Theme.B(Colors.Transparent); icon.Foreground = Theme.B(theme.Tertiary); };
+        b.Tapped += (_, e) => { e.Handled = true; action(); };
+        return b;
     }
 
     private void ApplyFieldColors()
     {
         field.Foreground = Theme.B(theme.Text);
-        field.PlaceholderText = Loc.T("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth");
-        field.Resources["TextControlPlaceholderForeground"] = Theme.B(theme.Tertiary);
-        field.Resources["TextControlPlaceholderForegroundFocused"] = Theme.B(theme.Tertiary);
-        field.Resources["TextControlPlaceholderForegroundPointerOver"] = Theme.B(theme.Tertiary);
+        placeholder = Loc.T("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(field, placeholder);
+        UpdateGhost();
     }
 
     /// 界面语言或底栏相关设置变化后刷新静态文字。
     public void ApplyLanguage()
     {
         ApplyFieldColors();
+        BuildQuick();
         keysState = "";
         Refresh();
     }
@@ -405,6 +442,13 @@ internal sealed class PanelWindow : Window
             case VirtualKey.Enter:
                 Model.Confirm(expand: ctrl && Settings.ExpandPasteEnabled);
                 break;
+            // 快捷入口：Ctrl+L 模板库、Ctrl+, 设置（排除 AltGr = Ctrl+Alt）
+            case VirtualKey.L when ctrl && !Down(VirtualKey.Menu):
+                Model.OnOpenLibrary?.Invoke();
+                break;
+            case (VirtualKey)0xBC when ctrl && !Down(VirtualKey.Menu): // VK_OEM_COMMA
+                Model.OnOpenSettings?.Invoke();
+                break;
             case VirtualKey.Up: Model.Move(-1); break;
             case VirtualKey.Down: Model.Move(1); break;
             case VirtualKey.Tab: Model.Complete(); break;
@@ -457,12 +501,13 @@ internal sealed class PanelWindow : Window
         finally { doc.ApplyDisplayUpdates(); }
     }
 
-    /// 灰字补全画在输入文字末尾之后（与输入同一行、同一字体）。
+    /// 灰字补全画在输入文字末尾之后（与输入同一行、同一字体）；输入框为空时在同一位置画占位文字。
     private void UpdateGhost()
     {
-        var g = Model.Analysis.Ghost;
-        var sel = field.Document.Selection;
         int len = fieldText.Length;
+        bool empty = len == 0;
+        var g = empty ? placeholder : Model.Analysis.Ghost;
+        var sel = field.Document.Selection;
         if (composing || string.IsNullOrEmpty(g) || sel.Length != 0 || sel.StartPosition != len)
         {
             ghost.Visibility = Visibility.Collapsed;
@@ -474,9 +519,37 @@ internal sealed class PanelWindow : Window
             field.Document.GetRange(len, len).GetRect(PointOptions.ClientCoordinates, out Rect rect, out _);
             x = rect.X;
         }
-        ghost.Text = g;
-        ghost.Margin = new Thickness(x + field.Padding.Left, 0, 0, 0);
-        ghost.Visibility = x + 40 < field.ActualWidth ? Visibility.Visible : Visibility.Collapsed;
+        if (ghost.Text != g) ghost.Text = g;
+        ghost.Margin = new Thickness(x + field.Padding.Left, BaselineTop(len), 0, 0);
+        // 超出可见宽度时不显示补全（占位文字总是显示）
+        ghost.Visibility = empty || x + 40 < field.ActualWidth ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 灰字的上边距：让它的基线与光标所在行的基线重合（字体回退或行高不同时，两个控件各自垂直居中会错开）。
+    /// 光标基线取自 ITextRange.GetPoint(Baseline)（输入框客户区坐标），灰字基线取自 TextBlock.BaselineOffset；
+    /// 布局尚未完成时退回垂直居中，尺寸变化后会再对齐一次。
+    /// </summary>
+    private double BaselineTop(int pos)
+    {
+        double ghostBaseline = ghost.BaselineOffset;
+        if (ghostBaseline > 0 && field.ActualHeight > 0 && field.XamlRoot != null)
+        {
+            try
+            {
+                field.Document.GetRange(pos, pos).GetPoint(HorizontalCharacterAlignment.Left, VerticalCharacterAlignment.Baseline, PointOptions.ClientCoordinates, out Point caret);
+                var origin = field.TransformToVisual(fieldHost).TransformPoint(new Point(0, 0));
+                double top = origin.Y + field.BorderThickness.Top + field.Padding.Top + caret.Y - ghostBaseline;
+                if (caret.Y > 0 && top > -ghostBaseline && top < fieldHost.ActualHeight)
+                {
+                    ghost.VerticalAlignment = VerticalAlignment.Top;
+                    return Math.Round(top, 1);
+                }
+            }
+            catch (Exception e) { Log.Error("ghost_baseline", e); }
+        }
+        ghost.VerticalAlignment = VerticalAlignment.Center;
+        return 0;
     }
 
     // MARK: 刷新

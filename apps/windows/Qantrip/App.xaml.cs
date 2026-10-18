@@ -20,7 +20,6 @@ public partial class App : Application
     private HotKey? hotKey;
     private TrayIcon? tray;
     private Inserter? inserter;
-    private SettingsWindow? settingsWindow;
     private LibraryModel? library;
     private LibraryWindow? libraryWindow;
     private OnboardingWindow? onboarding;
@@ -29,6 +28,10 @@ public partial class App : Application
     private Hud? hud;
     private ForegroundWatcher? foreground;
     private bool submitting;
+    /// 在 Qantrip 自己的窗口（引导页的练习框、模板库的编辑器、设置中的输入框）里唤起面板时，那个窗口与当时的焦点控件
+    private OwnTarget? ownTarget;
+
+    private sealed record OwnTarget(Window Window, IntPtr Hwnd, WeakReference<DependencyObject>? Focused);
 
     public Engine? Engine => engine;
     public static new App? Current => Application.Current as App;
@@ -55,6 +58,8 @@ public partial class App : Application
         model.OnCancel = () => Hide(restoreFocus: true);
         model.OnCommand = FinishCommand;
         model.ReadClipboard = () => messages is null ? null : ClipboardStore.ReadText(messages.Handle);
+        model.OnOpenLibrary = () => OpenFromPanel(() => ShowLibrary(null));
+        model.OnOpenSettings = () => OpenFromPanel(() => ShowSettings("general"));
         panel.Activated += (_, e) =>
         {
             // 点击面板外部（面板失去激活）时关闭，行为与 Spotlight / PowerToys Run 一致
@@ -65,7 +70,8 @@ public partial class App : Application
         messages = new MessageWindow();
         inserter = new Inserter(messages.Handle);
         messages.ShowRequested += () => Show("second_instance", -1);
-        messages.SettingsRequested += ShowSettings;
+        messages.SettingsRequested += () => ShowSettings("general");
+        messages.QuitRequested += Quit;
         messages.LibraryRequested += () => ShowLibrary(null);
         hotKey = new HotKey(messages);
         hotKey.Pressed += time =>
@@ -85,11 +91,13 @@ public partial class App : Application
             LibraryLabel = () => Loc.T("模板库…", "Template Library…"),
             GuideLabel = () => Loc.T("使用引导…", "Welcome Guide…"),
             SyncLabel = () => SyncService.Shared.PendingJoinCount > 0 ? Loc.T("有设备请求加入同步…", "A device wants to join sync…") : null,
+            UpdateLabel = () => UpdateChecker.Shared.Visible is { } r ? Loc.T($"有新版本 {r.Version}…", $"Update Available: {r.Version}…") : null,
             ExclusionLabel = TrayExclusionLabel,
             QuitLabel = () => Loc.T("退出 Nekro Qantrip", "Quit Nekro Qantrip"),
         };
         tray.Open += () => Show("tray", -1);
-        tray.OpenSettings += ShowSettings;
+        tray.OpenSettings += () => ShowSettings("general");
+        tray.OpenUpdate += () => { if (UpdateChecker.Shared.Visible is { } r) UpdateChecker.OpenReleasePage(r); };
         tray.OpenLibrary += () => ShowLibrary(null);
         tray.OpenGuide += ShowOnboarding;
         tray.OpenSync += ActivateSettings;
@@ -127,7 +135,12 @@ public partial class App : Application
         messages.AsleepChanged += SyncService.Shared.SetAsleep;
         SyncService.Shared.SetAsleep(messages.Asleep);
         SyncService.Shared.Start();
-        if (Program.OpenSettingsOnLaunch) ShowSettings();
+        // 更新提醒：只通知，不自动下载或安装
+        UpdateChecker.Shared.Found += r => tray?.Notify("Nekro Qantrip",
+            Loc.T($"有新版本 {r.Version} 可以下载。点击这里或从托盘菜单打开下载页面。", $"Version {r.Version} is available. Click here or use the tray menu to open the download page."),
+            () => UpdateChecker.OpenReleasePage(r));
+        UpdateChecker.Shared.Start(panel.DispatcherQueue);
+        if (Program.OpenSettingsOnLaunch) ShowSettings("general");
         if (Program.OpenLibraryOnLaunch) ShowLibrary(null);
         if (!Settings.OnboardingDone && Environment.GetEnvironmentVariable("QANTRIP_SKIP_ONBOARDING") != "1") ShowOnboarding();
     }
@@ -212,6 +225,7 @@ public partial class App : Application
         var sw = Stopwatch.StartNew();
         var target = Foreground.Capture();
         if (target != null && (target.Hwnd == panel.Hwnd || target.Hwnd == messages?.Handle)) target = null;
+        ownTarget = CaptureOwn(target);
         panel.PrepareEntrance();
         model.Begin(target);
         var tModel = sw.Elapsed.TotalMilliseconds;
@@ -230,6 +244,7 @@ public partial class App : Application
             ["foreground_ok"] = ok,
             ["foreground_method"] = method,
             ["ime"] = panel.ImeAction,
+            ["own_window"] = ownTarget is not null,
         };
         // 第一帧渲染完成的时间（含 XAML 布局与合成提交，不含显示器扫描输出）
         void Frame(object? s, object e)
@@ -247,10 +262,92 @@ public partial class App : Application
     {
         if (panel is null || model is null || !panel.IsShown) return;
         DebugQuery("hide");
+        var own = ownTarget;
+        ownTarget = null;
         submitting = true; // 切换前台会触发面板失去激活，避免重入
         try
         {
             if (restoreFocus && model.Target is { } t && Win32.IsWindow(t.Hwnd)) Foreground.Activate(t.Hwnd, out _);
+            panel.HidePanel();
+        }
+        finally { submitting = false; }
+        // 在自己的窗口里唤起：关闭面板后把键盘焦点还给原来的输入框
+        if (restoreFocus && own != null) own.Window.DispatcherQueue.TryEnqueue(() => RestoreFocus(own));
+    }
+
+    /// 前台窗口是 Qantrip 自己的窗口（面板与隐藏的消息窗口除外）时，记下它与其中的焦点控件。
+    private OwnTarget? CaptureOwn(Foreground.Target? target)
+    {
+        if (target is null || target.Pid != (uint)Environment.ProcessId) return null;
+        Window? window = null;
+        foreach (var w in new Window?[] { libraryWindow, onboarding })
+            if (w != null && WinRT.Interop.WindowNative.GetWindowHandle(w) == target.Hwnd) window = w;
+        if (window?.Content?.XamlRoot is not { } root) return null;
+        var focused = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) as DependencyObject;
+        return new OwnTarget(window, target.Hwnd, focused is null ? null : new WeakReference<DependencyObject>(focused));
+    }
+
+    /// 把焦点还给唤起面板前的控件（窗口已回到前台），返回该控件。
+    private static DependencyObject? RestoreFocus(OwnTarget own)
+    {
+        if (own.Focused is null || !own.Focused.TryGetTarget(out var element)) return null;
+        if (element is UIElement { XamlRoot: null }) return null; // 已不在界面中（例如页面重建）
+        if (element is Microsoft.UI.Xaml.Controls.Control c) c.Focus(FocusState.Programmatic);
+        return element;
+    }
+
+    /// <summary>
+    /// 插入到 Qantrip 自己的窗口：恢复前台与焦点后直接写入输入框（不模拟粘贴、不经过剪贴板，对应 macOS insertIntoOwnWindow）。
+    /// 焦点不在可编辑的输入框上时只复制到剪贴板并提示。
+    /// </summary>
+    private void InsertIntoOwnWindow(OwnTarget own, string text)
+    {
+        own.Window.DispatcherQueue.TryEnqueue(() =>
+        {
+            var element = RestoreFocus(own);
+            if (element is null && own.Window.Content?.XamlRoot is { } root)
+                element = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) as DependencyObject;
+            var normalized = text.Replace("\r\n", "\n");
+            string kind;
+            switch (element)
+            {
+                case Microsoft.UI.Xaml.Controls.TextBox { IsReadOnly: false } box:
+                {
+                    // TextBox 的换行是 \r；单行输入框把换行换成空格
+                    var s = box.AcceptsReturn ? normalized.Replace('\n', '\r') : normalized.Replace('\n', ' ');
+                    int start = box.SelectionStart;
+                    box.SelectedText = s;
+                    box.Select(Math.Min(start + s.Length, box.Text.Length), 0);
+                    kind = "textbox";
+                    break;
+                }
+                case Microsoft.UI.Xaml.Controls.RichEditBox { IsReadOnly: false } rich:
+                    rich.Document.Selection.TypeText(rich.AcceptsReturn ? normalized.Replace('\n', '\r') : normalized.Replace('\n', ' '));
+                    kind = "richedit";
+                    break;
+                default:
+                    // 焦点不在可编辑的输入框上：模拟粘贴也无处可去，改为只复制
+                    kind = "copy_only";
+                    if (messages != null && ClipboardStore.SetText(messages.Handle, text, exclude: false) != 0)
+                        (hud ??= new Hud()).Show(Loc.T("已复制到剪贴板，按 Ctrl+V 粘贴", "Copied to clipboard. Press Ctrl+V to paste."));
+                    break;
+            }
+            Log.Event("insert_own", new() { ["control"] = kind, ["element"] = element?.GetType().Name, ["chars"] = text.Length });
+            if (Settings.DebugHooks) File.WriteAllText(Path.Combine(Log.Dir, "last-insert.txt"), text);
+        });
+    }
+
+    /// 面板中的快捷入口（Ctrl+L 模板库、Ctrl+, 设置、顶栏图标）：关闭面板（不把焦点还给原程序）后打开 Qantrip 的窗口。
+    /// 先打开窗口再隐藏面板：此时本进程仍在前台，新窗口可以直接取得前台。
+    private void OpenFromPanel(Action open)
+    {
+        if (panel is null) return;
+        ownTarget = null;
+        submitting = true;
+        try
+        {
+            DebugQuery("open_window");
+            open();
             panel.HidePanel();
         }
         finally { submitting = false; }
@@ -260,6 +357,20 @@ public partial class App : Application
     {
         if (panel is null || model is null || inserter is null) return;
         var target = model.Target;
+        if (ownTarget is { } own)
+        {
+            ownTarget = null;
+            submitting = true;
+            try
+            {
+                DebugQuery("submit");
+                Foreground.Activate(own.Hwnd, out _);
+                panel.HidePanel();
+            }
+            finally { submitting = false; }
+            InsertIntoOwnWindow(own, text);
+            return;
+        }
         submitting = true;
         try
         {
@@ -290,7 +401,6 @@ public partial class App : Application
         tray?.Dispose();
         hotKey?.Dispose();
         messages?.Dispose();
-        settingsWindow?.Close();
         hud?.Close();
         panel?.Close();
         engine?.Dispose();
@@ -323,7 +433,7 @@ public partial class App : Application
                 else ActivateSettings();
                 break;
             case "settings":
-                ShowSettings();
+                ShowSettings("general");
                 break;
             case "library":
                 ShowLibrary(null);
@@ -339,38 +449,39 @@ public partial class App : Application
 
     // MARK: 窗口
 
-    private void ShowSettings()
+    /// 设置与模板库在同一个窗口中（与 macOS 相同）：打开该窗口的某个设置页（general / insert / sync / privacy / about）。
+    public void ShowSettings(string page)
     {
-        if (settingsWindow is null)
-        {
-            settingsWindow = new SettingsWindow(this);
-            settingsWindow.Closed += (_, _) => settingsWindow = null;
-        }
-        settingsWindow.ShowAndActivate();
+        if (LibraryWindowReady() is not { } w) return;
+        w.ShowSettings(page);
+        w.ShowAndActivate();
+        Log.Event("settings_open", new() { ["page"] = page });
     }
 
-    /// 打开设置 › 同步并置于前台（浏览器登录完成、托盘"有设备请求加入"）。
-    public void ActivateSettings()
-    {
-        ShowSettings();
-        settingsWindow?.ShowPage("sync");
-    }
+    /// 打开设置 › 同步并置于前台（浏览器登录完成、托盘"有设备请求加入"、超出设备上限、未加入时的 /sync）。
+    public void ActivateSettings() => ShowSettings("sync");
 
-    /// 打开模板库；`name` 不为空时选中该模板（/edit、/dup）。
+    /// 打开模板库；`name` 不为空时选中该模板（/edit、/dup）。窗口正显示设置时回到模板。
     public void ShowLibrary(string? name)
     {
-        if (engine is null) return;
+        if (LibraryWindowReady() is not { } w) return;
+        if (name != null) w.SelectTemplate(name);
+        else w.ShowTemplates();
+        w.ShowAndActivate();
+        Log.Event("library_open", new() { ["select"] = name != null });
+    }
+
+    private LibraryWindow? LibraryWindowReady()
+    {
+        if (engine is null) return null;
         library ??= new LibraryModel(engine);
+        library.Reload();
         if (libraryWindow is null)
         {
-            library.Reload();
-            libraryWindow = new LibraryWindow(library);
+            libraryWindow = new LibraryWindow(library, this);
             libraryWindow.Closed += (_, _) => libraryWindow = null;
         }
-        else library.Reload();
-        if (name != null) libraryWindow.SelectTemplate(name);
-        libraryWindow.ShowAndActivate();
-        Log.Event("library_open", new() { ["select"] = name != null });
+        return libraryWindow;
     }
 
     private void ShowOnboarding()
@@ -392,8 +503,8 @@ public partial class App : Application
                 engine?.SetLocale(Settings.UiLocale, Settings.TemplateLocale);
                 model?.Refresh();
                 panel?.ApplyLanguage();
-                settingsWindow?.Rebuild();
                 library?.Reload();
+                libraryWindow?.ApplyLanguage();
                 break;
             case "forceAsciiInput":
                 panel?.ApplyInputScope();
@@ -403,7 +514,7 @@ public partial class App : Application
                 break;
             case "excludedApps":
                 ApplyExclusion();
-                settingsWindow?.RefreshExcludedApps();
+                libraryWindow?.RefreshExcludedApps();
                 break;
         }
         Log.Event("setting", new() { ["key"] = key });

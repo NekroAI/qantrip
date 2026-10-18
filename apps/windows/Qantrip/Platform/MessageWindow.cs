@@ -13,6 +13,8 @@ internal sealed class MessageWindow : IDisposable
     public static readonly uint ShowPanelMessage = RegisterWindowMessage("NekroQantrip.ShowPanel");
     public static readonly uint ShowSettingsMessage = RegisterWindowMessage("NekroQantrip.ShowSettings");
     public static readonly uint ShowLibraryMessage = RegisterWindowMessage("NekroQantrip.ShowLibrary");
+    /// 安装程序 / 卸载程序请正在运行的实例退出（apps/windows/installer/Qantrip.iss）
+    public static readonly uint QuitMessage = RegisterWindowMessage("NekroQantrip.Quit");
     private static readonly uint TaskbarCreated = RegisterWindowMessage("TaskbarCreated");
     public const uint TrayMessage = WM_APP + 1;
 
@@ -24,6 +26,7 @@ internal sealed class MessageWindow : IDisposable
     public event Action? ShowRequested;
     public event Action? SettingsRequested;
     public event Action? LibraryRequested;
+    public event Action? QuitRequested;
     /// 锁屏、系统睡眠或显示器关闭时为 true，三者都恢复后为 false（只在状态变化时触发）
     public event Action<bool>? AsleepChanged;
 
@@ -68,6 +71,7 @@ internal sealed class MessageWindow : IDisposable
             if (msg == ShowPanelMessage) { ShowRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowSettingsMessage) { SettingsRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == ShowLibraryMessage) { LibraryRequested?.Invoke(); return IntPtr.Zero; }
+            if (msg == QuitMessage) { QuitRequested?.Invoke(); return IntPtr.Zero; }
             if (msg == WM_WTSSESSION_CHANGE)
             {
                 if ((int)wParam == WTS_SESSION_LOCK) SetAsleep(ref locked, true);
@@ -166,10 +170,13 @@ internal sealed class TrayIcon : IDisposable
     public event Action? OpenLibrary;
     public event Action? OpenGuide;
     public event Action? OpenSync;
+    public event Action? OpenUpdate;
     public event Action? Quit;
     public Func<string>? OpenLabel, SettingsLabel, LibraryLabel, GuideLabel, QuitLabel;
     /// 有设备等待加入同步时显示的菜单项（null 表示不显示）
     public Func<string?>? SyncLabel;
+    /// 有新版本时显示的菜单项（null 表示不显示）
+    public Func<string?>? UpdateLabel;
     /// "在「X」中停用 / 恢复快捷键"（null 表示不显示）；在菜单打开前取值（此时前台已经变成任务栏）
     public Func<string?>? ExclusionLabel;
     public event Action? ToggleExclusion;
@@ -204,9 +211,13 @@ internal sealed class TrayIcon : IDisposable
         Shell_NotifyIcon(NIM_MODIFY, ref d);
     }
 
-    /// 气泡通知（例如"已复制到剪贴板"）。
-    public void Notify(string title, string text)
+    /// 点击当前气泡通知时执行的操作（新通知替换它，通知消失后清除）
+    private Action? balloonClick;
+
+    /// 气泡通知（例如"已复制到剪贴板"）。`onClick`：用户点击通知时执行。
+    public void Notify(string title, string text, Action? onClick = null)
     {
+        balloonClick = onClick;
         var d = Data(NIF_INFO);
         d.szInfo = text.Length > 255 ? text[..255] : text;
         d.szInfoTitle = title;
@@ -214,13 +225,18 @@ internal sealed class TrayIcon : IDisposable
         Shell_NotifyIcon(NIM_MODIFY, ref d);
     }
 
+    private const int NIN_BALLOONHIDE = 0x403, NIN_BALLOONTIMEOUT = 0x404, NIN_BALLOONUSERCLICK = 0x405;
+
     private void OnTray(int msg)
     {
         if (msg == WM_LBUTTONUP) { Open?.Invoke(); return; }
+        if (msg == NIN_BALLOONUSERCLICK) { var click = balloonClick; balloonClick = null; click?.Invoke(); return; }
+        if (msg is NIN_BALLOONTIMEOUT or NIN_BALLOONHIDE) { balloonClick = null; return; }
         if (msg != WM_RBUTTONUP && msg != WM_CONTEXTMENU) return;
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, (UIntPtr)1, OpenLabel?.Invoke() ?? "Open");
         if (SyncLabel?.Invoke() is { } sync) AppendMenu(menu, MF_STRING, (UIntPtr)6, sync);
+        if (UpdateLabel?.Invoke() is { } update) AppendMenu(menu, MF_STRING, (UIntPtr)8, update);
         if (ExclusionLabel?.Invoke() is { } exclusion) AppendMenu(menu, MF_STRING, (UIntPtr)7, exclusion);
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING, (UIntPtr)4, LibraryLabel?.Invoke() ?? "Template Library…");
@@ -241,6 +257,7 @@ internal sealed class TrayIcon : IDisposable
         if (cmd == 5) OpenGuide?.Invoke();
         if (cmd == 6) OpenSync?.Invoke();
         if (cmd == 7) ToggleExclusion?.Invoke();
+        if (cmd == 8) OpenUpdate?.Invoke();
     }
 
     public void Dispose()

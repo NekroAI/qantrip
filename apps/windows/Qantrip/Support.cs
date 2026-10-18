@@ -98,6 +98,23 @@ internal static class Settings
     /// 首次启动引导已完成
     public static bool OnboardingDone { get => Bool("onboardingDone", false); set => Set("onboardingDone", value); }
 
+    // 更新提醒（UpdateChecker）：只提醒，不自动下载或安装
+    /// 自动检查更新（启动约 10 秒后、之后每 24 小时；自动检查至多每 12 小时一次）
+    public static bool AutoCheckUpdates { get => Bool("checkForUpdates", true); set => Set("checkForUpdates", value); }
+    /// 上次检查更新的时间（无论成功与否）
+    public static DateTimeOffset UpdateLastCheck
+    {
+        get => DateTimeOffset.TryParse(Str("updateLastCheck"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var t) ? t : DateTimeOffset.MinValue;
+        set => Set("updateLastCheck", value.ToString("o", CultureInfo.InvariantCulture));
+    }
+    /// 上次检查得到的较新版本与发布页（重启后托盘菜单仍可显示）
+    public static string? UpdateLatestVersion { get => Str("updateLatestVersion"); set => Set("updateLatestVersion", value); }
+    public static string? UpdateLatestUrl { get => Str("updateLatestUrl"); set => Set("updateLatestUrl", value); }
+    /// 已经提醒过的版本（每个版本只发一次通知）
+    public static string? UpdateNotifiedVersion { get => Str("updateNotifiedVersion"); set => Set("updateNotifiedVersion", value); }
+    /// 用户选择跳过的版本（不再通知，托盘菜单不显示）
+    public static string? UpdateSkippedVersion { get => Str("updateSkippedVersion"); set => Set("updateSkippedVersion", value); }
+
     private static List<ExcludedApp>? excluded;
 
     /// 排除的程序（D35，按 exe 完整路径）：前台是这些程序时暂停唤起快捷键。`excludedApps`: [{"path","name"}]

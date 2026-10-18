@@ -15,11 +15,12 @@ To update, download the new version and replace the app; permissions, templates 
 
 Requires Windows 10 version 2004 or later, x64. Windows 11 recommended.
 
-1. Download `Qantrip-Windows-x64.zip` and extract it, for example into your Documents folder.
-2. Run `Qantrip\Qantrip.exe`. It isn't code-signed yet, so SmartScreen may warn you: click **More info → Run anyway**.
-3. Press **Ctrl+Q** anywhere. Qantrip lives in the notification area; right-click its icon for Settings, the template library and Quit. Turn on **Launch at login** in Settings if you like.
+1. Download and run `Qantrip-Windows-x64-Setup.exe`. It installs for your account only (no administrator rights) into `%LOCALAPPDATA%\Programs\Nekro Qantrip` and adds a Start menu shortcut; you can choose to launch Qantrip when you sign in. The installer isn't code-signed yet, so SmartScreen may warn you: click **More info → Run anyway**.
+2. Press **Ctrl+Q** anywhere. Qantrip lives in the notification area; right-click its icon for the template library, Settings and Quit.
 
-To update, quit Qantrip and replace the folder. Templates and settings are kept in `%APPDATA%\Qantrip`.
+To update, run the new installer; it closes the running Qantrip first. Qantrip tells you when a new version is out (Settings → About). Uninstall from **Settings → Apps → Installed apps**. Templates and settings are kept in `%APPDATA%\Qantrip` either way.
+
+Prefer not to install? Download `Qantrip-Windows-x64.zip` instead, extract it anywhere and run `Qantrip\Qantrip.exe`; to update, quit Qantrip and replace the folder.
 
 ---
 
@@ -40,8 +41,9 @@ To update, quit Qantrip and replace the folder. Templates and settings are kept 
 
 需要 Windows 10 2004 或更新版本（x64），推荐 Windows 11。
 
-1. 下载 `Qantrip-Windows-x64.zip` 并解压，例如解压到「文档」。
-2. 运行 `Qantrip\Qantrip.exe`。程序暂未签名，SmartScreen 可能拦截：点 **更多信息 → 仍要运行**。
-3. 在任何地方按 **Ctrl+Q**。Qantrip 常驻在通知区域，右键图标可打开设置、模板库或退出；需要时在设置中开启「登录时启动」。
+1. 下载并运行 `Qantrip-Windows-x64-Setup.exe`。只为当前账户安装（不需要管理员权限），位置为 `%LOCALAPPDATA%\Programs\Nekro Qantrip`，并添加开始菜单快捷方式；可以选择登录 Windows 时启动。安装程序暂未签名，SmartScreen 可能拦截：点 **更多信息 → 仍要运行**。
+2. 在任何地方按 **Ctrl+Q**。Qantrip 常驻在通知区域，右键图标可打开模板库、设置或退出。
 
-更新时退出 Qantrip，替换整个文件夹即可；模板与设置保存在 `%APPDATA%\Qantrip`。
+更新时运行新版本的安装程序即可，它会先关闭正在运行的 Qantrip；有新版本时 Qantrip 会提示（设置 › 关于）。卸载在 **设置 → 应用 → 已安装的应用** 中进行。模板与设置保存在 `%APPDATA%\Qantrip`，更新和卸载都会保留。
+
+不想安装？也可以下载 `Qantrip-Windows-x64.zip`，解压到任意位置后运行 `Qantrip\Qantrip.exe`；更新时退出 Qantrip，替换整个文件夹即可。

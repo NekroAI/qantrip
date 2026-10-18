@@ -22,6 +22,9 @@ internal sealed class LauncherModel
     public Action<CommandOutcome>? OnCommand;
     /// 读取剪贴板文字（`/new 名称` 不写正文时使用）
     public Func<string?>? ReadClipboard;
+    /// 面板中的快捷入口（Ctrl+L / Ctrl+, 与顶栏图标）
+    public Action? OnOpenLibrary;
+    public Action? OnOpenSettings;
     /// 分析结果或选择变化（界面刷新）
     public event Action? Changed;
     /// 需要把输入框改为指定文本与光标位置

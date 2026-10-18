@@ -40,7 +40,7 @@ internal sealed class OnboardingWindow : Window
         Title = Loc.T("欢迎使用 Nekro Qantrip", "Welcome to Nekro Qantrip");
         ExtendsContentIntoTitleBar = true;
         if (MicaController.IsSupported()) SystemBackdrop = new MicaBackdrop();
-        else root.Background = SettingsWindow.Res("SolidBackgroundFillColorBaseBrush");
+        else root.Background = SettingsView.Res("SolidBackgroundFillColorBaseBrush");
         var p = OverlappedPresenter.Create();
         p.IsMaximizable = false;
         p.IsMinimizable = false;
@@ -133,7 +133,7 @@ internal sealed class OnboardingWindow : Window
     private void ShowStep(int s)
     {
         step = s;
-        for (int i = 0; i < dotsBars.Count; i++) dotsBars[i].Background = i <= s ? Accent : SettingsWindow.Res("ControlStrongFillColorDisabledBrush");
+        for (int i = 0; i < dotsBars.Count; i++) dotsBars[i].Background = i <= s ? Accent : SettingsView.Res("ControlStrongFillColorDisabledBrush");
         stepHost.Children.Clear();
         var content = s switch { 0 => HotKeyStep(), 1 => InsertStep(), _ => PracticeStep() };
         stepHost.Children.Add(content);
@@ -162,7 +162,7 @@ internal sealed class OnboardingWindow : Window
     private static StackPanel Title2(StackPanel host, string title, string sub)
     {
         host.Children.Add(new TextBlock { Text = title, FontFamily = Theme.Display, FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap });
-        host.Children.Add(new TextBlock { Text = sub, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
+        host.Children.Add(new TextBlock { Text = sub, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
         return host;
     }
 
@@ -197,7 +197,7 @@ internal sealed class OnboardingWindow : Window
         var green = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(255, 0x6C, 0xCB, 0x5F) : Windows.UI.Color.FromArgb(255, 0x0F, 0x7B, 0x0F));
         verifyText.Text = hotKeyVerified ? Loc.T("快捷键可以正常使用", "The shortcut works") : Loc.T($"现在按一次 {app.HotKeyText} 试试", $"Press {app.HotKeyText} now to try it");
         verifyIcon.Glyph = hotKeyVerified ? "" : "";
-        verifyText.Foreground = verifyIcon.Foreground = hotKeyVerified ? green : SettingsWindow.Res("TextFillColorSecondaryBrush");
+        verifyText.Foreground = verifyIcon.Foreground = hotKeyVerified ? green : SettingsView.Res("TextFillColorSecondaryBrush");
     }
 
     private FrameworkElement InsertStep()
@@ -219,7 +219,7 @@ internal sealed class OnboardingWindow : Window
             Text = Loc.T("目标程序以管理员身份运行时，系统不允许模拟按键，Qantrip 会自动改为只复制并提示你。以后可以在设置中更改。",
                 "If the target app runs as administrator, Windows blocks simulated keys; Qantrip then copies only and tells you. You can change this later in Settings."),
             FontSize = 12, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush"),
+            Foreground = SettingsView.Res("TextFillColorSecondaryBrush"),
         });
         return sp;
     }
@@ -251,7 +251,7 @@ internal sealed class OnboardingWindow : Window
             Text = Loc.T("小提示：输入 r 后按空格再输入 --，可以看到审查模板的全部参数；面板里也可以用鼠标点选。托盘菜单里有模板库与设置。",
                 "Tip: type r, a space, then -- to see all parameters of the review template. You can also click items in the panel. The tray menu has the template library and settings."),
             FontSize = 12, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush"),
+            Foreground = SettingsView.Res("TextFillColorSecondaryBrush"),
         });
         return sp;
     }
