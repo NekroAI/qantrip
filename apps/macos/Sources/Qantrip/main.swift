@@ -46,6 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LibraryWindow.model.reload()
         }
         SyncService.shared.start()
+        // 排除的应用（D35）：前台切到这些应用时暂停快捷键，让按键原样交给应用
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated { self?.applyExclusion(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication) }
+        }
+        settings.onExcludedAppsChange = { [weak self] in self?.applyExclusion(NSWorkspace.shared.frontmostApplication) }
+        applyExclusion(NSWorkspace.shared.frontmostApplication)
         #if QANTRIP_DEBUG_HOOKS
         setupDebugHooks()
         #endif
@@ -234,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SpikeLog.event("status", [
             "ax_trusted": Inserter.isTrusted,
             "hotkey_status": Int(hotKey.status),
+            "hotkey_paused": hotKey.paused,
             "rss_mb": Self.residentMB(),
         ])
     }
@@ -250,13 +257,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return kr == KERN_SUCCESS ? (Double(info.phys_footprint) / 1_048_576 * 10).rounded() / 10 : -1
     }
 
+    /// 前台应用在排除列表中时暂停快捷键（Qantrip 自己的窗口除外）。
+    private func applyExclusion(_ app: NSRunningApplication?) {
+        let bid = app?.bundleIdentifier
+        hotKey.setPaused(bid != Bundle.main.bundleIdentifier && AppSettings.shared.isExcluded(bid))
+    }
+
+    @objc private func toggleExclusion(_ sender: NSMenuItem) {
+        guard let app = sender.representedObject as? ExcludedApp else { return }
+        let settings = AppSettings.shared
+        if settings.isExcluded(app.bundleId) {
+            settings.excludedApps.removeAll { $0.bundleId == app.bundleId }
+        } else {
+            settings.excludedApps.append(app)
+        }
+    }
+
     @objc func openSyncSettings() {
         UserDefaults.standard.set("sync", forKey: "settingsTab")
         openSettings()
     }
 
     @objc func openSettings() {
-        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 580, height: 520)) { SettingsView() }
+        WindowManager.shared.show("settings", title: L("Qantrip 设置", "Qantrip Settings"), size: NSSize(width: 660, height: 540)) { SettingsView() }
     }
 }
 
@@ -268,6 +291,17 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: L("打开面板（\(hotKey.spec.display)）", "Open Panel (\(hotKey.spec.display))"), action: #selector(openPanel), keyEquivalent: "").target = self
+        // 打开菜单栏菜单时前台仍是用户刚才使用的应用：一键把它加入或移出排除列表
+        if let app = NSWorkspace.shared.frontmostApplication, let bid = app.bundleIdentifier, bid != Bundle.main.bundleIdentifier {
+            let name = app.localizedName ?? bid
+            let excluded = AppSettings.shared.isExcluded(bid)
+            let item = NSMenuItem(
+                title: excluded ? L("在「\(name)」中恢复快捷键", "Re-enable Shortcut in “\(name)”") : L("在「\(name)」中停用快捷键", "Disable Shortcut in “\(name)”"),
+                action: #selector(toggleExclusion(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ExcludedApp(bundleId: bid, name: name)
+            menu.addItem(item)
+        }
         menu.addItem(withTitle: L("模板库…", "Template Library…"), action: #selector(openLibrary), keyEquivalent: "l").target = self
         menu.addItem(withTitle: L("设置…", "Settings…"), action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())

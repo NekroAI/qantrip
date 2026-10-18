@@ -39,6 +39,20 @@ final class AppSettings {
     var copyOnly: Bool { didSet { d.set(copyOnly, forKey: "copyOnly") } }
     var recordUsage: Bool { didSet { d.set(recordUsage, forKey: "recordUsage") } }
     var onboardingDone: Bool { didSet { d.set(onboardingDone, forKey: "onboardingDone") } }
+    /// 排除的应用：前台是这些应用时不响应唤起快捷键，按键原样交给应用（D35）
+    var excludedApps: [ExcludedApp] {
+        didSet {
+            d.set(try? JSONEncoder().encode(excludedApps), forKey: "excludedApps")
+            onExcludedAppsChange?()
+        }
+    }
+    @ObservationIgnored var onExcludedAppsChange: (() -> Void)?
+
+    func isExcluded(_ bundleId: String?) -> Bool {
+        guard let bundleId else { return false }
+        return excludedApps.contains { $0.bundleId == bundleId }
+    }
+
     /// 同步服务端地址（可改为自托管地址）
     var syncServer: String { didSet { d.set(syncServer, forKey: "syncServer") } }
     static let defaultSyncServer = "https://qantrip.nekro.ai"
@@ -96,9 +110,16 @@ final class AppSettings {
         recordUsage = bool("recordUsage", true)
         onboardingDone = bool("onboardingDone", false)
         syncServer = ud.string(forKey: "syncServer") ?? Self.defaultSyncServer
+        excludedApps = ud.data(forKey: "excludedApps").flatMap { try? JSONDecoder().decode([ExcludedApp].self, from: $0) } ?? []
         interfaceLanguage = LanguageChoice(rawValue: ud.string(forKey: "interfaceLanguage") ?? "") ?? .auto
         templateLanguage = LanguageChoice(rawValue: ud.string(forKey: "templateLanguage") ?? "") ?? .auto
     }
+}
+
+struct ExcludedApp: Codable, Equatable, Identifiable {
+    var bundleId: String
+    var name: String
+    var id: String { bundleId }
 }
 
 /// 热键：Carbon 键码 + Carbon 修饰键掩码。

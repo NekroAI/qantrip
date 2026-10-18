@@ -15,7 +15,7 @@ struct SettingsView: View {
             PrivacySettings().tabItem { Label(L("隐私", "Privacy"), systemImage: "hand.raised") }.tag("privacy")
             AboutView().tabItem { Label(L("关于", "About"), systemImage: "info.circle") }.tag("about")
         }
-        .frame(width: 580, height: 520)
+        .frame(width: 660, height: 540)
     }
 }
 
@@ -34,6 +34,7 @@ private struct GeneralSettings: View {
                 Text(L("默认是 ⌃Q。点击右侧按键可以修改。", "The default is ⌃Q. Click the shortcut to change it."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            ExcludedAppsSection()
             Section {
                 Picker(L("界面语言", "Language"), selection: $settings.interfaceLanguage) {
                     Text(L("跟随系统", "System default")).tag(LanguageChoice.auto)
@@ -270,5 +271,83 @@ private struct AboutView: View {
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+
+/// 排除的应用（docs/decisions.md D35）：前台是这些应用时，唤起快捷键原样交给应用。
+private struct ExcludedAppsSection: View {
+    @Bindable private var settings = AppSettings.shared
+
+    var body: some View {
+        Section {
+            ForEach(settings.excludedApps) { app in
+                HStack {
+                    AppIcon(bundleId: app.bundleId)
+                    Text(app.name)
+                    Text(app.bundleId).font(.caption).foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(L("移除", "Remove")) { settings.excludedApps.removeAll { $0 == app } }
+                        .buttonStyle(.borderless)
+                }
+            }
+            Menu(L("添加应用…", "Add App…")) {
+                let running = runningApps
+                if !running.isEmpty {
+                    Section(L("正在运行", "Running")) {
+                        ForEach(running) { app in
+                            Button(app.name) { add(app) }
+                        }
+                    }
+                }
+                Button(L("从「应用程序」中选择…", "Choose from Applications…")) { chooseApp() }
+            }
+            .fixedSize()
+        } header: {
+            Text(L("排除的应用", "Excluded apps"))
+        } footer: {
+            Text(L("在这些应用里按快捷键不会唤起 Qantrip，按键照常交给应用本身。也可以在菜单栏菜单中一键停用当前应用。", "In these apps the shortcut doesn't open Qantrip and goes to the app as usual. You can also disable the current app from the menu bar menu."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var runningApps: [ExcludedApp] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .compactMap { app in app.bundleIdentifier.map { ExcludedApp(bundleId: $0, name: app.localizedName ?? $0) } }
+            .filter { !settings.isExcluded($0.bundleId) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func add(_ app: ExcludedApp) {
+        guard !settings.isExcluded(app.bundleId) else { return }
+        settings.excludedApps.append(app)
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let bundle = Bundle(url: url), let bid = bundle.bundleIdentifier else { continue }
+            let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                ?? url.deletingPathExtension().lastPathComponent
+            add(ExcludedApp(bundleId: bid, name: name))
+        }
+    }
+}
+
+private struct AppIcon: View {
+    let bundleId: String
+
+    var body: some View {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 18, height: 18)
+        } else {
+            Image(systemName: "app").frame(width: 18, height: 18)
+        }
     }
 }
