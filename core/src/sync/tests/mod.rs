@@ -3,6 +3,7 @@
 mod fake;
 mod flow;
 mod malicious;
+mod policy;
 mod review;
 mod roster_rules;
 mod vectors;
@@ -13,7 +14,7 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::engine::Core;
-use super::{JoinStage, PhraseLanguage, SecretStore, SecretStoreError, SyncClient};
+use super::{DeviceLabel, JoinStage, PhraseLanguage, SecretStore, SecretStoreError, SyncClient};
 use fake::FakeServer;
 
 pub const SERVER: &str = "https://sync.test";
@@ -37,6 +38,10 @@ impl SecretStore for MemStore {
 }
 
 static DIRS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn test_label() -> DeviceLabel {
+    DeviceLabel { name: "Test\u{202E} Mac\n".into(), platform: "macOS 26.1".into(), app_version: "0.4.0".into() }
+}
 
 pub struct Dev {
     pub client: SyncClient,
@@ -62,7 +67,7 @@ impl Dev {
 
     fn make_client(server: &Arc<FakeServer>, root: &std::path::Path, templates: &std::path::Path, store: &Arc<MemStore>, clock: &Arc<AtomicI64>) -> SyncClient {
         let c = clock.clone();
-        SyncClient::with_transport(SERVER, root.join("data"), templates.to_path_buf(), store.clone(), server.clone(), Arc::new(move || c.load(Ordering::SeqCst)))
+        SyncClient::with_transport(SERVER, root.join("data"), templates.to_path_buf(), store.clone(), server.clone(), Arc::new(move || c.load(Ordering::SeqCst)), test_label())
     }
 
     /// 模拟应用重启：用同一份数据目录与安全存储重新创建 SyncClient（内存状态全部丢弃）。

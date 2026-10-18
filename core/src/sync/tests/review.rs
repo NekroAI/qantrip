@@ -396,6 +396,10 @@ fn oversized_roster_and_join_lists_are_bounded() {
         if method == "GET" && path.ends_with("/roster") {
             v["length"] = Json::from(5_000_000u64);
         }
+        // 花名册只在头部的长度变化时拉取
+        if method == "GET" && path.ends_with("/head") {
+            v["roster_index"] = Json::from(v["roster_index"].as_u64().unwrap() + 1);
+        }
     }));
     assert!(matches!(b.client.sync_now(), Err(SyncError::Security { .. })));
     let commit = b64u(&codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", codec::bytes(&[0; 32]))])));

@@ -106,6 +106,44 @@ pub struct LocalState {
     /// 加入时得到的批准设备状态记录锚点，对账满足后清除
     #[serde(default)]
     pub join_anchor: Option<JoinAnchor>,
+    /// 服务端下发的同步策略（最近一次版本检查的值）
+    #[serde(default)]
+    pub policy: StoredPolicy,
+    /// 上次成功的版本检查时间（unix 秒）
+    #[serde(default)]
+    pub last_check: Option<i64>,
+    /// 上次上传本地变化的时间（unix 秒），用于推送节流
+    #[serde(default)]
+    pub last_auto_push: Option<i64>,
+    /// 最近一次版本检查或账号接口返回的用量
+    #[serde(default)]
+    pub usage: Option<StoredUsage>,
+    /// 其他设备发起的待处理加入请求数（最近一次版本检查）
+    #[serde(default)]
+    pub pending_joins: u32,
+    /// 服务端报告本机超出设备数量限制时的上限；之后任一保险库请求成功即清除
+    #[serde(default)]
+    pub device_limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredPolicy {
+    pub check_interval_secs: u32,
+    pub panel_check_secs: u32,
+    pub min_push_interval_secs: u32,
+}
+
+impl Default for StoredPolicy {
+    fn default() -> Self {
+        StoredPolicy { check_interval_secs: 3600, panel_check_secs: 900, min_push_interval_secs: 900 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredUsage {
+    pub bytes: u64,
+    pub quota_bytes: u64,
+    pub records: u32,
 }
 
 impl LocalState {
@@ -131,10 +169,10 @@ impl LocalState {
         std::fs::rename(&tmp, Self::path(dir)).map_err(|e| format!("无法写入同步状态：{e}"))
     }
 
-    /// 清空保险库相关状态（保留后端地址与账号）。
+    /// 清空保险库相关状态（保留后端地址、账号、同步策略与设备数量限制状态）。
     pub fn reset_vault(&mut self) {
         let server = std::mem::take(&mut self.server);
         let account = self.account.take();
-        *self = LocalState { version: VERSION, server, account, ..Default::default() };
+        *self = LocalState { version: VERSION, server, account, policy: self.policy, device_limit: self.device_limit, ..Default::default() };
     }
 }

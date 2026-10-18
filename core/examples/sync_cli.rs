@@ -3,7 +3,9 @@
 //!
 //! cargo run --example sync_cli -- <server> <dir> <command> [args]
 //! 命令：signin | status | exists | create | join [codefile] | requests | approve <join_id> <code> | approve-auto <codefile>
-//!       | confirm <code> | sync | devices | revoke <device_id> [phrase] | reverify | recover <phrase…>
+//!       | confirm <code> | sync | maybe <manual|timer|panel|local|launch|wake> | devices | account-devices
+//!       | release <grant_id> | usage | revoke <device_id> [phrase] | reverify | recover <phrase…>
+//! 环境变量 QANTRIP_DEVICE_NAME 可以指定上报的设备名称（默认 "sync_cli"）。
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -11,7 +13,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use qantrip_core::sync::{JoinStage, PhraseLanguage, SecretStore, SecretStoreError, SyncClient};
+use qantrip_core::sync::{DeviceLabel, JoinStage, PhraseLanguage, SecretStore, SecretStoreError, SyncClient, SyncTrigger};
 
 struct FileStore {
     path: PathBuf,
@@ -60,7 +62,12 @@ fn main() {
     let templates = dir.join("templates");
     std::fs::create_dir_all(&templates).unwrap();
     let store = Arc::new(FileStore::open(dir.join("secrets.json")));
-    let client = SyncClient::new(server.clone(), dir.join("data").to_string_lossy().into(), templates.to_string_lossy().into(), store);
+    let device = DeviceLabel {
+        name: std::env::var("QANTRIP_DEVICE_NAME").unwrap_or_else(|_| "sync_cli".into()),
+        platform: std::env::consts::OS.into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    let client = SyncClient::new(server.clone(), dir.join("data").to_string_lossy().into(), templates.to_string_lossy().into(), store, device);
 
     let result: Result<String, qantrip_core::sync::SyncError> = (|| match cmd.as_str() {
         "signin" => {
@@ -132,7 +139,25 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(1));
         },
         "sync" => client.sync_now().map(|r| format!("{r:#?}")),
+        "maybe" => {
+            let trigger = match rest.first().map(String::as_str) {
+                Some("manual") => SyncTrigger::Manual,
+                Some("timer") => SyncTrigger::Timer,
+                Some("panel") => SyncTrigger::PanelOpened,
+                Some("local") => SyncTrigger::LocalChange,
+                Some("launch") => SyncTrigger::Launch,
+                Some("wake") => SyncTrigger::Wake,
+                _ => return Ok("usage: maybe <manual|timer|panel|local|launch|wake>".into()),
+            };
+            client.maybe_sync(trigger).map(|r| match r {
+                Some(r) => format!("{r:#?}"),
+                None => format!("no request; next_push_at {:?}", client.status().next_push_at),
+            })
+        }
         "devices" => client.devices().map(|d| format!("{d:#?}")),
+        "account-devices" => client.account_devices().map(|d| format!("{d:#?}")),
+        "release" => client.release_device(rest[0].clone()).map(|_| "released".into()),
+        "usage" => client.account_usage().map(|u| format!("{u:?}")),
         "confirm" => client.confirm_join(rest[0].clone()).map(|_| "confirmed".into()),
         "revoke" => client.revoke_device(rest[0].clone(), rest.get(1).cloned()).map(|r| format!("{r:?}")),
         "reverify" => client.reverify().map(|s| format!("{s:?}")),

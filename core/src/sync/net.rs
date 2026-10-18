@@ -5,14 +5,14 @@
 //! 错误信息一律由本地固定文本组成，不包含服务端返回的任何文本（服务端不可信，其文本可能用于诱导用户）；
 //! 服务端的错误码经过字符集与长度检查后保留在 `SyncError::Server.code` 中供程序判断。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 use zeroize::Zeroizing;
 
-use super::{SecretStore, SyncError};
+use super::{DeviceLabel, SecretStore, SyncError};
 
 pub const SECRET_ACCESS: &str = "access_token";
 pub const SECRET_REFRESH: &str = "refresh_token";
@@ -119,7 +119,59 @@ pub struct Head {
     pub roster_index: u32,
     #[allow(dead_code)]
     pub min_epoch: u32,
+    /// 其他设备发起、尚未过期的加入请求数（旧服务端没有这些字段）
+    #[serde(default)]
+    pub pending_joins: u32,
+    #[serde(default)]
+    pub usage: Option<WireUsage>,
+    #[serde(default)]
+    pub policy: Option<WirePolicy>,
 }
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct WireUsage {
+    pub bytes: u64,
+    pub quota_bytes: u64,
+    pub records: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct WirePolicy {
+    pub check_interval_secs: u32,
+    pub panel_check_secs: u32,
+    pub min_push_interval_secs: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WireAccount {
+    #[serde(default)]
+    pub usage: Option<WireUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WireDevice {
+    pub grant_id: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub device_name: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub app_version: Option<String>,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+    pub is_self: bool,
+    pub limited: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WireDevices {
+    pub max_devices: u32,
+    pub devices: Vec<WireDevice>,
+}
+
+/// 账号设备列表的上限（服务端每个账号最多 20 个有效授权）
+const DEVICES_MAX: usize = 100;
 
 #[derive(Debug, Deserialize)]
 pub struct ChangesPage {
@@ -214,6 +266,10 @@ fn too_large() -> SyncError {
 pub struct Api {
     transport: Arc<dyn Transport>,
     secrets: Arc<dyn SecretStore>,
+    label: DeviceLabel,
+    /// 最近一次保险库请求反映的设备数量限制：Some(Some(max)) 为被拒绝（device_limit），Some(None) 为请求成功；
+    /// 由 [`Api::take_limit_event`] 取走后写入本地状态
+    limit_event: Mutex<Option<Option<u32>>>,
 }
 
 /// 服务端错误：错误码只保留 `[a-z0-9_]{1,64}`，说明文字取本地固定文本（不使用服务端的 `message`）。
@@ -232,7 +288,9 @@ pub fn server_error(status: u16, body: &[u8]) -> SyncError {
         "join_not_found" => "加入请求不存在或已过期",
         "join_step_conflict" => "加入流程的状态不符，请重新开始",
         "roster_conflict" => "花名册已被其他设备更新",
-        "too_many_devices" => "在册设备数量已达上限",
+        "too_many_devices" => "已登录的设备数量已达上限",
+        "device_limit" => "此账号同时同步的设备数量已达上限",
+        "device_not_found" => "设备不存在或已退出",
         "roster_full" | "too_many_envelopes" => "保险库的条目数量已达上限",
         "too_many_vaults" => "今天创建的保险库过多，请明天再试",
         "message_too_large" | "entry_too_large" | "envelope_too_large" | "batch_too_large" => "数据超过服务端的大小限制",
@@ -245,8 +303,26 @@ pub fn server_error(status: u16, body: &[u8]) -> SyncError {
 }
 
 impl Api {
-    pub fn new(transport: Arc<dyn Transport>, secrets: Arc<dyn SecretStore>) -> Api {
-        Api { transport, secrets }
+    pub fn new(transport: Arc<dyn Transport>, secrets: Arc<dyn SecretStore>, label: DeviceLabel) -> Api {
+        Api { transport, secrets, label: label.sanitized(), limit_event: Mutex::new(None) }
+    }
+
+    /// 取走最近一次保险库请求反映的设备数量限制（见 `limit_event`）。
+    pub fn take_limit_event(&self) -> Option<Option<u32>> {
+        self.limit_event.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    fn note_limit(&self, path: &str, event: Option<u32>) {
+        if path.starts_with("/api/v1/vault") {
+            *self.limit_event.lock().unwrap_or_else(|e| e.into_inner()) = Some(event);
+        }
+    }
+
+    /// 登录与刷新令牌时上报的设备信息（服务端可见的明文元数据，docs/sync-design.md 第 10 节）。
+    fn label_fields(&self, body: &mut Json) {
+        body["device_name"] = json!(self.label.name);
+        body["platform"] = json!(self.label.platform);
+        body["app_version"] = json!(self.label.app_version);
     }
 
     fn secret(&self, key: &str) -> Result<Option<Zeroizing<String>>, SyncError> {
@@ -286,7 +362,8 @@ impl Api {
     /// 用刷新令牌换新令牌（刷新令牌会轮换）。
     fn refresh(&self) -> Result<(), SyncError> {
         let Some(refresh) = self.secret(SECRET_REFRESH)? else { return Err(SyncError::not_signed_in()) };
-        let body = json!({ "grant_type": "refresh_token", "refresh_token": refresh.as_str() });
+        let mut body = json!({ "grant_type": "refresh_token", "refresh_token": refresh.as_str() });
+        self.label_fields(&mut body);
         match self.public("POST", "/api/v1/oauth/token", Some(&body)) {
             Ok(v) => self.store_tokens(&parse(v)?),
             Err(SyncError::Server { status: 400, .. }) => {
@@ -304,9 +381,19 @@ impl Api {
             let Some(access) = self.secret(SECRET_ACCESS)? else { return Err(SyncError::not_signed_in()) };
             let r = self.send(method, path, Some(&access), body)?;
             if (200..300).contains(&r.status) {
+                self.note_limit(path, None);
                 return Ok((r.status, serde_json::from_slice(&r.body).unwrap_or(Json::Null)));
             }
             let err = server_error(r.status, &r.body);
+            if let SyncError::Server { status: 403, code, .. } = &err
+                && code == "device_limit"
+            {
+                // 设备数量上限只取一个合理范围内的整数，其余服务端文本不使用
+                let v: Json = serde_json::from_slice(&r.body).unwrap_or(Json::Null);
+                let max_devices = v["max_devices"].as_u64().filter(|n| *n <= 1000).unwrap_or(0) as u32;
+                self.note_limit(path, Some(max_devices));
+                return Err(SyncError::DeviceLimit { max_devices });
+            }
             match &err {
                 SyncError::Server { status: 401, code, .. } if code == "token_expired" && !refreshed => {
                     self.refresh()?;
@@ -325,10 +412,11 @@ impl Api {
     // MARK: 令牌
 
     pub fn exchange_code(&self, code: &str, redirect_uri: &str, device_id: &str, verifier: &str) -> Result<TokenResponse, SyncError> {
-        let body = json!({
+        let mut body = json!({
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "device_id": device_id, "code_verifier": verifier, "client_id": CLIENT_ID,
         });
+        self.label_fields(&mut body);
         parse(self.public("POST", "/api/v1/oauth/token", Some(&body))?)
     }
 
@@ -337,6 +425,29 @@ impl Api {
             let _ = self.public("POST", "/api/v1/oauth/revoke", Some(&json!({ "token": refresh.as_str() })));
         }
         self.clear_tokens()
+    }
+
+    // MARK: 账号
+
+    pub fn account(&self) -> Result<WireAccount, SyncError> {
+        parse(self.get("/api/v1/account")?)
+    }
+
+    pub fn account_devices(&self) -> Result<WireDevices, SyncError> {
+        let d: WireDevices = parse(self.get("/api/v1/account/devices")?)?;
+        if d.devices.len() > DEVICES_MAX || d.devices.iter().any(|x| !valid_server_id(&x.grant_id)) {
+            return Err(SyncError::Security { message: "服务端返回的设备列表格式不正确".into() });
+        }
+        Ok(d)
+    }
+
+    /// 吊销本账号的一个设备授权。返回服务端是否认为它是本机。
+    pub fn release_device(&self, grant_id: &str) -> Result<bool, SyncError> {
+        if !valid_server_id(grant_id) {
+            return Err(SyncError::InvalidInput { message: "设备标识格式不正确".into() });
+        }
+        let (_, v) = self.call("DELETE", &format!("/api/v1/account/devices/{grant_id}"), None)?;
+        Ok(v["is_self"].as_bool().unwrap_or(false))
     }
 
     // MARK: 保险库与记录
