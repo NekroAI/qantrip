@@ -14,6 +14,10 @@ final class Inserter {
     }
 
     /// nspasteboard.org 约定的标记，主流剪贴板管理器据此忽略该条目。
+    /// nspasteboard.org 约定的来源标记：剪贴板工具据此识别写入方，用户把 Qantrip 加入忽略列表后两次写入都会被忽略
+    static let sourceType = NSPasteboard.PasteboardType("org.nspasteboard.source")
+    static let sourceId = Bundle.main.bundleIdentifier ?? "ai.nekro.qantrip"
+
     static let markerTypes: [NSPasteboard.PasteboardType] = [
         .init("org.nspasteboard.TransientType"),
         .init("org.nspasteboard.ConcealedType"),
@@ -82,6 +86,7 @@ final class Inserter {
             let item = NSPasteboardItem()
             item.setString(text, forType: .string)
             for t in Self.markerTypes { item.setData(Data(), forType: t) }
+            item.setString(Self.sourceId, forType: Self.sourceType)
             pb.writeObjects([item])
             let ourChange = pb.changeCount
 
@@ -139,6 +144,7 @@ final class Inserter {
             let item = NSPasteboardItem()
             for (type, data) in dict { item.setData(data, forType: type) }
             if dict[transient] == nil { item.setData(Data(), forType: transient) }
+            item.setString(Self.sourceId, forType: Self.sourceType)
             return item
         }
         pb.writeObjects(items)

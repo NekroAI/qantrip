@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format is based on 
 - macOS: ⌘A, ⌘C, ⌘V, ⌘X, ⌘Z and other editing shortcuts work in the template library and settings.
 - macOS: the DMG window is tall enough that the install hint isn't covered.
 - macOS: prompts written to the clipboard during insertion stay on this Mac (not sent to other devices via Universal Clipboard).
+- macOS: clipboard writes carry the `org.nspasteboard.source` marker, so clipboard managers that let you ignore apps can skip Qantrip.
 
 ### Changed
 - macOS template library: icon Save button and Form / Source switch, cleaner sidebar and Try pane.

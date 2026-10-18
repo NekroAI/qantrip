@@ -35,8 +35,8 @@ def frontmost():
 
 
 def pb_dump():
-    # 恢复时会附加 TransientType 标记（D18），比对原内容时忽略它
-    return "".join(l + "\n" for l in sh(PBTOOL, "dump").splitlines() if "org.nspasteboard.TransientType" not in l)
+    # 恢复时会附加 TransientType 与来源标记（D18），比对原内容时忽略它们
+    return "".join(l + "\n" for l in sh(PBTOOL, "dump").splitlines() if "org.nspasteboard.TransientType" not in l and "org.nspasteboard.source" not in l)
 
 
 def maccy_texts():
