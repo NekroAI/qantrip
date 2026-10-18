@@ -298,10 +298,18 @@ internal sealed class PanelWindow : Window
         field.SelectionFlyout = null;
         // 去掉 TextBox 默认的背景、边框与焦点下划线（轻量样式资源）
         var clear = new SolidColorBrush(Colors.Transparent);
-        foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused",
-                     "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
+        foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBackgroundDisabled",
+                     "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused", "TextControlBorderBrushDisabled",
+                     "TextControlElevationBorderBrush", "TextControlElevationBorderFocusedBrush" })
             field.Resources[key] = clear;
+        field.Resources["TextControlBorderThemeThickness"] = new Thickness(0);
         field.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
+        // 模板中边框元素的最小高度（默认 32）会让单行文字靠上：去掉后输入框高度等于一行文字，在顶栏中垂直居中
+        field.Resources["TextControlThemeMinHeight"] = 0.0;
+        field.Resources["TextControlThemeMinWidth"] = 0.0;
+        // 保险起见，模板加载后直接隐藏边框元素（焦点下划线与描边都画在它上面）
+        field.Loaded += (_, _) => HideTemplateBorder(field);
+        fieldHost.VerticalAlignment = VerticalAlignment.Center;
         ApplyInputScope();
         field.Document.UndoLimit = 0; // 着色会产生撤销记录；暂时关闭撤销（已知问题）
 
@@ -311,6 +319,23 @@ internal sealed class PanelWindow : Window
         field.TextCompositionEnded += (_, _) => { composing = false; DispatcherQueue.TryEnqueue(OnFieldChanged); };
         field.PreviewKeyDown += OnKey;
         field.Paste += OnPaste;
+    }
+
+    /// 隐藏文本控件模板中的 BorderElement（背景、描边与焦点下划线），文字区域不受影响。
+    private static void HideTemplateBorder(DependencyObject root)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is Border { Name: "BorderElement" } b)
+            {
+                b.Opacity = 0;
+                b.MinHeight = 0;
+                return;
+            }
+            HideTemplateBorder(c);
+        }
     }
 
     /// <summary>

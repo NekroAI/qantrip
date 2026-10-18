@@ -44,6 +44,54 @@ internal sealed class Theme
     public const double PanelWidth = 840, PanelHeight = 500;
 }
 
+/// <summary>
+/// 居中的内容列（设置页）：子元素纵向排列，宽度为 min(可用宽度 - 左右内边距, MaxColumnWidth)，整列水平居中。
+/// 与 StackPanel 不同，子元素的期望宽度再大也不会撑宽整列（不会把页面推向左侧、卡片越过右边缘），
+/// 过宽的子元素只在自己的位置内被裁剪。
+/// </summary>
+internal sealed class PageColumn : Panel
+{
+    public double MaxColumnWidth { get; set; } = 720;
+    public double Spacing { get; set; } = 4;
+    public Thickness Inset { get; set; } = new(32, 8, 32, 32);
+
+    private double ColumnWidth(double available)
+    {
+        double w = double.IsInfinity(available) ? MaxColumnWidth : available - Inset.Left - Inset.Right;
+        return Math.Max(0, Math.Min(w, MaxColumnWidth));
+    }
+
+    protected override Size MeasureOverride(Size available)
+    {
+        double w = ColumnWidth(available.Width), h = 0;
+        int n = 0;
+        foreach (var c in Children)
+        {
+            c.Measure(new Size(w, double.PositiveInfinity));
+            if (c.Visibility == Visibility.Collapsed) continue;
+            if (n++ > 0) h += Spacing;
+            h += c.DesiredSize.Height;
+        }
+        double width = double.IsInfinity(available.Width) ? w + Inset.Left + Inset.Right : available.Width;
+        return new Size(width, h + Inset.Top + Inset.Bottom);
+    }
+
+    protected override Size ArrangeOverride(Size final)
+    {
+        double w = ColumnWidth(final.Width);
+        double x = Math.Max(Inset.Left, (final.Width - w) / 2), y = Inset.Top;
+        int n = 0;
+        foreach (var c in Children)
+        {
+            if (c.Visibility == Visibility.Collapsed) { c.Arrange(new Rect(x, y, 0, 0)); continue; }
+            if (n++ > 0) y += Spacing;
+            c.Arrange(new Rect(x, y, w, c.DesiredSize.Height));
+            y += c.DesiredSize.Height;
+        }
+        return final;
+    }
+}
+
 /// 自动换行的横向排列（参数标签）。
 internal sealed class WrapPanel : Panel
 {

@@ -150,10 +150,17 @@ internal sealed class SettingsView
 
     // MARK: 页面
 
-    private static StackPanel PageStack(string title)
+    /// 设置页的内容列：居中、最宽 720，左右内边距一致（同步页也使用，见 SyncPage）
+    internal static PageColumn Column() => new() { MaxColumnWidth = 720, Spacing = 4, Inset = new Thickness(32, 8, 32, 32) };
+
+    /// 页面标题（与内容列左对齐）
+    internal static TextBlock Heading(string title, double bottom = 12) =>
+        new() { Text = title, FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, bottom) };
+
+    private static PageColumn PageStack(string title)
     {
-        var page = new StackPanel { Spacing = 4, MaxWidth = 860, Padding = new Thickness(28, 8, 28, 28) };
-        page.Children.Add(new TextBlock { Text = title, FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 12) });
+        var page = Column();
+        page.Children.Add(Heading(title));
         return page;
     }
 
@@ -214,7 +221,7 @@ internal sealed class SettingsView
         var page = PageStack(Loc.T("隐私", "Privacy"));
         page.Children.Add(Card("\uE81C", Loc.T("记录使用习惯", "Record usage"),
             Loc.T("用于首屏的「最近施放」和「常用」排序，以及按程序区分常用模板。只记录模板名和参数，不记录附加要求和生成的 Prompt，数据只保存在本机。",
-                "Used for “Recent” and “Frequent” ordering on the start screen, and to tell which templates you use in which app. Only template names and parameters are recorded, never extra instructions or generated prompts. Data stays on this PC."),
+                "Used for “Recent” and “Frequent” ordering on the start screen, and to tell which templates you use in which app. Only template names and parameters are recorded, never extra instructions or generated prompts. Data stays on this device."),
             Toggle("recordUsage", Settings.RecordUsage, v => Settings.RecordUsage = v)));
         page.Children.Add(Card("\uE74D", Loc.T("清除使用记录", "Clear usage history"), null, ClearUsageButton()));
         return page;
@@ -530,15 +537,26 @@ internal sealed class SettingsView
         links.Children.Add(Link(Loc.T("官网", "Website"), "https://qantrip.nekro.ai"));
         links.Children.Add(Link("GitHub", "https://github.com/NekroAI/qantrip"));
         sp.Children.Add(links);
+        // 开发者：由 NekroAI 开发（NekroAI 链接到 nekro.ai）
+        var madeBy = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        var nekro = Link("NekroAI", "https://nekro.ai");
+        nekro.Padding = new Thickness(4, 0, 4, 0);
+        nekro.VerticalAlignment = VerticalAlignment.Center;
+        AutomationProperties.SetAutomationId(nekro, "aboutDeveloper");
+        TextBlock Plain(string t) => new() { Text = t, FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Res("TextFillColorSecondaryBrush") };
+        if (Loc.En) { madeBy.Children.Add(Plain("Made by")); madeBy.Children.Add(nekro); }
+        else { madeBy.Children.Add(Plain("由")); madeBy.Children.Add(nekro); madeBy.Children.Add(Plain("开发")); }
+        sp.Children.Add(madeBy);
         sp.Children.Add(new TextBlock
         {
             Text = Loc.T("以 GPL-3.0-or-later 许可开源\n内置字体 Monaspace Neon、Fraunces 以 SIL OFL 1.1 许可分发",
                 "Open source under GPL-3.0-or-later\nBundled fonts Monaspace Neon and Fraunces are distributed under SIL OFL 1.1"),
-            FontSize = 12, TextAlignment = TextAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Foreground = Res("TextFillColorSecondaryBrush"),
+            FontSize = 12, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center, Foreground = Res("TextFillColorSecondaryBrush"),
         });
         return new Border
         {
-            Child = sp, Padding = new Thickness(16), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
+            Child = sp, Padding = new Thickness(16, 20, 16, 20), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Background = Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"),
         };
     }

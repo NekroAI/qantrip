@@ -8,6 +8,59 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+            <!--
+              品牌强调色（与面板、macOS Theme.accent 相同：浅色 #7C3AED、深色 #A78BFA），不跟随系统强调色。
+              覆盖强调色色阶与 Fluent 的强调色画刷：强调按钮、开关、复选框、选中指示条、分段控件、进度条、链接等都用它。
+              高对比度主题不覆盖（使用系统颜色）。
+            -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <Color x:Key="SystemAccentColor">#8B5CF6</Color>
+                    <Color x:Key="SystemAccentColorLight1">#A78BFA</Color>
+                    <Color x:Key="SystemAccentColorLight2">#C4B5FD</Color>
+                    <Color x:Key="SystemAccentColorLight3">#DDD6FE</Color>
+                    <Color x:Key="SystemAccentColorDark1">#7C3AED</Color>
+                    <Color x:Key="SystemAccentColorDark2">#6D28D9</Color>
+                    <Color x:Key="SystemAccentColorDark3">#5B21B6</Color>
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#7C3AED" Opacity="0.9" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#7C3AED" Opacity="0.8" />
+                    <SolidColorBrush x:Key="AccentFillColorSelectedTextBackgroundBrush" Color="#8B5CF6" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#6D28D9" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#5B21B6" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="SystemControlHighlightAccentBrush" Color="#8B5CF6" />
+                    <SolidColorBrush x:Key="SystemControlForegroundAccentBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="SystemControlBackgroundAccentBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="SystemControlHyperlinkTextBrush" Color="#6D28D9" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#6D28D9" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#5B21B6" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#7C3AED" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <Color x:Key="SystemAccentColor">#7C3AED</Color>
+                    <Color x:Key="SystemAccentColorLight1">#8B5CF6</Color>
+                    <Color x:Key="SystemAccentColorLight2">#A78BFA</Color>
+                    <Color x:Key="SystemAccentColorLight3">#C4B5FD</Color>
+                    <Color x:Key="SystemAccentColorDark1">#6D28D9</Color>
+                    <Color x:Key="SystemAccentColorDark2">#5B21B6</Color>
+                    <Color x:Key="SystemAccentColorDark3">#4C1D95</Color>
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#A78BFA" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#A78BFA" Opacity="0.9" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#A78BFA" Opacity="0.8" />
+                    <SolidColorBrush x:Key="AccentFillColorSelectedTextBackgroundBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#C4B5FD" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#C4B5FD" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#A78BFA" />
+                    <SolidColorBrush x:Key="SystemControlHighlightAccentBrush" Color="#7C3AED" />
+                    <SolidColorBrush x:Key="SystemControlForegroundAccentBrush" Color="#A78BFA" />
+                    <SolidColorBrush x:Key="SystemControlBackgroundAccentBrush" Color="#A78BFA" />
+                    <SolidColorBrush x:Key="SystemControlHyperlinkTextBrush" Color="#C4B5FD" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#C4B5FD" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#DDD6FE" />
+                    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#A78BFA" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
