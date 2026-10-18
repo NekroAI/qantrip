@@ -68,13 +68,13 @@
 
 - **负责人意向：** 结合 Ctrl+Q 设计，与产品名形成联动。
 - **评审意见：** Windows / Linux 上 `Ctrl+Q` 在浏览器和多数 GTK/Qt 应用中是"退出"，热键注册失败时会直接关掉用户的应用。
-- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。（Windows 已由 D33 改为 `Ctrl+Q`。）
+- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。（Windows 已由 D33、Linux 已由 D37 改为 `Ctrl+Q`。）
 - **待办：** 原型阶段做三平台冲突实测后定稿。**负责人尚未明确确认这一方案。**
 
 ### D6 技术路线：各平台原生外壳 + 共享 Rust 核心，不以 Tauri 为主框架（2026-10-17）
 
 - **负责人决定：** 以体验为导向，允许各平台原生实现；负责人不倾向 Tauri。
-- **架构：** Rust 核心（输入语法、渲染、存储，后续同步与加密）经 UniFFI 暴露给各平台外壳。macOS 外壳用 Swift（AppKit + SwiftUI），SwiftPM 构建、脚本组装 `.app`，不依赖完整 Xcode。Windows / Linux 外壳技术待定（候选：C# + uniffi-bindgen-cs、windows-rs、GTK4）。
+- **架构：** Rust 核心（输入语法、渲染、存储，后续同步与加密）经 UniFFI 暴露给各平台外壳。macOS 外壳用 Swift（AppKit + SwiftUI），SwiftPM 构建、脚本组装 `.app`，不依赖完整 Xcode。Windows / Linux 外壳技术待定（候选：C# + uniffi-bindgen-cs、windows-rs、GTK4）。（后由 D32、D37 确定。）
 - **评审意见：** Tauri 对本项目的主要价值只是三平台共用管理类界面（模板库、编辑器、设置）。如果日后三份原生管理界面成本过高，可以在原生窗口中嵌入 WebView 只承载这些页面，届时再议。
 - 取代 PRD 10.2 中"Tauri 2 作为重点候选"的表述。
 
@@ -300,6 +300,31 @@
 - **背景：** 负责人反馈输入一部分后回车常常只是补全、要再按一次才插入，与 Tab 重复。
 - **决定：** 回车 = 按当前解析结果确认（插入右侧预览显示的内容，模糊匹配也直接插入高亮项），从不改写输入；Tab = 补全（高亮候选、灰字、或缺失必填参数的修正）。无法插入时回车不执行并说明原因。指令模式中无歧义前缀回车即执行。取代此前"模糊匹配第一次回车只补全"的规则；防误插入改由预览承担（回车前即可看到将插入的模板与内容）。
 
+### D37 Linux 外壳：Rust + GTK4 / libadwaita（2026-10-18）
+
+- **负责人决定：**
+  1. **界面：** Rust + GTK4 / libadwaita（gtk4-rs、libadwaita-rs），放在 `apps/linux/`（独立 Cargo 项目），直接依赖 `core` crate，不经过 FFI。理由：与核心同一语言，省去绑定层；GTK 是 GNOME 原生、在 KDE 上同样可用的主流工具包，输入法（IBus / Fcitx5）与门户集成成熟。遵循 D6 各平台原生外壳。
+  2. **支持范围：** GNOME（Wayland）、KDE Plasma（Wayland）、X11 会话完整支持并实测；Sway / Hyprland 等 wlroots 桌面尽力支持（自动粘贴用 wtype），不作保证。
+  3. **全局快捷键：** Wayland 用 xdg-desktop-portal GlobalShortcuts；X11 用 XGrabKey；都不可用时引导用户在系统设置中添加自定义快捷键，绑定到 `qantrip toggle`（单实例：GApplication 经 D-Bus 把命令转交给运行中的实例）。
+  4. **Wayland 自动粘贴：** RemoteDesktop 门户请求授权，恢复令牌持久化（之后不再询问），模拟粘贴键；不授权或桌面不支持时只复制并提示按 Ctrl+V。X11 用 XTest。终端类应用（按 WM_CLASS / app_id 识别）用 Ctrl+Shift+V。保留不需要任何权限的“只复制”模式。
+  5. **默认唤起快捷键 Ctrl+Q**（取代 D5 中 Linux 用 Alt+Q 的方案），与 macOS / Windows 及宣传一致，可修改；排除的应用（D35）在 Linux 上实现：X11 按活动窗口的 WM_CLASS，Wayland 尽力而为，取不到时在界面中说明。
+- **实现要点（实测后确定）：**
+  - **面板窗口：** Wayland 下应用不能指定窗口位置（GNOME 会把新窗口放在左上角），面板窗口最大化且透明，卡片放在屏幕上方约 1/3 处，点击卡片外部关闭；全屏窗口在 GNOME 中会被铺上黑色背景，因此用最大化；KWin 不会最大化不可调整大小的窗口，所以窗口设为可调整大小。X11 下为普通无边框窗口，用 `_NET_WM_STATE` 置顶、不进任务栏，放到鼠标所在屏幕。不使用 layer-shell（GNOME 不支持）。
+  - **激活：** 门户 Activated 信号与 GApplication 转发命令行时附带的激活令牌由 GTK 使用，GNOME 与 KDE 上面板都能取得焦点；从没有令牌的进程（如 SSH）执行 `qantrip toggle` 时 GNOME 不给焦点，从 GNOME 自定义快捷键执行则正常。
+  - **GlobalShortcuts：** GNOME 50 与 KDE Plasma 6.6 均弹出一次确认对话框，之后由系统记住（重启应用不再询问）。门户返回的组合键说明格式不同（GNOME 为 `Press <Control>q`），界面统一显示为 `Ctrl+Q`。修改快捷键在系统设置中进行（门户 v2 时直接打开系统的配置界面；KDE 为 v2，GNOME 为 v1）。主机应用需要先经 `org.freedesktop.host.portal.Registry` 登记应用 ID（xdg-desktop-portal 1.19+），并且系统中要有同名 .desktop 文件；AppImage 首次运行时自行写入 `~/.local/share/applications`。
+  - **RemoteDesktop：** GNOME 在会话存在期间顶栏一直显示远程控制指示，因此每次粘贴临时建立会话（约 60ms），发送按键后立即关闭；KDE 每建立一次会话都弹出“远程控制会话已开始”通知，因此保持一个会话直到退出。恢复令牌一次性使用、每次更新，按桌面分别保存（`~/.local/state/qantrip/`，0600）；令牌失效时系统重新询问，确认后粘贴照常完成。
+  - **粘贴按键：** GNOME（Wayland）不向应用公开前台窗口，识别不出终端，此时用 Shift+Insert，并同时写入 PRIMARY 选区：GTK、Qt、浏览器与 VTE / Konsole 等终端都会粘贴。设置中可固定为 Ctrl+V / Ctrl+Shift+V / Shift+Insert。
+  - **剪贴板：** X11 下唤起面板时备份剪贴板全部格式，粘贴 500ms 后若剪贴板仍是我们写入的内容则恢复（与 macOS / Windows 相同）。Wayland 下应用失去焦点后不能再写剪贴板，因此不恢复，Prompt 留在剪贴板中（已知限制）。写入时附加 `x-kde-passwordManagerHint: secret`，Klipper 等不记录（相当于 macOS 的 TransientType）。
+  - **前台应用：** X11 读取 `_NET_ACTIVE_WINDOW` 与 `WM_CLASS`；KDE Plasma（Wayland）加载一个 KWin 脚本，窗口激活时经 D-Bus 回调 `resourceClass`（app_id），退出时卸载；GNOME（Wayland）取不到，排除列表无效并在设置中说明。Wayland 下快捷键由系统持有，按键不能像 X11（XUngrabKey）那样原样交给被排除的应用，只是不打开面板。
+  - **输入法（D9）：** Fcitx5 经 D-Bus `Controller1.Deactivate` 让面板输入框回到英文（状态按输入上下文保存，原应用不受影响）；IBus 的引擎是全局的，面板打开时切到对应的 xkb 引擎、关闭时切回（GNOME 的输入源指示器随之更新）。组字期间不解析、不处理回车与方向键；组字结束时补发一次解析。GNOME 用 Super+空格切换输入源时，切换器会短暂取得焦点，面板的失焦关闭因此延迟约 0.2 秒再确认。
+  - **渲染器：** 默认使用 GTK 的 Cairo 渲染器（未设置 `GSK_RENDERER` 时）：没有 GPU 的机器上 GL / Vulkan 渲染器经软件实现常驻 300MB 以上，Cairo 约 140–200MB；启动其他程序时去掉这个环境变量。
+  - **同步密钥：** 全部密钥合成一个 Secret Service 条目（GNOME 密钥环、KWallet），与 macOS 合成一个钥匙串条目对应；系统没有可用的 Secret Service 时回退为仅本用户可读的文件（0600），设置 › 同步中说明。一旦选定后端就固定使用，避免密钥分散。
+  - **提示（HUD）：** 用桌面通知（`org.freedesktop.Notifications`，transient），不抢焦点。不能附加 `desktop-entry` 提示，也不能用低优先级：GNOME 在这两种情况下都不弹出横幅。
+  - **托盘：** StatusNotifierItem（ksni）。GNOME 的 AppIndicator 扩展不按自带主题路径加载图标，改为提供像素图；没有托盘宿主时应用照常运行，从应用菜单再次打开 Qantrip 即进入模板库与设置。
+  - **打包：** AppImage、.deb、.rpm（`scripts/package-linux.sh`），x86_64 与 aarch64 在 GitHub Actions 的 ubuntu-24.04 / ubuntu-24.04-arm 上构建。AppImage 不内置 GTK / libadwaita：内置后系统的输入法模块与主题、门户集成都会失效。因此三种包都要求系统提供 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 及更新）。更新提示的“下载”按安装方式（AppImage / deb / rpm）与架构直接下载对应文件。
+- **验证：** 在 Ubuntu 26.04 ARM64 虚拟机（GNOME 50、KDE Plasma 6.6，含 Plasma X11 会话，IBus 智能拼音与 Fcitx5 拼音）中实测；同步登录需要浏览器中的 GitHub 授权，留给负责人。
+- **调试钩子：** 与 macOS 的 QANTRIP_DEBUG_HOOKS 对应，只编译进 debug 构建且打开 `debug-hooks` 特性时、运行中的实例以 `QANTRIP_DEBUG_HOOKS=1` 启动才生效（`qantrip debug …`），release 构建不包含。
+
 ---
 
 ## 待决事项
@@ -327,7 +352,7 @@
 | 剪贴板临时标记能阻止主流剪贴板管理器记录 | PRD 7.2 | macOS（Raycast、Maccy、Paste）、Windows 剪贴板历史实测 |
 | 粘贴到 Claude Code / Codex CLI 的多行文本不会被提交 | PRD 17.1 | 各终端实测 |
 | `⌃Q` / `Alt+Q` 冲突少 | PRD 3.1 | 三平台常用软件冲突测试 |
-| Wayland 下 GlobalShortcuts portal 可用性 | PRD 10.3 | GNOME / KDE 当前版本实测 |
+| Wayland 下 GlobalShortcuts portal 可用性 | PRD 10.3 | GNOME / KDE 当前版本实测（2026-10-18：GNOME 50、KDE Plasma 6.6 均可用，见 D37） |
 
 ---
 

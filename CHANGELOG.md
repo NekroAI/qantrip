@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- Linux preview (x86_64 and ARM64): a native GTK4 / libadwaita app with the same panel, command mode, template library, settings, welcome guide, tray menu, end-to-end encrypted sync and update notice as on macOS and Windows. Ctrl+Q opens the panel — registered through the desktop's global shortcuts portal on GNOME and KDE (Wayland), grabbed directly on X11, or bound to `qantrip toggle` in your keyboard settings elsewhere. Auto-paste uses the remote desktop portal on Wayland (allowed once, then remembered) and XTest on X11; terminals get Ctrl+Shift+V. Distributed as AppImage, .deb and .rpm; needs GTK 4.14+ and libadwaita 1.5+.
+- `qantrip list`, `qantrip render <input>` and `qantrip complete <input>` on Linux use the same templates and grammar from the command line.
+
+### Changed
+- In Chinese, the Linux app calls the trash 回收站 like the desktop does.
+
 ## [0.3.6] — 2026-10-18
 
 ### Changed
