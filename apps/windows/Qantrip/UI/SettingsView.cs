@@ -21,192 +21,152 @@ using static Qantrip.Platform.Win32;
 namespace Qantrip.UI;
 
 /// <summary>
-/// 设置窗口（对应 macOS SettingsView.swift）：Fluent 设置卡片 + Mica 背景，从托盘菜单打开（或 `Qantrip.exe --settings`）。
-/// 修改立即保存到 settings.json 并即时生效；界面文字跟随界面语言，切换语言时整页重建。
-/// 控件带 AutomationId，回归脚本通过 UI 自动化操作（tests/windows/t-settings.ps1）。
+/// 设置页面（对应 macOS SettingsView.swift）：与模板库合在同一个窗口中（侧边栏底部固定的"设置"入口，见 LibraryWindow），
+/// 顶部分段控件切换 通用 / 插入 / 同步 / 隐私 / 关于。Fluent 设置卡片；修改立即保存到 settings.json 并即时生效。
+/// 界面文字跟随界面语言，切换语言时整个窗口重建。控件带 AutomationId，回归脚本通过 UI 自动化操作（tests/windows/t-settings.ps1）。
 /// </summary>
-internal sealed class SettingsWindow : Window
+internal sealed class SettingsView
 {
+    /// 模板库窗口中设置页的选择标识前缀（"settings:general" 等）
+    public const string KeyPrefix = "settings:";
+    public static readonly string[] Pages = { "general", "insert", "sync", "privacy", "about" };
+
+    public static string Key(string page) => KeyPrefix + page;
+
+    /// 选择标识对应的设置页；不是设置页时为 null
+    public static string? PageOf(string? key) =>
+        key is not null && key.StartsWith(KeyPrefix, StringComparison.Ordinal) && Pages.Contains(key[KeyPrefix.Length..]) ? key[KeyPrefix.Length..] : null;
+
+    private static string PageTitle(string page) => page switch
+    {
+        "general" => Loc.T("通用", "General"),
+        "insert" => Loc.T("插入", "Insert"),
+        "sync" => Loc.T("同步", "Sync"),
+        "privacy" => Loc.T("隐私", "Privacy"),
+        _ => Loc.T("关于", "About"),
+    };
+
+    private static string PageGlyph(string page) => page switch
+    {
+        "general" => "",
+        "insert" => "",
+        "sync" => "",
+        "privacy" => "",
+        _ => "",
+    };
+
     private readonly App app;
     private readonly IntPtr hwnd;
-    private readonly Grid root = new();
-    private ScrollViewer? scroll;
-    private NavigationView? nav;
+    /// 对话框所在界面树的根（同步页的 ContentDialog 需要 XamlRoot）
+    private readonly FrameworkElement host;
+    private readonly Action<string> select;
+    private readonly Grid view = new();
+    private readonly SelectorBar bar = new();
+    private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private HotKeyRecorder? recorder;
     private SyncPage? syncPage;
     /// 通用页中"排除的程序"列表的容器（列表变化时只重建它）
     private StackPanel? excludedHost;
-    /// 当前页面：general / sync
-    private string page = "general";
+    /// 关于页中"更新"部分的容器（检查状态变化时只重建它）
+    private StackPanel? updateHost;
+    private bool suppress;
 
-    public SettingsWindow(App app)
+    /// 当前页面
+    public string Page { get; private set; } = "";
+    public FrameworkElement View => view;
+    public double ScrollOffset => scroll.VerticalOffset;
+
+    /// <param name="select">用户在分段控件中切换页面（由窗口更新选择后再调用 <see cref="Show"/>）</param>
+    public SettingsView(App app, IntPtr hwnd, FrameworkElement host, Action<string> select)
     {
         this.app = app;
-        hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        ExtendsContentIntoTitleBar = true;
-        if (MicaController.IsSupported()) SystemBackdrop = new MicaBackdrop();
-        else root.Background = Res("SolidBackgroundFillColorBaseBrush");
-        var p = OverlappedPresenter.Create();
-        p.IsMaximizable = false;
-        AppWindow.SetPresenter(p);
-        var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "Qantrip.ico");
-        if (File.Exists(icon)) AppWindow.SetIcon(icon);
-        Place();
-        Content = root;
-        Closed += (_, _) =>
+        this.hwnd = hwnd;
+        this.host = host;
+        this.select = select;
+        view.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        view.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        bar.HorizontalAlignment = HorizontalAlignment.Center;
+        bar.Margin = new Thickness(0, 10, 0, 2);
+        AutomationProperties.SetAutomationId(bar, "settingsNav");
+        foreach (var p in Pages)
         {
-            recorder?.Cancel();
-            syncPage?.Detach();
+            var item = new SelectorBarItem { Text = PageTitle(p), Tag = p, Icon = new FontIcon { Glyph = PageGlyph(p), FontFamily = Theme.Icons } };
+            AutomationProperties.SetAutomationId(item, "nav_" + p);
+            bar.Items.Add(item);
+        }
+        bar.SelectionChanged += (_, _) =>
+        {
+            if (!suppress && bar.SelectedItem is SelectorBarItem { Tag: string p } && p != Page) select(p);
         };
-        Build();
+        view.Children.Add(bar);
+        AutomationProperties.SetAutomationId(scroll, "settings_scroll");
+        Grid.SetRow(scroll, 1);
+        view.Children.Add(scroll);
+        UpdateChecker.Shared.Changed += OnUpdateChanged;
+    }
+
+    /// 显示某一页（新建页面内容）。
+    public void Show(string page)
+    {
+        if (page == Page) return;
+        Page = page;
+        suppress = true;
+        bar.SelectedItem = bar.Items.FirstOrDefault(i => (string)i.Tag == page);
+        suppress = false;
+        recorder?.Cancel();
+        recorder = null;
+        syncPage?.Detach();
+        syncPage = null;
+        excludedHost = null;
+        updateHost = null;
+        if (page == "sync")
+        {
+            syncPage = new SyncPage(host, hwnd);
+            scroll.Content = syncPage.View;
+            syncPage.Attach();
+        }
+        else scroll.Content = page switch { "general" => General(), "insert" => Insert(), "privacy" => Privacy(), _ => AboutPage() };
+        scroll.ChangeView(null, 0, null, true);
+        Log.Event("settings_page", new() { ["page"] = page });
+    }
+
+    /// 语言切换重建窗口后恢复滚动位置。
+    public void RestoreOffset(double offset)
+    {
+        scroll.UpdateLayout();
+        scroll.ChangeView(null, offset, null, true);
+    }
+
+    /// 离开设置页或关闭窗口：停止录制快捷键、同步页的定时刷新。
+    public void Detach()
+    {
+        recorder?.Cancel();
+        syncPage?.Detach();
+        syncPage = null;
+        UpdateChecker.Shared.Changed -= OnUpdateChanged;
     }
 
     internal static Brush Res(string key) => (Brush)Application.Current.Resources[key];
 
-    /// 在鼠标所在显示器居中，按该显示器的缩放计算尺寸。
-    private void Place()
+    // MARK: 页面
+
+    private static StackPanel PageStack(string title)
     {
-        GetCursorPos(out var pt);
-        var mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        var mi = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
-        GetMonitorInfo(mon, ref mi);
-        GetDpiForMonitor(mon, 0, out uint dpi, out _);
-        double scale = dpi == 0 ? 1 : dpi / 96.0;
-        var wa = mi.rcWork;
-        int w = (int)Math.Round(900 * scale), h = (int)Math.Min(Math.Round(820 * scale), (wa.Bottom - wa.Top) * 0.9);
-        AppWindow.MoveAndResize(new RectInt32(wa.Left + (wa.Right - wa.Left - w) / 2, wa.Top + (wa.Bottom - wa.Top - h) / 2, w, h));
-    }
-
-    public void ShowAndActivate()
-    {
-        AppWindow.Show(true);
-        Activate();
-        Foreground.Activate(hwnd, out _);
-    }
-
-    /// 语言变化后重建（推迟到当前事件处理结束，避免在下拉框的事件中移除它自己）。
-    public void Rebuild() => DispatcherQueue.TryEnqueue(() =>
-    {
-        var offset = scroll?.VerticalOffset ?? 0;
-        Build();
-        scroll?.UpdateLayout();
-        scroll?.ChangeView(null, offset, null, true);
-    });
-
-    /// 切换到指定页面（general / sync）。
-    public void ShowPage(string name)
-    {
-        if (nav is null) return;
-        foreach (var item in nav.MenuItems.OfType<NavigationViewItem>())
-            if ((string)item.Tag == name) { nav.SelectedItem = item; break; }
-    }
-
-    // MARK: 构建
-
-    private void Build()
-    {
-        Title = Loc.T("Nekro Qantrip 设置", "Nekro Qantrip Settings");
-        root.Children.Clear();
-        root.RowDefinitions.Clear();
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        // 自定义标题栏（内容延伸到标题栏，Mica 贯穿整个窗口）
-        var titleBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Padding = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Qantrip.ico");
-        if (File.Exists(iconPath)) titleBar.Children.Add(new Image { Source = new BitmapImage(new Uri(iconPath)), Width = 16, Height = 16 });
-        titleBar.Children.Add(new TextBlock { Text = Title, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
-        var titleHost = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        titleHost.Children.Add(titleBar);
-        root.Children.Add(titleHost);
-        SetTitleBar(titleHost);
-
-        scroll = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        AutomationProperties.SetAutomationId(scroll, "settings_scroll");
-        nav = new NavigationView
-        {
-            PaneDisplayMode = NavigationViewPaneDisplayMode.Left, IsSettingsVisible = false, IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
-            IsPaneToggleButtonVisible = false, OpenPaneLength = 200, Content = scroll, IsTitleBarAutoPaddingEnabled = false,
-        };
-        AutomationProperties.SetAutomationId(nav, "settingsNav");
-        nav.MenuItems.Add(NavItem("general", Loc.T("通用", "General"), "\uE713"));
-        nav.MenuItems.Add(NavItem("sync", Loc.T("同步", "Sync"), "\uE895"));
-        nav.SelectionChanged += (_, e) =>
-        {
-            if (e.SelectedItem is NavigationViewItem { Tag: string tag }) ShowContent(tag);
-        };
-        Grid.SetRow(nav, 1);
-        root.Children.Add(nav);
-        ShowPage(page);
-    }
-
-    private static NavigationViewItem NavItem(string tag, string text, string glyph)
-    {
-        var item = new NavigationViewItem { Content = text, Tag = tag, Icon = new FontIcon { Glyph = glyph, FontFamily = Theme.Icons } };
-        AutomationProperties.SetAutomationId(item, "nav_" + tag);
-        return item;
-    }
-
-    private void ShowContent(string name)
-    {
-        if (scroll is null) return;
-        page = name;
-        recorder?.Cancel();
-        syncPage?.Detach();
-        syncPage = null;
-        if (name == "sync")
-        {
-            syncPage = new SyncPage(root);
-            scroll.Content = syncPage.View;
-            syncPage.Attach();
-        }
-        else scroll.Content = General();
-        Log.Event("settings_page", new() { ["page"] = name });
+        var page = new StackPanel { Spacing = 4, MaxWidth = 860, Padding = new Thickness(28, 8, 28, 28) };
+        page.Children.Add(new TextBlock { Text = title, FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 12) });
+        return page;
     }
 
     private FrameworkElement General()
     {
-        var page = new StackPanel { Spacing = 4, MaxWidth = 860, Padding = new Thickness(28, 8, 28, 28) };
-        page.Children.Add(new TextBlock { Text = Loc.T("通用", "General"), FontFamily = Theme.Display, FontSize = 30, Margin = new Thickness(0, 0, 0, 12) });
-
-        // 通用
-        page.Children.Add(Section(Loc.T("通用", "General")));
-        page.Children.Add(Card("", Loc.T("唤起快捷键", "Panel shortcut"),
+        var page = PageStack(Loc.T("通用", "General"));
+        page.Children.Add(Card("\uE765", Loc.T("唤起快捷键", "Panel shortcut"),
             Loc.T("在任意程序中按下即可唤起命令面板。默认 Ctrl+Q。", "Press it in any app to open the command panel. The default is Ctrl+Q."), (recorder = new HotKeyRecorder(app)).View));
-        page.Children.Add(Card("", Loc.T("登录时启动", "Launch at login"), AutostartDescription(), AutostartToggle()));
-        page.Children.Add(Card("", Loc.T("界面语言", "Language"), null,
+        page.Children.Add(Card("\uE7E8", Loc.T("登录时启动", "Launch at login"), AutostartDescription(), AutostartToggle()));
+        page.Children.Add(Card("\uE774", Loc.T("界面语言", "Language"), null,
             LanguageBox("uiLanguage", Loc.T("跟随系统", "System default"), Settings.Language, v => Settings.Language = v)));
-        page.Children.Add(Card("", Loc.T("内置模板语言", "Built-in templates"), Loc.T("你自己的模板不受影响。", "Your own templates are not affected."),
+        page.Children.Add(Card("\uE8F1", Loc.T("内置模板语言", "Built-in templates"), Loc.T("你自己的模板不受影响。", "Your own templates are not affected."),
             LanguageBox("templateLanguage", Loc.T("跟随界面语言", "Same as language"), Settings.TemplateLanguage, v => Settings.TemplateLanguage = v)));
-
-        // 插入
-        page.Children.Add(Section(Loc.T("插入", "Insert")));
-        page.Children.Add(Card("", Loc.T("插入方式", "Insert method"),
-            Loc.T("自动粘贴会把 Prompt 放到剪贴板并模拟 Ctrl+V，随后恢复原剪贴板；Prompt 不进入剪贴板历史。目标程序以管理员身份运行时自动改为只复制。",
-                "Auto-paste puts the prompt on the clipboard, simulates Ctrl+V and then restores the clipboard; the prompt stays out of clipboard history. Falls back to copy only when the target app runs as administrator."),
-            Combo("insertMode", new[] { Loc.T("自动粘贴到当前程序", "Auto-paste into the current app"), Loc.T("只复制，手动粘贴", "Copy only, paste manually") },
-                Settings.CopyOnly ? 1 : 0, i => Settings.CopyOnly = i == 1)));
-        var interval = IntervalSlider();
-        page.Children.Add(Card("", Loc.T("Ctrl+↩ 展开粘贴（Claude Code）", "Ctrl+↩ expand paste (Claude Code)"),
-            Loc.T("Claude Code 会把超过 800 字符或多于 3 行的粘贴折叠为 [Pasted text]，再次粘贴相同内容即可展开。Ctrl+↩ 只在内容会被折叠时才粘贴两次。",
-                "Claude Code collapses pastes over 800 characters or more than 3 lines into [Pasted text]; pasting the same content again expands it. Ctrl+↩ pastes twice only when the content would be collapsed."),
-            Toggle("expandPaste", Settings.ExpandPasteEnabled, v => { Settings.ExpandPasteEnabled = v; interval.IsEnabled = v; })));
-        interval.IsEnabled = Settings.ExpandPasteEnabled;
-        page.Children.Add(Card("", Loc.T("两次粘贴间隔", "Interval between pastes"), null, interval));
-
-        // 输入法
-        page.Children.Add(Section(Loc.T("输入法", "Input method")));
-        ToggleSwitch? shift = null;
-        page.Children.Add(Card("", Loc.T("唤起时使用英文输入", "Use English input when opened"),
-            Loc.T("中文输入法下唤起面板时默认英文，命令词不会进入拼音组字。输入中文附加要求时按 Shift 切换即可。只影响面板，不改变其他程序的输入法。",
-                "With a Chinese IME, the panel starts in English so commands don’t go into pinyin composition. Press Shift to type extra instructions in Chinese. Only affects the panel."),
-            Toggle("forceAscii", Settings.ForceAsciiInput, v => { Settings.ForceAsciiInput = v; if (shift != null) shift.IsEnabled = v; })));
-        shift = Toggle("imeShift", Settings.ImeShiftToggle, v => Settings.ImeShiftToggle = v);
-        shift.IsEnabled = Settings.ForceAsciiInput;
-        page.Children.Add(Card("", Loc.T("再次唤起仍是中文时自动切回英文（实验性）", "Switch back to English if still in Chinese mode (experimental)"),
-            Loc.T("模拟按一次 Shift（微软拼音等输入法的中英切换键）。若你改过输入法的切换键，可以关闭此项。",
-                "Simulates one Shift press (the Chinese/English toggle of Microsoft Pinyin and most IMEs). Turn it off if you changed your IME’s toggle key."),
-            shift));
 
         // 排除的程序（D35）
         page.Children.Add(Section(Loc.T("排除的程序", "Excluded apps")));
@@ -214,25 +174,115 @@ internal sealed class SettingsWindow : Window
         AutomationProperties.SetAutomationId(excludedHost, "excludedApps");
         page.Children.Add(excludedHost);
         BuildExcludedApps();
+        return page;
+    }
 
-        // 隐私
-        page.Children.Add(Section(Loc.T("隐私", "Privacy")));
-        page.Children.Add(Card("", Loc.T("记录使用习惯", "Record usage"),
+    private FrameworkElement Insert()
+    {
+        var page = PageStack(Loc.T("插入", "Insert"));
+        page.Children.Add(Card("\uE77F", Loc.T("插入方式", "Insert method"),
+            Loc.T("自动粘贴会把 Prompt 放到剪贴板并模拟 Ctrl+V，随后恢复原剪贴板；Prompt 不进入剪贴板历史。目标程序以管理员身份运行时自动改为只复制。",
+                "Auto-paste puts the prompt on the clipboard, simulates Ctrl+V and then restores the clipboard; the prompt stays out of clipboard history. Falls back to copy only when the target app runs as administrator."),
+            Combo("insertMode", new[] { Loc.T("自动粘贴到当前程序", "Auto-paste into the current app"), Loc.T("只复制，手动粘贴", "Copy only, paste manually") },
+                Settings.CopyOnly ? 1 : 0, i => Settings.CopyOnly = i == 1)));
+        var interval = IntervalSlider();
+        page.Children.Add(Card("\uE740", Loc.T("Ctrl+↩ 展开粘贴（Claude Code）", "Ctrl+↩ expand paste (Claude Code)"),
+            Loc.T("Claude Code 会把超过 800 字符或多于 3 行的粘贴折叠为 [Pasted text]，再次粘贴相同内容即可展开。Ctrl+↩ 只在内容会被折叠时才粘贴两次。",
+                "Claude Code collapses pastes over 800 characters or more than 3 lines into [Pasted text]; pasting the same content again expands it. Ctrl+↩ pastes twice only when the content would be collapsed."),
+            Toggle("expandPaste", Settings.ExpandPasteEnabled, v => { Settings.ExpandPasteEnabled = v; interval.IsEnabled = v; })));
+        interval.IsEnabled = Settings.ExpandPasteEnabled;
+        page.Children.Add(Card("\uE916", Loc.T("两次粘贴间隔", "Interval between pastes"), null, interval));
+
+        // 输入法
+        page.Children.Add(Section(Loc.T("输入法", "Input method")));
+        ToggleSwitch? shift = null;
+        page.Children.Add(Card("\uE8C1", Loc.T("唤起时使用英文输入", "Use English input when opened"),
+            Loc.T("中文输入法下唤起面板时默认英文，命令词不会进入拼音组字。输入中文附加要求时按 Shift 切换即可。只影响面板，不改变其他程序的输入法。",
+                "With a Chinese IME, the panel starts in English so commands don’t go into pinyin composition. Press Shift to type extra instructions in Chinese. Only affects the panel."),
+            Toggle("forceAscii", Settings.ForceAsciiInput, v => { Settings.ForceAsciiInput = v; if (shift != null) shift.IsEnabled = v; })));
+        shift = Toggle("imeShift", Settings.ImeShiftToggle, v => Settings.ImeShiftToggle = v);
+        shift.IsEnabled = Settings.ForceAsciiInput;
+        page.Children.Add(Card("\uE97E", Loc.T("再次唤起仍是中文时自动切回英文（实验性）", "Switch back to English if still in Chinese mode (experimental)"),
+            Loc.T("模拟按一次 Shift（微软拼音等输入法的中英切换键）。若你改过输入法的切换键，可以关闭此项。",
+                "Simulates one Shift press (the Chinese/English toggle of Microsoft Pinyin and most IMEs). Turn it off if you changed your IME’s toggle key."),
+            shift));
+        return page;
+    }
+
+    private FrameworkElement Privacy()
+    {
+        var page = PageStack(Loc.T("隐私", "Privacy"));
+        page.Children.Add(Card("\uE81C", Loc.T("记录使用习惯", "Record usage"),
             Loc.T("用于首屏的「最近施放」和「常用」排序，以及按程序区分常用模板。只记录模板名和参数，不记录附加要求和生成的 Prompt，数据只保存在本机。",
                 "Used for “Recent” and “Frequent” ordering on the start screen, and to tell which templates you use in which app. Only template names and parameters are recorded, never extra instructions or generated prompts. Data stays on this PC."),
             Toggle("recordUsage", Settings.RecordUsage, v => Settings.RecordUsage = v)));
-        page.Children.Add(Card("", Loc.T("清除使用记录", "Clear usage history"), null, ClearUsageButton()));
-
-        // 关于
-        page.Children.Add(Section(Loc.T("关于", "About")));
-        page.Children.Add(About());
+        page.Children.Add(Card("\uE74D", Loc.T("清除使用记录", "Clear usage history"), null, ClearUsageButton()));
         return page;
+    }
+
+    private FrameworkElement AboutPage()
+    {
+        var page = PageStack(Loc.T("关于", "About"));
+        page.Children.Add(About());
+        page.Children.Add(Section(Loc.T("更新", "Updates")));
+        updateHost = new StackPanel { Spacing = 4 };
+        AutomationProperties.SetAutomationId(updateHost, "updates");
+        page.Children.Add(updateHost);
+        BuildUpdate();
+        return page;
+    }
+
+    // MARK: 更新
+
+    private void OnUpdateChanged() => view.DispatcherQueue.TryEnqueue(BuildUpdate);
+
+    /// 检查更新：当前版本、检查结果（已是最新 / 新版本与下载、跳过此版本 / 错误）、自动检查开关。
+    private void BuildUpdate()
+    {
+        if (updateHost is null) return;
+        updateHost.Children.Clear();
+        var u = UpdateChecker.Shared;
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        string status;
+        if (u.Checking) status = Loc.T("正在检查…", "Checking…");
+        else if (u.Available is { } r)
+        {
+            bool skipped = Settings.UpdateSkippedVersion == r.Version;
+            status = skipped
+                ? Loc.T($"当前版本 {Version}。已跳过新版本 {r.Version}。", $"You're on version {Version}. Version {r.Version} is skipped.")
+                : Loc.T($"当前版本 {Version}。有新版本 {r.Version} 可以下载。", $"You're on version {Version}. Version {r.Version} is available.");
+            var download = new Button { Content = Loc.T("下载", "Download"), Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            AutomationProperties.SetAutomationId(download, "updateDownload");
+            download.Click += (_, _) => UpdateChecker.OpenReleasePage(r);
+            actions.Children.Add(download);
+            if (!skipped)
+            {
+                var skip = new Button { Content = Loc.T("跳过此版本", "Skip This Version") };
+                AutomationProperties.SetAutomationId(skip, "updateSkip");
+                skip.Click += (_, _) => { Settings.UpdateSkippedVersion = r.Version; BuildUpdate(); };
+                actions.Children.Add(skip);
+            }
+        }
+        else if (u.Error is { } err) status = Loc.T($"当前版本 {Version}。无法检查更新：{err}", $"You're on version {Version}. Couldn't check for updates: {err}");
+        else if (u.UpToDate) status = Loc.T($"当前版本 {Version}，已是最新版本。", $"You're on version {Version}, the latest version.");
+        else status = Loc.T($"当前版本 {Version}。", $"You're on version {Version}.");
+        var check = new Button { Content = Loc.T("检查更新", "Check for Updates"), IsEnabled = !u.Checking };
+        AutomationProperties.SetAutomationId(check, "updateCheck");
+        check.Click += (_, _) => _ = u.CheckNow();
+        actions.Children.Add(check);
+        var card = Card("\uE895", Loc.T("检查更新", "Check for Updates"), status, actions);
+        AutomationProperties.SetAutomationId(card, "updateStatus");
+        updateHost.Children.Add(card);
+        updateHost.Children.Add(Card("\uE823", Loc.T("自动检查更新", "Check for updates automatically"),
+            Loc.T("每天在后台检查一次 GitHub 上的正式版本，有新版本时在通知区域提示。不会自动下载或安装。",
+                "Checks GitHub for a new release once a day and lets you know in the notification area. Nothing is downloaded or installed automatically."),
+            Toggle("autoCheckUpdates", Settings.AutoCheckUpdates, v => Settings.AutoCheckUpdates = v)));
     }
 
     // MARK: 排除的程序（D35）
 
     /// 重建排除列表（设置或托盘菜单修改 excludedApps 后调用）。推迟到当前事件处理结束，避免在按钮 / 菜单的事件中移除它自己。
-    public void RefreshExcludedApps() => DispatcherQueue.TryEnqueue(BuildExcludedApps);
+    public void RefreshExcludedApps() => view.DispatcherQueue.TryEnqueue(BuildExcludedApps);
 
     private void BuildExcludedApps()
     {

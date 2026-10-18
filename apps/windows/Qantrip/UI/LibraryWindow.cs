@@ -23,17 +23,27 @@ namespace Qantrip.UI;
 
 /// <summary>
 /// 模板库与编辑器窗口（PRD 4.5 / 11.2，docs/decisions.md D19；移植自 macOS LibraryWindow.swift）。
-/// 左侧：搜索 + 我的模板 / 内置（按分类）/ 公共片段；右侧：表单或源码编辑 + 试用预览（核心 check_source 实时校验）。
+/// 左侧：搜索 + 我的模板 / 内置（按分类）/ 公共片段，底部固定"设置"入口；右侧：表单或源码编辑 + 试用预览（核心 check_source 实时校验），
+/// 选中"设置"时显示设置页（<see cref="SettingsView"/>，与 macOS 相同：设置与模板库在同一个窗口中）。
 /// 控件带 AutomationId，回归脚本通过 UI 自动化操作（tests/windows/t-library.ps1）。
 /// </summary>
 internal sealed class LibraryWindow : Window
 {
     private readonly LibraryModel model;
+    private readonly App app;
     private readonly IntPtr hwnd;
     private readonly Grid root = new();
-    private readonly TextBox search = new();
-    private readonly ListView list = new();
-    private readonly Grid detail = new();
+    // 侧栏与详情区在语言切换时整体重建（WinUI 中不能把已在界面树中的元素移到新的父元素）
+    private TextBox search = new();
+    private ListView list = new();
+    private Grid detail = new();
+    private StackPanel tools = new();
+    private Button? settingsButton;
+    private TextBlock? titleLabel;
+    /// 选中设置页时的设置界面（离开设置页时释放）
+    private SettingsView? settingsView;
+    /// 最近一次选中的模板（从设置回到模板库时恢复）
+    private string? lastTemplate;
     private bool suppressSelection;
     private bool dialogOpen;
 
@@ -49,19 +59,25 @@ internal sealed class LibraryWindow : Window
     /// 当前参数检查器中参数标题的文本（表单修改时就地更新）
     private readonly Dictionary<int, TextBlock> paramTitles = new();
 
-    public LibraryWindow(LibraryModel model)
+    public LibraryWindow(LibraryModel model, App app)
     {
         this.model = model;
+        this.app = app;
         hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         ExtendsContentIntoTitleBar = true;
         if (MicaController.IsSupported()) SystemBackdrop = new MicaBackdrop();
-        else root.Background = SettingsWindow.Res("SolidBackgroundFillColorBaseBrush");
+        else root.Background = SettingsView.Res("SolidBackgroundFillColorBaseBrush");
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "Qantrip.ico");
         if (File.Exists(icon)) AppWindow.SetIcon(icon);
         Place();
         Content = root;
         model.Changed += Rebuild;
-        Closed += (_, _) => model.Changed -= Rebuild;
+        Closed += (_, _) =>
+        {
+            model.Changed -= Rebuild;
+            settingsView?.Detach();
+            settingsView = null;
+        };
         Build();
     }
 
@@ -94,18 +110,53 @@ internal sealed class LibraryWindow : Window
         model.Select(name);
     }
 
+    /// 打开设置页（托盘"设置…"、面板 Ctrl+,、/settings、同步提醒）。有未保存修改时先确认。
+    public async void ShowSettings(string page)
+    {
+        var key = SettingsView.Key(SettingsView.PageOf(SettingsView.Key(page)) ?? "general");
+        if (model.Selection == key) return;
+        if (!await ConfirmDiscard()) return;
+        model.Select(key);
+    }
+
+    /// 正显示设置时回到模板库（恢复最近选中的模板）。
+    public void ShowTemplates()
+    {
+        if (SettingsView.PageOf(model.Selection) is null) return;
+        model.Select(lastTemplate is { } t && model.Entries.Any(e => LibraryModel.Key(e) == t) ? t : null);
+    }
+
+    /// 界面语言变化：整个窗口重建（推迟到当前事件处理结束，避免在设置页的下拉框事件中移除它自己）。
+    public void ApplyLanguage() => DispatcherQueue.TryEnqueue(() =>
+    {
+        var offset = settingsView?.ScrollOffset ?? 0;
+        settingsView?.Detach();
+        settingsView = null;
+        editorBuilt = false;
+        root.Children.Clear();
+        root.RowDefinitions.Clear();
+        Build();
+        if (offset > 0) settingsView?.RestoreOffset(offset);
+    });
+
+    /// 排除的程序列表变化（设置或托盘菜单修改）
+    public void RefreshExcludedApps() => settingsView?.RefreshExcludedApps();
+
     // MARK: 构建
 
     private void Build()
     {
-        Title = Loc.T("模板库", "Template Library");
+        titleLabel = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        search = new TextBox { Text = model.Search };
+        list = new ListView();
+        detail = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var titleBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Padding = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Qantrip.ico");
         if (File.Exists(iconPath)) titleBar.Children.Add(new Image { Source = new BitmapImage(new Uri(iconPath)), Width = 16, Height = 16 });
-        titleBar.Children.Add(new TextBlock { Text = Title, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        titleBar.Children.Add(titleLabel);
         var titleHost = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         titleHost.Children.Add(titleBar);
         root.Children.Add(titleHost);
@@ -122,7 +173,9 @@ internal sealed class LibraryWindow : Window
         side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         side.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(0, 0, 0, 8) };
+        side.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        // 模板操作（新建 / 导入 / 导出）；显示设置时隐藏
+        tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(0, 0, 0, 8) };
         tools.Children.Add(ToolButton("lib_new", "", Loc.T("新建", "New"), Loc.T("新建模板", "New template"), () => { _ = NewTemplate(); }));
         tools.Children.Add(ToolButton("lib_import", "", Loc.T("导入", "Import"), Loc.T("导入模板（.md、zip）", "Import templates (.md, zip)"), () => { _ = ImportFiles(); }));
         tools.Children.Add(ToolButton("lib_export", "", Loc.T("导出全部", "Export All"), Loc.T("把我的模板导出为 zip", "Export my templates as a zip"), () => { _ = ExportAll(); }));
@@ -139,16 +192,24 @@ internal sealed class LibraryWindow : Window
         list.SelectionChanged += OnListSelection;
         Grid.SetRow(list, 2);
         side.Children.Add(list);
+        // 设置：侧栏底部固定入口
+        settingsButton = SettingsEntry();
+        Grid.SetRow(settingsButton, 3);
+        side.Children.Add(settingsButton);
         body.Children.Add(side);
 
-        detail.Background = SettingsWindow.Res("LayerFillColorDefaultBrush");
-        detail.BorderBrush = SettingsWindow.Res("CardStrokeColorDefaultBrush");
+        detail.Background = SettingsView.Res("LayerFillColorDefaultBrush");
+        detail.BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush");
         detail.BorderThickness = new Thickness(1, 1, 0, 0);
         detail.CornerRadius = new CornerRadius(8, 0, 0, 0);
         Grid.SetColumn(detail, 1);
         body.Children.Add(detail);
 
-        // 拖入文件导入
+        Rebuild();
+        if (dropHooked) return;
+        dropHooked = true;
+
+        // 拖入文件导入（root 跨语言切换保留，只挂一次）
         root.AllowDrop = true;
         root.DragOver += (_, e) => { if (e.DataView.Contains(StandardDataFormats.StorageItems)) e.AcceptedOperation = DataPackageOperation.Copy; };
         root.Drop += async (_, e) =>
@@ -160,9 +221,9 @@ internal sealed class LibraryWindow : Window
             finally { deferral.Complete(); }
             await RunImport(items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList());
         };
-
-        Rebuild();
     }
+
+    private bool dropHooked;
 
     private static Button ToolButton(string id, string glyph, string text, string tip, Action click)
     {
@@ -177,10 +238,61 @@ internal sealed class LibraryWindow : Window
         return b;
     }
 
+    /// 侧栏底部的"设置"入口：选中时高亮
+    private Button SettingsEntry()
+    {
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        sp.Children.Add(new FontIcon { Glyph = "\uE713", FontFamily = Theme.Icons, FontSize = 16 });
+        sp.Children.Add(new TextBlock { Text = Loc.T("设置", "Settings"), FontSize = 14 });
+        var b = new Button
+        {
+            Content = sp, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 8, 12, 8), Margin = new Thickness(0, 8, 0, 0), BorderThickness = new Thickness(0),
+        };
+        ToolTipService.SetToolTip(b, Loc.T("设置（通用、插入、同步、隐私、关于）", "Settings (General, Insert, Sync, Privacy, About)"));
+        AutomationProperties.SetAutomationId(b, "lib_settings");
+        AutomationProperties.SetName(b, Loc.T("设置", "Settings"));
+        b.Click += (_, _) => { if (SettingsView.PageOf(model.Selection) is null) ShowSettings("general"); };
+        return b;
+    }
+
     private void Rebuild()
     {
         RebuildList();
+        var page = SettingsView.PageOf(model.Selection);
+        tools.Visibility = page is null ? Visibility.Visible : Visibility.Collapsed;
+        // 窗口标题随所在部分变化（任务栏与 Alt+Tab 中可区分）
+        Title = page is null ? Loc.T("模板库", "Template Library") : Loc.T("Nekro Qantrip 设置", "Nekro Qantrip Settings");
+        if (titleLabel != null) titleLabel.Text = Title;
+        if (settingsButton != null)
+            settingsButton.Background = page is null ? new SolidColorBrush(Microsoft.UI.Colors.Transparent) : new SolidColorBrush(Theme.WithAlpha(new Theme(root.ActualTheme == ElementTheme.Dark).Accent, 0.22));
+        if (page != null)
+        {
+            if (settingsView is null) BuildSettings();
+            settingsView!.Show(page);
+            return;
+        }
+        if (model.Selection != null) lastTemplate = model.Selection;
+        if (settingsView != null)
+        {
+            settingsView.Detach();
+            settingsView = null;
+            editorBuilt = false;
+        }
         if (!editorBuilt || !ReferenceEquals(editor, model.Editor)) BuildEditor();
+    }
+
+    /// 详情区显示设置页
+    private void BuildSettings()
+    {
+        editor = null;
+        editorBuilt = false;
+        sourceBox = null;
+        paramTitles.Clear();
+        detail.Children.Clear();
+        detail.RowDefinitions.Clear();
+        settingsView = new SettingsView(app, hwnd, root, p => ShowSettings(p));
+        detail.Children.Add(settingsView.View);
     }
 
     private bool editorBuilt;
@@ -232,7 +344,7 @@ internal sealed class LibraryWindow : Window
 
     private static ListViewItem SubHeader(string text) => new()
     {
-        Content = new TextBlock { Text = text, FontSize = 11, Foreground = SettingsWindow.Res("TextFillColorTertiaryBrush") },
+        Content = new TextBlock { Text = text, FontSize = 11, Foreground = SettingsView.Res("TextFillColorTertiaryBrush") },
         IsHitTestVisible = false, IsTabStop = false, MinHeight = 22, Padding = new Thickness(14, 2, 0, 0),
     };
 
@@ -242,7 +354,7 @@ internal sealed class LibraryWindow : Window
         var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         top.Children.Add(new TextBlock { Text = e.Name, FontFamily = Theme.Mono, FontWeight = FontWeights.SemiBold, FontSize = 13 });
         if (e.Aliases.Count > 0)
-            top.Children.Add(new TextBlock { Text = string.Join(" · ", e.Aliases), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
+            top.Children.Add(new TextBlock { Text = string.Join(" · ", e.Aliases), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
         if (e.OverridesBuiltin)
             top.Children.Add(new Border
             {
@@ -252,7 +364,7 @@ internal sealed class LibraryWindow : Window
             });
         sp.Children.Add(top);
         if (!string.IsNullOrEmpty(e.Description))
-            sp.Children.Add(new TextBlock { Text = e.Description, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
+            sp.Children.Add(new TextBlock { Text = e.Description, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
         var item = new ListViewItem { Content = sp, Tag = e };
         AutomationProperties.SetAutomationId(item, "lib_item_" + (e.Deleted ? "deleted_" : "") + e.Name);
         AutomationProperties.SetName(item, e.Name);
@@ -330,12 +442,12 @@ internal sealed class LibraryWindow : Window
         if (editor is null)
         {
             var empty = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 420 };
-            empty.Children.Add(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 40, Foreground = SettingsWindow.Res("TextFillColorTertiaryBrush") });
+            empty.Children.Add(new FontIcon { Glyph = "", FontFamily = Theme.Icons, FontSize = 40, Foreground = SettingsView.Res("TextFillColorTertiaryBrush") });
             empty.Children.Add(new TextBlock { Text = Loc.T("选择或新建一个模板", "Select or create a template"), FontFamily = Theme.Display, FontSize = 22, HorizontalAlignment = HorizontalAlignment.Center });
             empty.Children.Add(new TextBlock
             {
                 Text = Loc.T("模板保存为 Markdown 文件，也可以用任意编辑器直接修改。", "Templates are saved as Markdown files. You can also edit them in any editor."),
-                TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush"),
+                TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Foreground = SettingsView.Res("TextFillColorSecondaryBrush"),
             });
             detail.Children.Add(empty);
             return;
@@ -354,7 +466,7 @@ internal sealed class LibraryWindow : Window
         var titles = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
         titleText = new TextBlock { FontFamily = Theme.Display, FontSize = 22, TextTrimming = TextTrimming.CharacterEllipsis };
         AutomationProperties.SetAutomationId(titleText, "lib_title");
-        statusText = new TextBlock { FontSize = 12, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") };
+        statusText = new TextBlock { FontSize = 12, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") };
         AutomationProperties.SetAutomationId(statusText, "lib_status");
         titles.Children.Add(titleText);
         titles.Children.Add(statusText);
@@ -396,7 +508,7 @@ internal sealed class LibraryWindow : Window
         editHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
         split.Children.Add(editHost);
         var tryScroll = new ScrollViewer { Content = BuildTryPanel(), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new Thickness(14, 0, 14, 14) };
-        var tryBorder = new Border { Child = tryScroll, BorderThickness = new Thickness(1, 0, 0, 0), BorderBrush = SettingsWindow.Res("CardStrokeColorDefaultBrush") };
+        var tryBorder = new Border { Child = tryScroll, BorderThickness = new Thickness(1, 0, 0, 0), BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush") };
         Grid.SetColumn(tryBorder, 1);
         split.Children.Add(tryBorder);
         detail.Children.Add(split);
@@ -540,12 +652,12 @@ internal sealed class LibraryWindow : Window
 
     // MARK: 表单
 
-    private static TextBlock Caption(string text) => new() { Text = text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") };
+    private static TextBlock Caption(string text) => new() { Text = text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") };
 
     private static Border Card(UIElement child) => new()
     {
         Child = child, Padding = new Thickness(16, 12, 16, 14), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
-        Background = SettingsWindow.Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = SettingsWindow.Res("CardStrokeColorDefaultBrush"),
+        Background = SettingsView.Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = SettingsView.Res("CardStrokeColorDefaultBrush"),
     };
 
     private TextBox Field(string id, string header, string text, bool readOnly, Action<string> changed, string? placeholder = null, bool mono = false)
@@ -566,7 +678,7 @@ internal sealed class LibraryWindow : Window
         bool ro = ed.ReadOnly;
         var page = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 24) };
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("基本信息", "Basics")));
+        page.Children.Add(SettingsView.Section(Loc.T("基本信息", "Basics")));
         var basics = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
         basics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         basics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -579,7 +691,7 @@ internal sealed class LibraryWindow : Window
         Place(Field("lib_category", Loc.T("分类", "Category"), doc.Category, ro, v => ed.UpdateDoc(d => d.Category = v), Loc.T("如 编程、日常", "e.g. Coding, Daily")), 1, 1);
         page.Children.Add(Card(basics));
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("参数", "Parameters")));
+        page.Children.Add(SettingsView.Section(Loc.T("参数", "Parameters")));
         var paramsPanel = new StackPanel { Spacing = 6 };
         for (int i = 0; i < doc.Params.Count; i++) paramsPanel.Children.Add(ParamRow(ed, i));
         if (!ro)
@@ -604,7 +716,7 @@ internal sealed class LibraryWindow : Window
             "Parameter order determines the order in completion and the canonical form. At most one single- or multi-choice parameter can be positional (its values can be typed directly, e.g. r security).")));
         page.Children.Add(paramsPanel);
 
-        page.Children.Add(SettingsWindow.Section(Loc.T("正文", "Body")));
+        page.Children.Add(SettingsView.Section(Loc.T("正文", "Body")));
         var bodyBox = CodeBox(doc.Body, ro, "lib_body");
         bodyBox.MinHeight = 260;
         bodyBox.TextChanged += (_, _) => { if (!ro) ed.UpdateDoc(d => d.Body = EditorModel.Normalize(bodyBox.Text)); };
@@ -643,7 +755,7 @@ internal sealed class LibraryWindow : Window
         bool open = ed.SelectedParam == index;
         var title = new TextBlock { Text = ParamTitle(p), FontFamily = Theme.Mono, FontSize = 13, Foreground = new SolidColorBrush(new Theme(Application.Current.RequestedTheme == ApplicationTheme.Dark).Option) };
         paramTitles[index] = title;
-        var desc = new TextBlock { Text = p.Description, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush"), Margin = new Thickness(12, 0, 0, 0) };
+        var desc = new TextBlock { Text = p.Description, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = SettingsView.Res("TextFillColorSecondaryBrush"), Margin = new Thickness(12, 0, 0, 0) };
         var head = new StackPanel { Orientation = Orientation.Horizontal };
         head.Children.Add(title);
         head.Children.Add(desc);
@@ -851,7 +963,7 @@ internal sealed class LibraryWindow : Window
     {
         var p = ed.Doc!.Params[index];
         var sp = new StackPanel { Spacing = 6 };
-        sp.Children.Add(new TextBlock { Text = Loc.T("候选值", "Choices"), FontSize = 12, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
+        sp.Children.Add(new TextBlock { Text = Loc.T("候选值", "Choices"), FontSize = 12, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
         for (int i = 0; i < p.Choices.Count; i++)
         {
             int ci = i;
@@ -947,20 +1059,20 @@ internal sealed class LibraryWindow : Window
             foreach (var p in a.Params)
             {
                 var chip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-                chip.Children.Add(new TextBlock { Text = p.Name, FontFamily = Theme.Mono, FontSize = 11, Foreground = p.IsSet ? new SolidColorBrush(theme.Option) : SettingsWindow.Res("TextFillColorSecondaryBrush") });
+                chip.Children.Add(new TextBlock { Text = p.Name, FontFamily = Theme.Mono, FontSize = 11, Foreground = p.IsSet ? new SolidColorBrush(theme.Option) : SettingsView.Res("TextFillColorSecondaryBrush") });
                 chip.Children.Add(new TextBlock { Text = p.Display, FontSize = 11, FontWeight = p.IsSet ? FontWeights.SemiBold : FontWeights.Normal });
-                wrap.Children.Add(new Border { Child = chip, Padding = new Thickness(8, 3, 8, 3), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = SettingsWindow.Res("ControlStrokeColorDefaultBrush") });
+                wrap.Children.Add(new Border { Child = chip, Padding = new Thickness(8, 3, 8, 3), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = SettingsView.Res("ControlStrokeColorDefaultBrush") });
             }
             tryResults.Children.Add(wrap);
         }
         if (a.Canonical is { } c)
-            tryResults.Children.Add(new TextBlock { Text = c, FontFamily = Theme.Mono, FontSize = 11, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, Foreground = SettingsWindow.Res("TextFillColorTertiaryBrush") });
+            tryResults.Children.Add(new TextBlock { Text = c, FontFamily = Theme.Mono, FontSize = 11, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, Foreground = SettingsView.Res("TextFillColorTertiaryBrush") });
         if (a.Preview is { } pv)
         {
-            tryResults.Children.Add(new TextBlock { Text = Loc.T($"预览 · {pv.Chars} 字 · {pv.Lines} 行", $"Preview · {pv.Chars} chars · {pv.Lines} lines"), FontSize = 12, Foreground = SettingsWindow.Res("TextFillColorSecondaryBrush") });
+            tryResults.Children.Add(new TextBlock { Text = Loc.T($"预览 · {pv.Chars} 字 · {pv.Lines} 行", $"Preview · {pv.Chars} chars · {pv.Lines} lines"), FontSize = 12, Foreground = SettingsView.Res("TextFillColorSecondaryBrush") });
             var text = new TextBlock { Text = pv.Text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 13, LineHeight = 20 };
             AutomationProperties.SetAutomationId(text, "lib_preview");
-            tryResults.Children.Add(new Border { Child = text, Padding = new Thickness(10), CornerRadius = new CornerRadius(8), Background = SettingsWindow.Res("CardBackgroundFillColorDefaultBrush") });
+            tryResults.Children.Add(new Border { Child = text, Padding = new Thickness(10), CornerRadius = new CornerRadius(8), Background = SettingsView.Res("CardBackgroundFillColorDefaultBrush") });
         }
     }
 

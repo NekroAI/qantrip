@@ -127,7 +127,7 @@ internal sealed class SyncService
         catch (Exception e) { Log.Error("computer_name", e); }
         var v = Environment.OSVersion.Version;
         var platform = $"Windows {(v.Major == 10 && v.Build >= 22000 ? 11 : v.Major)} {v.Build}";
-        return new DeviceLabel(name, platform, UI.SettingsWindow.Version);
+        return new DeviceLabel(name, platform, UI.SettingsView.Version);
     }
 
     /// 锁屏 / 睡眠 / 显示器关闭（true）与恢复（false）。恢复后补一次检查。

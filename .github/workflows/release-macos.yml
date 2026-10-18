@@ -54,17 +54,24 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Rust 工具链
         run: rustup toolchain install stable --profile minimal
+      - name: 安装 Inno Setup（安装程序）
+        run: choco install innosetup -y --no-progress
       - name: 打包 Windows x64
         shell: pwsh
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File apps\windows\build.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 发布必须同时有安装程序与 zip
+          if (-not (Test-Path dist\windows\Qantrip-Windows-x64-Setup.exe)) { throw "没有生成安装程序" }
           $v = (Get-Content VERSION -Raw).Trim()
           Copy-Item dist\windows\Qantrip-Windows-x64.zip "dist\windows\Qantrip-$v-Windows-x64.zip"
+          Copy-Item dist\windows\Qantrip-Windows-x64-Setup.exe "dist\windows\Qantrip-$v-Windows-x64-Setup.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: qantrip-windows-x64
-          path: dist/windows/Qantrip-*-Windows-x64.zip
+          path: |
+            dist/windows/Qantrip-*-Windows-x64.zip
+            dist/windows/Qantrip-*-Windows-x64-Setup.exe
           if-no-files-found: error
 
   release:
@@ -84,9 +91,10 @@ jobs:
           # 固定文件名的副本：官网直链 releases/latest/download/Qantrip-macOS-<arch>.dmg 始终指向最新版本
           for arch in arm64 x86_64; do cp assets/Qantrip-*-"$arch".dmg "assets/Qantrip-macOS-$arch.dmg"; done
           cp assets/Qantrip-*-Windows-x64.zip assets/Qantrip-Windows-x64.zip
-          (cd assets && sha256sum *.dmg *.zip > SHA256SUMS.txt)
+          cp assets/Qantrip-*-Windows-x64-Setup.exe assets/Qantrip-Windows-x64-Setup.exe
+          (cd assets && sha256sum *.dmg *.zip *.exe > SHA256SUMS.txt)
           # 不标记为预发布：GitHub 的 releases/latest 不包含预发布版本
-          gh release create "$GITHUB_REF_NAME" assets/*.dmg assets/*.zip assets/SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" assets/*.dmg assets/*.zip assets/*.exe assets/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "Nekro Qantrip $GITHUB_REF_NAME" \
             --notes-file docs/install.md \

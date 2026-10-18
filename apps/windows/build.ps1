@@ -1,14 +1,16 @@
 ﻿# Nekro Qantrip Windows 构建脚本：Rust 核心（C ABI）+ WinUI 3 外壳 → 自包含目录。
 #
 # 用法（在仓库根目录或任意位置）：
-#   powershell -ExecutionPolicy Bypass -File apps\windows\build.ps1 [-Configuration Release|Debug] [-Out <目录>] [-SkipTests] [-NoZip]
+#   powershell -ExecutionPolicy Bypass -File apps\windows\build.ps1 [-Configuration Release|Debug] [-Out <目录>] [-SkipTests] [-NoZip] [-NoInstaller]
 # 产物：默认 dist\windows\Qantrip\Qantrip.exe（整个目录可直接拷走运行，无需安装 .NET 或 Windows App SDK），
-#       以及该目录的压缩包 dist\windows\Qantrip-Windows-x64.zip（解压后得到 Qantrip\ 文件夹）。
+#       该目录的压缩包 dist\windows\Qantrip-Windows-x64.zip（解压后得到 Qantrip\ 文件夹），
+#       以及安装程序 dist\windows\Qantrip-Windows-x64-Setup.exe（需要 Inno Setup 6.6+，没有安装时跳过）。
 param(
     [ValidateSet("Release", "Debug")] [string]$Configuration = "Release",
     [string]$Out = "",
     [switch]$SkipTests,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$NoInstaller
 )
 $ErrorActionPreference = "Continue"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -49,4 +51,24 @@ if (-not $NoZip) {
         [IO.Compression.ZipFile]::CreateFromDirectory($Out, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
     }
     Write-Host ("压缩包：{0}（{1:N1} MB）" -f $zip, ((Get-Item $zip).Length / 1MB))
+}
+
+# 安装程序（Inno Setup 6.6+，按用户安装）：找到 ISCC 时生成 Qantrip-Windows-x64-Setup.exe，否则跳过
+if (-not $NoInstaller) {
+    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+    if (-not $iscc) {
+        $candidates = @($env:LOCALAPPDATA, ${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ } |
+            ForEach-Object { Get-ChildItem (Join-Path $_ "Programs\Inno Setup *\ISCC.exe"), (Join-Path $_ "Inno Setup *\ISCC.exe") -ErrorAction SilentlyContinue }
+        $iscc = ($candidates | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+    }
+    if ($iscc) {
+        $setupDir = Split-Path -Parent $Out
+        $setup = Join-Path $setupDir "Qantrip-Windows-x64-Setup.exe"
+        Step "打包安装程序 Qantrip-Windows-x64-Setup.exe（$iscc）" {
+            if (Test-Path $setup) { Remove-Item $setup -Force }
+            & $iscc /Q "/DAppVersion=$version" "/DSourceDir=$Out" "/O$setupDir" (Join-Path $here "installer\Qantrip.iss")
+        }
+        Write-Host ("安装程序：{0}（{1:N1} MB）" -f $setup, ((Get-Item $setup).Length / 1MB))
+    }
+    else { Write-Host "==> 跳过安装程序：没有找到 Inno Setup 的 ISCC.exe（winget install JRSoftware.InnoSetup）" }
 }

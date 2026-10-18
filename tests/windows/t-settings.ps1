@@ -1,4 +1,4 @@
-﻿# 设置窗口：通过 UI 自动化操作控件（不点击鼠标），检查 settings.json 持久化、即时生效、快捷键录制与冲突、登录时启动，最后清理。
+﻿# 设置（模板库窗口中的设置页，顶部分段控件切换页面）：通过 UI 自动化操作控件（不点击鼠标），检查 settings.json 持久化、即时生效、快捷键录制与冲突、登录时启动，最后清理。
 . "$PSScriptRoot\drv.ps1"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type @"
@@ -47,6 +47,8 @@ function Choose($win, [string]$id, [string]$item) {
   if (-not $it) { $it = $A::RootElement.FindFirst($S::Descendants, (New-Object Windows.Automation.PropertyCondition($A::NameProperty, $item))) }
   (Pat $it ([Windows.Automation.SelectionItemPattern]::Pattern)).Select(); Start-Sleep -Milliseconds 500
 }
+# 切换设置页（general / insert / sync / privacy / about）
+function Page($win, [string]$name) { (Pat (El $win "nav_$name") ([Windows.Automation.SelectionItemPattern]::Pattern)).Select(); Start-Sleep -Milliseconds 400 }
 
 # 打开设置（已运行的实例收到 --settings 后打开设置窗口）
 Start-Process $App -ArgumentList "--settings"
@@ -56,15 +58,18 @@ Start-Sleep -Milliseconds 600
 Shot "settings-zh" 0 0 0 0 0.5
 
 # 插入方式 → 只复制；展开粘贴关；间隔 400；记录使用关
+Page $w "insert"
 Choose $w "insertMode" "只复制，手动粘贴"
 (Pat (El $w "expandInterval") ([Windows.Automation.RangeValuePattern]::Pattern)).SetValue(400); Start-Sleep -Milliseconds 300
 Toggle $w "expandPaste"
 "interval slider disabled with expand paste off: " + (-not (El $w "expandInterval").Current.IsEnabled)
+Page $w "privacy"
 Toggle $w "recordUsage"
 $j = J
 "after edits: copyOnly=$($j.copyOnly) expandPasteEnabled=$($j.expandPasteEnabled) expandPasteIntervalMs=$($j.expandPasteIntervalMs) recordUsage=$($j.recordUsage) futureKey.x=$($j.futureKey.x)"
 
 # 快捷键：录制 Alt+W（经 SendInput 的真实按键）
+Page $w "general"
 $rec = El $w "hotkeyRecorder"
 $rec.SetFocus(); (Pat $rec ([Windows.Automation.InvokePattern]::Pattern)).Invoke(); Start-Sleep -Milliseconds 300
 "recording label: " + (U $rec.Current.Name)
