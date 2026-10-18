@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-18
+
+### Added
+- Excluded apps: in apps you add to the list (Settings › General, or from the menu bar / tray menu), the shortcut isn't taken by Qantrip and reaches the app as usual.
+- Settings › Sync shows cloud storage usage and the devices signed in to your account, with name, system, version and when each was last seen. Release a device from any other one, including a lost one, when the account's device limit is reached.
+
+### Changed
+- Sync uses far fewer requests: an idle check is a single request, checks follow a schedule from the server and happen when you open the panel, and automatic uploads of local edits are spaced out; Sync now uploads immediately. Sync pauses while the screen is locked or the computer sleeps.
+- Signed-in sessions last 72 hours between token refreshes.
+
 ## [0.3.1] — 2026-10-18
 
 ### Added
@@ -50,7 +60,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.2
 [0.3.1]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.1
 [0.3.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.0
 [0.2.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.2.0
