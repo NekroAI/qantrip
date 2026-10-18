@@ -44,10 +44,8 @@ fn decode(data: &[u8]) -> BTreeMap<String, Vec<u8>> {
 /// GNOME 密钥环的 `session` 集合只保存在内存中，注销后丢失，不能用来保存设备密钥。
 fn persistent_collection<'a>(ss: &'a SecretService<'a>) -> Option<secret_service::blocking::Collection<'a>> {
     let is_session = |c: &secret_service::blocking::Collection| c.collection_path.as_str().ends_with("/session");
-    if let Ok(c) = ss.get_default_collection() {
-        if !is_session(&c) {
-            return Some(c);
-        }
+    if let Some(c) = ss.get_default_collection().ok().filter(|c| !is_session(c)) {
+        return Some(c);
     }
     ss.get_all_collections().ok()?.into_iter().find(|c| !is_session(c))
 }
