@@ -443,7 +443,9 @@ private struct UpdateSection: View {
                     switch updates.state {
                     case .checking: ProgressView().controlSize(.small)
                     case .upToDate: Text(L("已是最新版本", "You're up to date")).font(.caption).foregroundStyle(.secondary)
-                    case .failed: Text(L("检查失败，请稍后再试", "Couldn't check. Try again later.")).font(.caption).foregroundStyle(.red)
+                    case .failed:
+                        Text(L("检查失败", "Couldn't check")).font(.caption).foregroundStyle(.red)
+                        Link(L("前往下载页", "Open download page"), destination: URL(string: "https://qantrip.nekro.ai/download")!).font(.caption)
                     case .idle: EmptyView()
                     }
                 }

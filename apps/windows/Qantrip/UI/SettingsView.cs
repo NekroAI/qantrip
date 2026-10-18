@@ -263,7 +263,13 @@ internal sealed class SettingsView
                 actions.Children.Add(skip);
             }
         }
-        else if (u.Error is { } err) status = Loc.T($"当前版本 {Version}。无法检查更新：{err}", $"You're on version {Version}. Couldn't check for updates: {err}");
+        else if (u.Error is { } err)
+        {
+            status = Loc.T($"当前版本 {Version}。无法检查更新：{err}", $"You're on version {Version}. Couldn't check for updates: {err}");
+            var page = new Button { Content = Loc.T("前往下载页", "Open Download Page") };
+            page.Click += (_, _) => Windows.System.Launcher.LaunchUriAsync(new Uri("https://qantrip.nekro.ai/download")).AsTask().ContinueWith(_ => { });
+            actions.Children.Add(page);
+        }
         else if (u.UpToDate) status = Loc.T($"当前版本 {Version}，已是最新版本。", $"You're on version {Version}, the latest version.");
         else status = Loc.T($"当前版本 {Version}。", $"You're on version {Version}.");
         var check = new Button { Content = Loc.T("检查更新", "Check for Updates"), IsEnabled = !u.Checking };
@@ -274,8 +280,8 @@ internal sealed class SettingsView
         AutomationProperties.SetAutomationId(card, "updateStatus");
         updateHost.Children.Add(card);
         updateHost.Children.Add(Card("\uE823", Loc.T("自动检查更新", "Check for updates automatically"),
-            Loc.T("每天在后台检查一次 GitHub 上的正式版本，有新版本时在通知区域提示。不会自动下载或安装。",
-                "Checks GitHub for a new release once a day and lets you know in the notification area. Nothing is downloaded or installed automatically."),
+            Loc.T("每天在后台检查一次最新正式版本，有新版本时在通知区域提示。不会自动下载或安装。",
+                "Checks for a new release once a day and lets you know in the notification area. Nothing is downloaded or installed automatically."),
             Toggle("autoCheckUpdates", Settings.AutoCheckUpdates, v => Settings.AutoCheckUpdates = v)));
     }
 

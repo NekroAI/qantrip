@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-10-18
+
+### Fixed
+- Checking for updates works on networks where api.github.com is unreachable: the app asks qantrip.nekro.ai first (which caches the latest GitHub release) and falls back to GitHub. When the check fails, Settings › About links to the download page.
+
 ## [0.3.4] — 2026-10-18
 
 ### Fixed
@@ -88,7 +93,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.5
 [0.3.4]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.4
 [0.3.3]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.3
 [0.3.2]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.2

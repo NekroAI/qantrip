@@ -23,7 +23,11 @@ final class UpdateChecker {
 
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let d = UserDefaults.standard
-    private static let api = URL(string: "https://api.github.com/repos/NekroAI/qantrip/releases/latest")!
+    /// 优先查官网（服务端缓存 GitHub 的结果，国内网络也能访问），失败时直接查 GitHub
+    private static let sources = [
+        URL(string: "https://qantrip.nekro.ai/api/v1/update")!,
+        URL(string: "https://api.github.com/repos/NekroAI/qantrip/releases/latest")!,
+    ]
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
@@ -64,35 +68,51 @@ final class UpdateChecker {
     func check(manual: Bool) {
         guard state != .checking else { return }
         state = .checking
-        var req = URLRequest(url: Self.api, timeoutInterval: 15)
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        fetch(Self.sources[...], manual: manual)
+    }
+
+    /// 依次尝试各个来源；都失败时 state = .failed
+    private func fetch(_ sources: ArraySlice<URL>, manual: Bool) {
+        guard let url = sources.first else {
+            state = .failed
+            SpikeLog.event("update_check_failed", ["manual": manual])
+            return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("Qantrip/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: req) { data, response, _ in
             let ok = (response as? HTTPURLResponse)?.statusCode == 200
             let json = ok ? data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } : nil
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.finish(json, manual: manual) }
+                MainActor.assumeIsolated {
+                    if let release = Self.parse(json) {
+                        self.finish(release, manual: manual)
+                    } else {
+                        self.fetch(sources.dropFirst(), manual: manual)
+                    }
+                }
             }
         }.resume()
     }
 
-    private func finish(_ json: [String: Any]?, manual: Bool) {
-        guard let json, let tag = json["tag_name"] as? String,
-              json["draft"] as? Bool != true, json["prerelease"] as? Bool != true,
-              let page = (json["html_url"] as? String).flatMap(URL.init(string:))
-        else {
-            state = .failed
-            return
-        }
+    /// 解析官网接口（version / url）或 GitHub 接口（tag_name / html_url）的返回
+    private static func parse(_ json: [String: Any]?) -> Release? {
+        guard let json, json["draft"] as? Bool != true, json["prerelease"] as? Bool != true else { return nil }
+        let tag = (json["version"] as? String) ?? (json["tag_name"] as? String)
+        let page = ((json["url"] as? String) ?? (json["html_url"] as? String)).flatMap(URL.init(string:))
+        guard let tag, let page else { return nil }
+        return Release(version: tag.hasPrefix("v") ? String(tag.dropFirst()) : tag, url: page)
+    }
+
+    private func finish(_ latest: Release, manual: Bool) {
         d.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
-        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        SpikeLog.event("update_check", ["latest": version, "current": Self.currentVersion, "manual": manual])
-        if Self.isNewer(version, than: Self.currentVersion) {
-            let release = Release(version: version, url: page)
-            let isNew = available != release
-            available = release
+        SpikeLog.event("update_check", ["latest": latest.version, "current": Self.currentVersion, "manual": manual])
+        if Self.isNewer(latest.version, than: Self.currentVersion) {
+            let isNew = available != latest
+            available = latest
             state = .idle
-            if isNew, !manual, pending != nil { notify(release) }
+            if isNew, !manual, pending != nil { notify(latest) }
         } else {
             available = nil
             state = .upToDate

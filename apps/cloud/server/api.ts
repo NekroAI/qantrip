@@ -5,7 +5,7 @@ import {
 } from './auth.js'
 import { HttpError, safeReturnPath } from './http.js'
 import { HARD, policyOf } from './limits.js'
-import { downloadFile, latestRelease } from './releases.js'
+import { downloadFile, latestRelease, publicLatestRelease } from './releases.js'
 import {
   activeJoins, appendRoster, cancelJoin, changes, createJoin, createVault, envelopesFor, getJoin, isJoinStep,
   ownedVault, pendingJoins, postJoinStep, pushRecords, putEnvelope, raiseMinEpoch, rosterSince, vaultOf, type VaultRow,
@@ -35,6 +35,11 @@ const limit = async (c: Context<AppEnv>, kind: 'read' | 'write') => {
 
 api.get('/api/v1/health', (c) => c.json({ ok: true, env: c.env.QANTRIP_ENV }))
 api.get('/api/v1/releases/latest', async (c) => c.json(await latestRelease(c.env)))
+// 客户端检查更新：不需要登录，返回 GitHub 最新正式版本（服务端缓存）
+api.get('/api/v1/update', async (c) => {
+  const body = await publicLatestRelease(c.executionCtx)
+  return c.json(body, 200, { 'cache-control': 'public, max-age=600' })
+})
 api.get('/download/:file', (c) => downloadFile(c.env, c.req.param('file')))
 
 // MARK: 官网登录

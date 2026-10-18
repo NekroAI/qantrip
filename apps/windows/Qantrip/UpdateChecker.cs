@@ -16,10 +16,15 @@ internal sealed class UpdateChecker
 
     public sealed record Release(string Version, string Url);
 
-    private const string Api = "https://api.github.com/repos/NekroAI/qantrip/releases/latest";
+    /// 优先查官网（服务端缓存 GitHub 的结果，国内网络也能访问），失败时直接查 GitHub
+    private static readonly string[] Sources =
+    {
+        "https://qantrip.nekro.ai/api/v1/update",
+        "https://api.github.com/repos/NekroAI/qantrip/releases/latest",
+    };
     private static readonly TimeSpan LaunchMinInterval = TimeSpan.FromHours(12);
     private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
-    private static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     /// 比当前版本新的正式版本（含已跳过的版本）
     public Release? Available { get; private set; }
@@ -102,23 +107,36 @@ internal sealed class UpdateChecker
         }
     }
 
-    /// 最新的正式版本；仓库还没有正式版本（404）或最新的是草稿 / 预发布时为 null。
+    /// 最新的正式版本：依次尝试各个来源，全部失败时抛出最后一个错误。
     private static async Task<Release?> FetchLatest()
     {
-        using var req = new HttpRequestMessage(HttpMethod.Get, Api);
+        Exception? last = null;
+        foreach (var source in Sources)
+        {
+            try { return await FetchFrom(source); }
+            catch (Exception e) { last = e; }
+        }
+        throw last ?? new InvalidDataException("no source");
+    }
+
+    /// 官网接口返回 { version, url }；GitHub 接口返回 { tag_name, html_url, draft, prerelease }。
+    /// 仓库还没有正式版本（404）或最新的是草稿 / 预发布时为 null。
+    private static async Task<Release?> FetchFrom(string source)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, source);
         req.Headers.UserAgent.ParseAdd($"Qantrip/{Current}");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        req.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+        req.Headers.Accept.ParseAdd("application/json");
         using var resp = await http.SendAsync(req);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var root = doc.RootElement;
         static bool Flag(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+        static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         if (Flag(root, "draft") || Flag(root, "prerelease")) return null;
-        var tag = root.TryGetProperty("tag_name", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
-        var url = root.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
-        if (string.IsNullOrEmpty(tag) || Parse(tag) is null) throw new InvalidDataException("tag_name");
+        var tag = Str(root, "version") ?? Str(root, "tag_name");
+        var url = Str(root, "url") ?? Str(root, "html_url");
+        if (string.IsNullOrEmpty(tag) || Parse(tag) is null) throw new InvalidDataException("version");
         // 只打开 GitHub 上的发布页
         if (url is null || !url.StartsWith("https://github.com/", StringComparison.OrdinalIgnoreCase)) url = "https://github.com/NekroAI/qantrip/releases/latest";
         return new Release(tag.TrimStart('v', 'V'), url);
