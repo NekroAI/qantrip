@@ -709,10 +709,11 @@ internal sealed class LibraryWindow : Window
     {
         var t = new TextBox
         {
-            // WinUI 文本框以 \r 作换行：只有 \n 时开启自动换行后各行会连成一段
-            Text = text.Replace("\r\n", "\n").Replace('\n', '\r'), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
+            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono, FontSize = 13, IsReadOnly = readOnly,
             IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, VerticalAlignment = VerticalAlignment.Stretch,
         };
+        // 先设为多行再赋值文字：单行状态下赋值会丢掉第一个换行之后的内容（WinUI 文本框以 \r 作换行）
+        t.Text = text.Replace("\r\n", "\n").Replace('\n', '\r');
         // 长行自动换行（不出现横向滚动）
         ScrollViewer.SetHorizontalScrollBarVisibility(t, ScrollBarVisibility.Disabled);
         ScrollViewer.SetVerticalScrollBarVisibility(t, ScrollBarVisibility.Auto);
