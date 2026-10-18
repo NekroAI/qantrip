@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-19
+
 ### Changed
 - Release files have one consistent name per package: `Qantrip-<version>-<macOS|Windows|Linux>-<arm64|x64>`, e.g. `Qantrip-0.4.1-macOS-arm64.dmg`. Unversioned copies are gone; stable download links are now `qantrip.nekro.ai/dl/<platform>` (for example `/dl/macos-arm64`). The update notice in 0.4.0 and earlier on macOS, and 0.4.0 on Linux, can't download 0.4.1 directly — get it from the website instead.
 
@@ -118,7 +120,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/NekroAI/qantrip/releases/tag/v0.4.1
 [0.4.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.4.0
 [0.3.6]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.6
 [0.3.5]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.5
