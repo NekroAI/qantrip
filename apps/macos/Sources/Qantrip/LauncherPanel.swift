@@ -78,6 +78,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
     }
 
     func show(eventTime: TimeInterval, source: String) {
+        MainActor.assumeIsolated { SyncService.shared.panelOpened() }
         let t1 = ProcessInfo.processInfo.systemUptime
         let target = NSWorkspace.shared.frontmostApplication
         inputSource.engage()

@@ -173,11 +173,19 @@ final class SyncService {
     /// 刚创建保险库时的恢复短语，只显示一次
     var phrase: String?
     private(set) var lastReport: SyncReport?
+    /// 账号下已登录的设备（含未加入保险库、超出设备上限的）
+    private(set) var accountDevices: AccountDevices?
+    /// 设置窗口打开时为真：此时才轮询加入请求、刷新设备列表
+    var settingsVisible = false
 
     @ObservationIgnored private var client: SyncClient?
     @ObservationIgnored private var server = ""
     @ObservationIgnored private let queue = DispatchQueue(label: "ai.nekro.qantrip.sync")
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var pushTimer: Timer?
+    /// 屏幕锁定或休眠时暂停定时检查
+    @ObservationIgnored private var asleep = false
+    @ObservationIgnored private var observersInstalled = false
     @ObservationIgnored private var joinTimer: Timer?
     @ObservationIgnored private var pending: DispatchWorkItem?
     @ObservationIgnored private let receiver = LoopbackReceiver()
@@ -211,13 +219,65 @@ final class SyncService {
         joinRequests = []
         devices = []
         join = nil
+        accountDevices = nil
         timer?.invalidate()
-        // 每 5 分钟同步一次；面板唤起不触发任何网络请求（local-first）
-        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
-            MainActor.assumeIsolated { SyncService.shared.syncInBackground() }
+        // 每分钟让核心判断一次是否到期；没到期时不发任何请求（间隔由服务端下发的同步策略决定）
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { SyncService.shared.trigger(.timer) }
         }
+        installObservers()
         refresh()
-        syncInBackground()
+        trigger(.launch)
+    }
+
+    /// 锁屏 / 休眠时暂停，解锁 / 唤醒后补一次检查
+    private func installObservers() {
+        guard !observersInstalled else { return }
+        observersInstalled = true
+        let ws = NSWorkspace.shared.notificationCenter
+        let dist = DistributedNotificationCenter.default()
+        let sleep: (Notification) -> Void = { _ in MainActor.assumeIsolated { SyncService.shared.asleep = true } }
+        let wake: (Notification) -> Void = { _ in
+            MainActor.assumeIsolated {
+                SyncService.shared.asleep = false
+                SyncService.shared.trigger(.wake)
+            }
+        }
+        ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: sleep)
+        ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main, using: sleep)
+        ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: wake)
+        ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main, using: wake)
+        dist.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main, using: sleep)
+        dist.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main, using: wake)
+    }
+
+    /// 按触发原因交给核心判断是否同步（docs/sync-design.md v0.4）；没到期时核心不发请求。
+    func trigger(_ trigger: SyncTrigger) {
+        guard signedIn, enrolled || status?.deviceLimit != nil else { return }
+        if asleep && trigger == .timer { return }
+        run(nil, { try $0.maybeSync(trigger: trigger) }) { report in
+            if let report {
+                self.lastReport = report
+                if report.pulled > 0 || report.conflicts > 0 { self.onChange?() }
+            }
+            self.schedulePush()
+            if (self.status?.pendingJoins ?? 0) > 0 || self.settingsVisible { self.pollJoinRequests() }
+        }
+    }
+
+    /// 本地修改被节流时，在核心给出的时间点再试一次自动上传
+    private func schedulePush() {
+        pushTimer?.invalidate()
+        guard let at = status?.nextPushAt else { return }
+        let delay = max(1, TimeInterval(at) - Date().timeIntervalSince1970 + 1)
+        pushTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated { SyncService.shared.trigger(.localChange) }
+        }
+    }
+
+    /// 唤出面板时调用：距上次检查足够久时在后台检查一次，面板不等待
+    func panelOpened() {
+        trigger(.panelOpened)
     }
 
     /// 在后台线程执行一个核心调用。`label` 显示为进行中的操作。
@@ -241,32 +301,34 @@ final class SyncService {
         }
     }
 
-    /// 读取服务端信息：是否有保险库、在册设备、加入请求。
+    /// 读取服务端信息：是否有保险库、在册设备；设置窗口打开时再读账号设备与加入请求。
     func refresh() {
         guard let status = client?.status(), status.signedIn else { return }
         if !status.hasVault {
             run(nil, { try $0.remoteVaultExists() }) { self.remoteVault = $0 }
         } else {
             run(nil, { try $0.devices() }) { self.devices = $0 }
-            run(nil, { try $0.listJoinRequests() }) { self.joinRequests = $0 }
         }
+        if settingsVisible || status.deviceLimit != nil { loadAccountDevices() }
     }
 
-    /// 静默同步：失败不打扰用户（状态里会有告警）。
-    func syncInBackground() {
-        guard enrolled else { return }
-        run(nil, { try $0.syncNow() }) { report in
-            self.lastReport = report
-            if report.pulled > 0 || report.conflicts > 0 { self.onChange?() }
+    func loadAccountDevices() {
+        run(nil, { try $0.accountDevices() }) { self.accountDevices = $0 }
+    }
+
+    /// 解除一台设备的登录（超出设备上限时，或旧设备已丢失）
+    func release(_ device: AccountDevice) {
+        run(L("正在解除…", "Releasing…"), { try $0.releaseDevice(grantId: device.grantId) }) { _ in
             self.refresh()
+            if !device.isSelf { self.trigger(.manual) }
         }
     }
 
-    /// 模板目录变化后稍等片刻再同步，合并连续的保存。
+    /// 模板目录变化后稍等片刻，合并连续的保存，再交给核心按上传间隔决定是否上传。
     func scheduleSync() {
         guard enrolled else { return }
         pending?.cancel()
-        let work = DispatchWorkItem { MainActor.assumeIsolated { SyncService.shared.syncInBackground() } }
+        let work = DispatchWorkItem { MainActor.assumeIsolated { SyncService.shared.trigger(.localChange) } }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
     }
@@ -292,7 +354,7 @@ final class SyncService {
                     self.run(L("正在登录…", "Signing in…"), { try $0.finishSignIn(code: code, state: state) }) { _ in
                         NSApp.activate()
                         self.refresh()
-                        self.syncInBackground()
+                        self.trigger(.launch)
                     }
                 case let .failure(e):
                     self.working = nil
@@ -487,5 +549,5 @@ final class SyncService {
     }
 
     /// 菜单栏提示：有设备等待加入
-    var pendingJoinCount: Int { joinRequests.filter { $0.status != .handledElsewhere }.count }
+    var pendingJoinCount: Int { max(Int(status?.pendingJoins ?? 0), joinRequests.filter { $0.status != .handledElsewhere }.count) }
 }

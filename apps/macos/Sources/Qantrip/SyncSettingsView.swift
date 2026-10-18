@@ -27,6 +27,8 @@ struct SyncSettings: View {
 
             if !sync.signedIn {
                 SignedOut()
+            } else if let max = sync.status?.deviceLimit {
+                DeviceLimitSection(max: max)
             } else if !(sync.status?.hasVault ?? false) {
                 NoVault()
             } else {
@@ -55,13 +57,15 @@ struct SyncSettings: View {
             PhraseSheet(phrase: sync.phrase ?? "") { sync.phrase = nil }
         }
         .onAppear {
+            sync.settingsVisible = true
             sync.start()
             sync.refresh()
         }
+        .onDisappear { sync.settingsVisible = false }
         .task {
-            // 设置页打开期间，较快地刷新加入请求
+            // 设置页打开期间刷新加入请求（关闭后只在服务端报告有待处理请求时才查）
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(4))
+                try? await Task.sleep(for: .seconds(6))
                 sync.pollJoinRequests()
             }
         }
@@ -205,6 +209,7 @@ private struct Enrolled: View {
     @State private var phraseFor: DeviceInfo?
     @State private var phrase = ""
     @State private var confirmReset = false
+    @State private var releaseTarget: AccountDevice?
 
     var body: some View {
         let status = sync.status
@@ -226,6 +231,13 @@ private struct Enrolled: View {
                 } else {
                     Text(L("尚未同步", "Not yet")).foregroundStyle(.secondary)
                 }
+            }
+            if let usage = status?.usage {
+                UsageRow(usage: usage)
+            }
+            if let at = status?.nextPushAt {
+                Text(L("本地修改将在 \(Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .omitted, time: .shortened)) 自动上传；点「立即同步」可马上上传。", "Local changes upload automatically at \(Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .omitted, time: .shortened)). Click Sync Now to upload right away."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let report = sync.lastReport, report.conflicts > 0 {
                 Text(L("有 \(report.conflicts) 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", "\(report.conflicts) template(s) changed on two Macs at once. Both versions were kept; merge them in the template library."))
@@ -294,20 +306,36 @@ private struct Enrolled: View {
         }
 
         Section(L("设备", "Devices")) {
-            ForEach(sync.devices, id: \.deviceId) { d in
-                HStack {
-                    Image(systemName: "laptopcomputer")
-                    Text(d.isSelf ? L("这台 Mac", "This Mac") : L("设备 \(d.rosterIndex)", "Device \(d.rosterIndex)"))
-                    Text(String(d.deviceId.prefix(8))).font(.caption.monospaced()).foregroundStyle(.secondary)
-                    Spacer()
-                    if !d.isSelf {
-                        Button(L("移除", "Remove"), role: .destructive) { confirmRevoke = d }
+            if let account = sync.accountDevices {
+                ForEach(account.devices, id: \.grantId) { d in
+                    AccountDeviceRow(device: d, onRelease: { releaseTarget = d })
+                }
+                // 已退出登录、但仍在保险库中的设备：建议从保险库移除并轮换密钥
+                ForEach(sync.devices.filter { r in !r.isSelf && !account.devices.contains { $0.deviceId == r.deviceId } }, id: \.deviceId) { d in
+                    HStack {
+                        Image(systemName: "laptopcomputer.slash").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L("已退出登录的设备", "Signed-out device"))
+                            Text(L("仍在保险库中。建议移除并轮换密钥。", "Still in the vault. Removing it rotates the keys.")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L("从保险库移除", "Remove from Vault"), role: .destructive) { confirmRevoke = d }
                             .disabled(sync.working != nil)
                     }
                 }
+                Text(L("这个账号最多同时登录 \(account.maxDevices) 台设备。要添加设备，在新设备上登录同一个账号并按提示操作。", "This account can be signed in on up to \(account.maxDevices) devices. To add one, sign in with the same account on it and follow the steps."))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ProgressView().controlSize(.small)
             }
-            Text(L("要添加设备，在新的 Mac 上登录同一个账号，按提示操作。", "To add a Mac, sign in with the same account on it and follow the steps."))
-                .font(.caption).foregroundStyle(.secondary)
+        }
+        .confirmationDialog(L("解除这台设备？", "Release this device?"), isPresented: Binding(get: { releaseTarget != nil }, set: { if !$0 { releaseTarget = nil } })) {
+            Button(L("解除", "Release"), role: .destructive) {
+                if let d = releaseTarget { sync.release(d) }
+                releaseTarget = nil
+            }
+        } message: {
+            Text(L("它会退出登录，无法再上传或下载。如果它还在保险库中，之后可以在这里把它移除并轮换密钥。", "It will be signed out and can no longer upload or download. If it is still in the vault, you can then remove it here, which rotates the keys."))
         }
 
         Section {
@@ -390,5 +418,118 @@ private struct PhraseSheet: View {
         .padding(22)
         .frame(width: 520)
         .interactiveDismissDisabled()
+    }
+}
+
+
+/// 云同步用量
+private struct UsageRow: View {
+    let usage: SyncUsage
+
+    var body: some View {
+        let quota = max(Double(usage.quotaBytes), 1)
+        let ratio = min(Double(usage.bytes) / quota, 1)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(L("云端用量", "Cloud storage"))
+                Spacer()
+                Text("\(formatBytes(usage.bytes)) / \(formatBytes(usage.quotaBytes))").monospacedDigit().foregroundStyle(.secondary)
+            }
+            ProgressView(value: ratio).tint(ratio > 0.9 ? .red : ratio > 0.75 ? .orange : .accentColor)
+            if ratio >= 1 {
+                Text(L("云端空间已满：新的修改不会上传，本地模板不受影响。可以删除不用的模板腾出空间。", "Cloud storage is full: new changes won't upload; local templates are unaffected. Delete unused templates to free space."))
+                    .font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+func formatBytes(_ n: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
+}
+
+/// 账号下的一台设备：名称、系统、版本、上次在线
+private struct AccountDeviceRow: View {
+    let device: AccountDevice
+    let onRelease: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Image(systemName: device.platform.lowercased().hasPrefix("windows") ? "pc" : "laptopcomputer")
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(device.name.isEmpty ? L("未命名设备", "Unnamed device") : device.name)
+                    if device.isSelf { Tag(text: L("本机", "This device")) }
+                    if device.limited { Tag(text: L("超出上限", "Over limit"), color: .orange) }
+                    // 本机没有保险库状态时无法判断其他设备是否在保险库中
+                    else if !device.inVault && SyncService.shared.enrolled { Tag(text: L("未加入保险库", "Not in vault"), color: .secondary) }
+                }
+                Text(details).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(device.isSelf ? L("退出登录", "Sign Out") : L("解除", "Release"), role: .destructive, action: onRelease)
+                .buttonStyle(.borderless)
+        }
+    }
+
+    private var details: String {
+        var parts = [String]()
+        if !device.platform.isEmpty { parts.append(device.platform) }
+        if !device.appVersion.isEmpty { parts.append("Qantrip \(device.appVersion)") }
+        let seen = Date(timeIntervalSince1970: TimeInterval(device.lastSeenAt))
+        let f = RelativeDateTimeFormatter()
+        f.locale = Foundation.Locale(identifier: AppSettings.shared.uiLocale == .zh ? "zh_CN" : "en_US")
+        parts.append(L("上次在线 ", "Last seen ") + f.localizedString(for: seen, relativeTo: Date()))
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct Tag: View {
+    let text: String
+    var color: Color = .accentColor
+
+    var body: some View {
+        Text(text).font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(color.opacity(0.18), in: Capsule())
+    }
+}
+
+/// 本机超出设备上限：列出账号下的设备，解除一台后本机即可同步。可以在新设备上直接解除已丢失的旧设备。
+private struct DeviceLimitSection: View {
+    let max: UInt32
+    private var sync = SyncService.shared
+    @State private var target: AccountDevice?
+
+    init(max: UInt32) { self.max = max }
+
+    var body: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(L("这个账号最多同时在 \(max) 台设备上同步", "This account can sync on up to \(max) devices at a time"), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).font(.headline)
+                Text(L("解除下面任意一台设备后，这台设备就可以同步。旧设备丢失或无法再使用时，也可以在这里直接解除它。", "Release any device below and this one can sync. If an old device is lost or unusable, you can release it right here."))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+            if let account = sync.accountDevices {
+                ForEach(account.devices.filter { !$0.isSelf }, id: \.grantId) { d in
+                    AccountDeviceRow(device: d, onRelease: { target = d })
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Button(L("退出登录", "Sign out")) { sync.signOut() }
+        }
+        .onAppear { sync.loadAccountDevices() }
+        .confirmationDialog(L("解除这台设备？", "Release this device?"), isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } })) {
+            Button(L("解除", "Release"), role: .destructive) {
+                if let d = target { sync.release(d) }
+                target = nil
+            }
+        } message: {
+            Text(L("它会退出登录，无法再上传或下载。", "It will be signed out and can no longer upload or download."))
+        }
     }
 }
