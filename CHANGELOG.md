@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-18
+
+### Added
+- Delete any template, including built-in ones: `/rm name` or Delete in the template library. Deleting a built-in frees its name and aliases for your own templates; bring it back with `/restore name` or from the library's Deleted group. `/restore` also discards your changes to a built-in.
+
+### Changed
+- Windows: the default shortcut is now Ctrl+Q, the same as ⌃Q on macOS. Change it in Settings if another app needs Ctrl+Q.
+
 ## [0.3.0] — 2026-10-18
 
 ### Added
@@ -42,7 +50,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.1
 [0.3.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.0
 [0.2.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.2.0
 [0.1.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.1.0
