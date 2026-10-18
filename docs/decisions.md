@@ -318,11 +318,12 @@
   - **前台应用：** X11 读取 `_NET_ACTIVE_WINDOW` 与 `WM_CLASS`；KDE Plasma（Wayland）加载一个 KWin 脚本，窗口激活时经 D-Bus 回调 `resourceClass`（app_id），退出时卸载；GNOME（Wayland）取不到，排除列表无效并在设置中说明。Wayland 下快捷键由系统持有，按键不能像 X11（XUngrabKey）那样原样交给被排除的应用，只是不打开面板。
   - **输入法（D9）：** Fcitx5 经 D-Bus `Controller1.Deactivate` 让面板输入框回到英文（状态按输入上下文保存，原应用不受影响）；IBus 的引擎是全局的，面板打开时切到对应的 xkb 引擎、关闭时切回（GNOME 的输入源指示器随之更新）。组字期间不解析、不处理回车与方向键；组字结束时补发一次解析。GNOME 用 Super+空格切换输入源时，切换器会短暂取得焦点，面板的失焦关闭因此延迟约 0.2 秒再确认。
   - **渲染器：** 默认使用 GTK 的 Cairo 渲染器（未设置 `GSK_RENDERER` 时）：没有 GPU 的机器上 GL / Vulkan 渲染器经软件实现常驻 300MB 以上，Cairo 约 140–200MB；启动其他程序时去掉这个环境变量。
-  - **同步密钥：** 全部密钥合成一个 Secret Service 条目（GNOME 密钥环、KWallet），与 macOS 合成一个钥匙串条目对应；系统没有可用的 Secret Service 时回退为仅本用户可读的文件（0600），设置 › 同步中说明。一旦选定后端就固定使用，避免密钥分散。
+  - **同步密钥：** 全部密钥合成一个 Secret Service 条目（GNOME 密钥环、KWallet），与 macOS 合成一个钥匙串条目对应；系统没有可持久保存的密钥环时回退为仅本用户可读的文件（0600），设置 › 同步中说明。GNOME 密钥环的 `session` 集合只在内存中、注销即丢失，不算可用（自动登录、没有登录密钥环时就是这种情况）。一旦选定后端就固定使用，避免密钥分散。
   - **提示（HUD）：** 用桌面通知（`org.freedesktop.Notifications`，transient），不抢焦点。不能附加 `desktop-entry` 提示，也不能用低优先级：GNOME 在这两种情况下都不弹出横幅。
   - **托盘：** StatusNotifierItem（ksni）。GNOME 的 AppIndicator 扩展不按自带主题路径加载图标，改为提供像素图；没有托盘宿主时应用照常运行，从应用菜单再次打开 Qantrip 即进入模板库与设置。
   - **打包：** AppImage、.deb、.rpm（`scripts/package-linux.sh`），x86_64 与 aarch64 在 GitHub Actions 的 ubuntu-24.04 / ubuntu-24.04-arm 上构建。AppImage 不内置 GTK / libadwaita：内置后系统的输入法模块与主题、门户集成都会失效。因此三种包都要求系统提供 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 及更新）。更新提示的“下载”按安装方式（AppImage / deb / rpm）与架构直接下载对应文件。
-- **验证：** 在 Ubuntu 26.04 ARM64 虚拟机（GNOME 50、KDE Plasma 6.6，含 Plasma X11 会话，IBus 智能拼音与 Fcitx5 拼音）中实测；同步登录需要浏览器中的 GitHub 授权，留给负责人。
+- **验证：** 在 Ubuntu 26.04 ARM64 虚拟机（GNOME 50、KDE Plasma 6.6，含 Plasma X11 会话，IBus 智能拼音与 Fcitx5 拼音）中实测；以 Ubuntu 24.04 的 GTK 4.14 / libadwaita 1.5 构建、测试并打包通过（与 CI 相同的最低版本）。同步全部流程在本地测试服务端上与命令行设备（`sync_cli`）互相验证；真实的 GitHub 登录需要浏览器授权，留给负责人。
+- **资源（release，虚拟机内无 GPU）：** 空闲常驻约 100MB（匿名内存约 50MB），多次唤起后约 165MB；处理唤起到面板显示 7–24ms（启动后首次约 90ms）；二进制 9MB，AppImage 6MB。
 - **调试钩子：** 与 macOS 的 QANTRIP_DEBUG_HOOKS 对应，只编译进 debug 构建且打开 `debug-hooks` 特性时、运行中的实例以 `QANTRIP_DEBUG_HOOKS=1` 启动才生效（`qantrip debug …`），release 构建不包含。
 
 ---
