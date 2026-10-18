@@ -234,7 +234,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
                 client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             } else {
                 let pb = NSPasteboard.general
-                pb.clearContents()
+                pb.prepareForNewContents(with: .currentHostOnly)
                 pb.setString(text, forType: .string)
                 NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
             }

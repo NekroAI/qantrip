@@ -295,14 +295,20 @@ private struct PrivacySettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle(L("记录使用习惯", "Record usage"), isOn: $settings.recordUsage)
+                Toggle(isOn: $settings.recordUsage) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("记录使用习惯（仅本机）", "Remember what I use (this Mac only)"))
+                        Text(L("用于排序，不会上传，也不参与同步", "Used for ordering. Never uploaded or synced."))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Button(cleared ? L("已清除", "Cleared") : L("清除使用记录", "Clear Usage History")) {
                     AppServices.shared.engine.clearUsage()
                     cleared = true
                 }
                 .disabled(cleared)
             } footer: {
-                Text(L("用于首屏的「最近施放」和「常用」排序，以及按应用区分常用模板。只记录模板名和参数，不记录附加要求和生成的 Prompt，数据只保存在本机。", "Used for “Recent” and “Frequent” ordering on the start screen, and to tell which templates you use in which app. Only template names and parameters are recorded, never extra instructions or generated prompts. Data stays on this Mac."))
+                Text(L("这是纯本地功能：用于首屏的「最近施放」和「常用」排序，以及按应用区分常用模板。只记录模板名、参数和使用时所在的应用，不记录附加要求和生成的 Prompt。记录保存在本机的 usage.json 中，不会上传到任何服务器，也不会随云同步传到其他设备；关闭后不再记录，清除后立即删除。", "This is local only: it orders “Recent” and “Frequent” on the start screen and tells which templates you use in which app. Only template names, parameters and the app you used them in are recorded — never extra instructions or generated prompts. The record lives in usage.json on this Mac, is never uploaded to any server and is not part of sync. Turn it off to stop recording; Clear deletes it immediately."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

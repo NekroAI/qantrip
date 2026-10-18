@@ -439,11 +439,13 @@ private struct SidebarRow: View {
     let entry: TemplateEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
                 Text(entry.name).font(.qMono(13, weight: 600))
-                if !entry.aliases.isEmpty {
-                    Text(entry.aliases.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                ForEach(entry.aliases.prefix(2), id: \.self) { a in
+                    Text(a).font(.qMono(10)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 4).padding(.vertical, 0.5)
+                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 3))
                 }
                 if entry.overridesBuiltin {
                     Text(L("已自定义", "Customized")).font(.system(size: 9, weight: .semibold))
@@ -452,10 +454,10 @@ private struct SidebarRow: View {
                 }
             }
             if !entry.description.isEmpty {
-                Text(entry.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(entry.description).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 }
 
@@ -490,16 +492,19 @@ struct EditorView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Picker("", selection: $editor.mode) {
-                    Text(L("表单", "Form")).tag(EditorModel.Mode.form)
-                    Text(L("源码", "Source")).tag(EditorModel.Mode.source)
+                    Label(L("表单", "Form"), systemImage: "list.bullet.rectangle").tag(EditorModel.Mode.form)
+                    Label(L("源码", "Source"), systemImage: "chevron.left.forwardslash.chevron.right").tag(EditorModel.Mode.source)
                 }
                 .pickerStyle(.segmented).fixedSize()
+                .help(L("表单 / 源码", "Form / Source"))
             }
             ToolbarItem(placement: .primaryAction) {
-                Button(L("保存", "Save")) { editor.save() }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(!editor.canSave)
-                    .buttonStyle(.borderedProminent)
+                Button { editor.save() } label: {
+                    Label(L("保存", "Save"), systemImage: editor.dirty ? "checkmark.circle.fill" : "checkmark.circle")
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!editor.canSave)
+                .help(L("保存（⌘S）", "Save (⌘S)"))
             }
         }
     }
@@ -549,6 +554,14 @@ private struct FormEditor: View {
                                    description: Text(L("请在「源码」中修正格式错误后再使用表单。", "Fix the errors in Source before using the form.")))
         } else {
             Form {
+                if editor.readOnly, let d = editor.doc {
+                    Section(L("基本信息", "Basics")) {
+                        LabeledContent(L("名称", "Name")) { Text(d.name).font(.qMono(13)).textSelection(.enabled) }
+                        LabeledContent(L("别名", "Aliases")) { Text(d.aliases.isEmpty ? "—" : d.aliases.joined(separator: ", ")).font(.qMono(13)) }
+                        LabeledContent(L("描述", "Description")) { Text(d.description) }
+                        LabeledContent(L("分类", "Category")) { Text(d.category.isEmpty ? "—" : d.category) }
+                    }
+                } else {
                 Section(L("基本信息", "Basics")) {
                     TextField(L("名称", "Name"), text: bind({ $0.name }, { $0.name = $1 })).font(.qMono(13))
                     TextField(L("别名", "Aliases"), text: bind({ $0.aliases.joined(separator: ", ") },
@@ -557,7 +570,7 @@ private struct FormEditor: View {
                     TextField(L("描述", "Description"), text: bind({ $0.description }, { $0.description = $1 }))
                     TextField(L("分类", "Category"), text: bind({ $0.category }, { $0.category = $1 }), prompt: Text(L("如 编程、日常", "e.g. Coding, Daily")))
                 }
-                .disabled(editor.readOnly)
+                }
                 ParamsSection(editor: editor)
                 Section {
                     CodeEditor(text: bind({ $0.body }, { $0.body = $1 }), editable: !editor.readOnly)
@@ -793,17 +806,25 @@ private struct TryPanel: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(L("试用", "Try it")).font(.headline)
-            TextField(L("输入命令试用，如 \(editor.check.name ?? "r") --strict 附加要求", "Type a command to try, e.g. \(editor.check.name ?? "r") --strict extra instructions"), text: $editor.tryInput)
-                .font(.qMono(13)).textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L("试用", "Try it")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+                TextField("", text: $editor.tryInput, prompt: Text(L("输入命令试用，如 \(editor.check.name ?? "r") --strict", "Try a command, e.g. \(editor.check.name ?? "r") --strict")))
+                    .font(.qMono(13)).textFieldStyle(.plain)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.18)))
+            }
             if !editor.check.problems.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(editor.check.problems, id: \.self) { p in
                         Label(p, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.callout)
                             .textSelection(.enabled)
                     }
                 }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             } else if let a = editor.check.analysis {
                 if let e = a.diagnostics.first(where: { $0.severity == .error }) {
                     Label(e.message, systemImage: "exclamationmark.circle").foregroundStyle(.orange).font(.callout)
@@ -814,18 +835,27 @@ private struct TryPanel: View {
                             HStack(spacing: 4) {
                                 Text(p.name).font(.qMono(11)).foregroundStyle(p.isSet ? Color.qOption : .secondary)
                                 Text(p.display).font(.system(size: 11, weight: p.isSet ? .semibold : .regular))
+                                    .foregroundStyle(p.isSet ? .primary : .secondary)
                             }
                             .padding(.horizontal, 8).padding(.vertical, 3)
-                            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.3)))
+                            .background(p.isSet ? AnyShapeStyle(Color.qAccent.opacity(0.16)) : AnyShapeStyle(.clear), in: Capsule())
+                            .overlay(Capsule().strokeBorder(p.isSet ? Color.qAccent.opacity(0.4) : Color.secondary.opacity(0.25)))
                         }
                     }
                 }
-                if let c = a.canonical { Text(c).font(.qMono(11)).foregroundStyle(.tertiary).textSelection(.enabled) }
                 if let p = a.preview {
-                    Text(L("预览 · \(p.chars) 字 · \(p.lines) 行", "Preview · \(p.chars) chars · \(p.lines) lines")).font(.caption).foregroundStyle(.secondary)
-                    Text(p.text).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                        .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(L("预览", "Preview")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+                            Spacer()
+                            Text(L("\(p.chars) 字 · \(p.lines) 行", "\(p.chars) chars · \(p.lines) lines")).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                        }
+                        Text(p.text).font(.system(size: 13)).lineSpacing(4).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+                    }
                 }
             }
         }

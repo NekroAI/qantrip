@@ -77,7 +77,8 @@ final class Inserter {
             let snapshot = snapshotPasteboard()
             let snapshotMs = SpikeLog.ms(ProcessInfo.processInfo.systemUptime - t0)
 
-            pb.clearContents()
+            // 只在本机有效：不经通用剪贴板同步到 iPhone 等设备（否则手机会提示"从 Mac 拷贝"）
+            pb.prepareForNewContents(with: .currentHostOnly)
             let item = NSPasteboardItem()
             item.setString(text, forType: .string)
             for t in Self.markerTypes { item.setData(Data(), forType: t) }
@@ -130,7 +131,8 @@ final class Inserter {
     /// 恢复原剪贴板。附加 TransientType：这次写入只是"还原"，不是用户的新复制，
     /// 剪贴板管理器据此不会重复记录或把原内容顶到最前（不加 ConcealedType，原内容本身并非机密）。
     private func restore(_ snapshot: [[NSPasteboard.PasteboardType: Data]]) {
-        pb.clearContents()
+        // 只在本机有效：不经通用剪贴板同步到 iPhone 等设备（否则手机会提示"从 Mac 拷贝"）
+        pb.prepareForNewContents(with: .currentHostOnly)
         guard !snapshot.isEmpty else { return }
         let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
         let items = snapshot.map { dict -> NSPasteboardItem in

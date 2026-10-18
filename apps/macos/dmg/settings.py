@@ -11,7 +11,7 @@ symlinks = {"Applications": "/Applications"}
 icon_locations = {os.path.basename(app): (170, 190), "Applications": (490, 190)}
 
 background = defines["background"]  # noqa: F821
-window_rect = ((200, 160), (660, 400))
+window_rect = ((200, 140), (660, 472))
 default_view = "icon-view"
 show_toolbar = False
 show_status_bar = False

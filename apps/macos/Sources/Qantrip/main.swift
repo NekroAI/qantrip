@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.engine.setLocale(ui: settings.uiLocale, templates: settings.templateLocale)
             LibraryWindow.model.reload()
+            self.setupMainMenu()
             NotificationCenter.default.post(name: AppSettings.languageChanged, object: nil)
         }
         hotKey = HotKey(settings.hotKey)
@@ -40,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppServices.shared = AppServices(engine: engine, hotKey: hotKey, launcher: launcher, templatesDir: Self.templatesDir)
 
         setupStatusItem()
+        setupMainMenu()
         watchTemplates()
         SyncService.shared.onChange = { [weak self] in
             self?.engine.reload()
@@ -68,6 +70,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.onboardingDone {
             Onboarding.show()
         }
+    }
+
+    /// 标准主菜单：设置、模板库等窗口里的 ⌘A / ⌘C / ⌘V / ⌘X / ⌘Z / ⌘W 等快捷键都依赖它分发
+    private func setupMainMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let app = NSMenu()
+        app.addItem(withTitle: L("关于 Qantrip", "About Qantrip"), action: #selector(openAbout), keyEquivalent: "").target = self
+        app.addItem(.separator())
+        app.addItem(withTitle: L("设置…", "Settings…"), action: #selector(openSettings), keyEquivalent: ",").target = self
+        app.addItem(withTitle: L("模板库", "Template Library"), action: #selector(openLibrary), keyEquivalent: "l").target = self
+        app.addItem(.separator())
+        app.addItem(withTitle: L("隐藏 Qantrip", "Hide Qantrip"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        app.addItem(withTitle: L("退出 Qantrip", "Quit Qantrip"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = app
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: L("编辑", "Edit"))
+        edit.addItem(withTitle: L("撤销", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: L("重做", "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: L("剪切", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("拷贝", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("粘贴", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("全选", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: L("查找…", "Find…"), action: #selector(NSResponder.performTextFinderAction(_:)), keyEquivalent: "f").tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: L("窗口", "Window"))
+        window.addItem(withTitle: L("关闭", "Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        window.addItem(withTitle: L("最小化", "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.windowsMenu = window
+        NSApp.mainMenu = main
+    }
+
+    @objc private func openAbout() {
+        LibraryWindow.showSettings(.about)
     }
 
     private func setupStatusItem() {
