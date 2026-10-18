@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-10-18
+
+### Fixed
+- macOS: ⌘A, ⌘C, ⌘V, ⌘X, ⌘Z and other editing shortcuts work in the template library and settings.
+- macOS: the DMG window is tall enough that the install hint isn't covered.
+- macOS: prompts written to the clipboard during insertion stay on this Mac (not sent to other devices via Universal Clipboard).
+
+### Changed
+- macOS template library: icon Save button and Form / Source switch, cleaner sidebar and Try pane.
+- Settings › Privacy explains that usage recording is local only and never uploaded or synced.
+
 ## [0.3.3] — 2026-10-18
 
 ### Added
@@ -76,7 +87,8 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.4
 [0.3.3]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.3
 [0.3.2]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.2
 [0.3.1]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.1
