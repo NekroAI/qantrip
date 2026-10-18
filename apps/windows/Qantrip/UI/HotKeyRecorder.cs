@@ -142,9 +142,6 @@ internal sealed class HotKeyRecorder
         if (app.TrySetHotKey(mods, vk, out int error))
         {
             var msg = Loc.T($"已设置为 {spec}", $"Set to {spec}");
-            // D5：Ctrl+Q 在浏览器和许多程序中是"退出"
-            if (mods == MOD_CONTROL && vk == 'Q')
-                msg += Loc.T("。注意：Ctrl+Q 在浏览器等许多程序中是“退出”，Qantrip 运行期间这些程序收不到它", ". Note: Ctrl+Q quits many apps such as browsers; they won’t receive it while Qantrip is running");
             ShowMessage(msg, error: false);
             Log.Event("setting", new() { ["key"] = "hotKey", ["value"] = spec });
             Changed?.Invoke(spec);

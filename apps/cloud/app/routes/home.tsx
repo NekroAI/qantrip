@@ -12,7 +12,7 @@ const T = {
     title: 'Nekro Qantrip — open-source prompt launcher for Claude Code, Codex and any app',
     description:
       'Press ⌃Q, type a short command, and a full prompt lands at your cursor. Parameterized prompt templates for Claude Code, Codex, Cursor and any text field. Open source, works offline, end-to-end encrypted sync.',
-    tags: ['Open source', 'macOS', 'Works offline'],
+    tags: ['Open source', 'macOS · Windows', 'Works offline'],
     h1: 'Your best prompts, a few keystrokes away',
     lead: (
       <>
@@ -39,7 +39,7 @@ const T = {
       ['What is Qantrip?', 'An open-source prompt launcher. You write your prompts as templates with parameters, then call them up from any app with a global hotkey and a short command.'],
       ['Which apps does it work with?', 'Anything you can paste into: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, your editor.'],
       ['Is it free?', 'Yes. The app is GPL-3.0 and the sync server is AGPL-3.0.'],
-      ['Which systems are supported?', 'macOS 14 or later, on Apple silicon and Intel. Windows and Linux are planned.'],
+      ['Which systems are supported?', 'macOS 14 or later (Apple silicon and Intel). Windows 10/11 x64 as a preview. Linux is planned.'],
       ['Does it need special permissions?', 'Auto-paste needs Accessibility access. Without it, Qantrip copies the prompt and you paste it yourself.'],
       ['Where are my templates stored?', 'On your Mac, as plain Markdown files. Sync is optional and end-to-end encrypted.'],
     ] as [string, string][],
@@ -47,7 +47,7 @@ const T = {
   zh: {
     title: 'Nekro Qantrip — 开源的 Prompt 启动器，适用于 Claude Code、Codex 与任何应用',
     description: '按下 ⌃Q，输入一条短命令，完整的 Prompt 就出现在光标处。为 Claude Code、Codex、Cursor 和任何输入框准备的参数化 Prompt 模板。开源、离线可用、端到端加密同步。',
-    tags: ['开源', 'macOS', '离线可用'],
+    tags: ['开源', 'macOS · Windows', '离线可用'],
     h1: '常用的 Prompt，敲几个键就到',
     lead: (
       <>
@@ -74,7 +74,7 @@ const T = {
       ['Qantrip 是什么？', '一个开源的 Prompt 启动器。把常用的 Prompt 写成带参数的模板，在任何应用里用全局快捷键和一条短命令调出来。'],
       ['能在哪些应用里用？', '任何能粘贴文字的地方：Claude Code、Codex CLI、Cursor、网页版 ChatGPT 或 Claude、Slack、编辑器。'],
       ['收费吗？', '免费。应用以 GPL-3.0 开源，同步服务端以 AGPL-3.0 开源。'],
-      ['支持哪些系统？', 'macOS 14 及更新版本，Apple 芯片和 Intel 芯片都支持。Windows 和 Linux 在计划中。'],
+      ['支持哪些系统？', 'macOS 14 及更新版本（Apple 芯片和 Intel 芯片）；Windows 10/11 x64 预览版。Linux 在计划中。'],
       ['需要什么权限？', '自动粘贴需要「辅助功能」权限。不授权也能用：Prompt 会复制到剪贴板，由你手动粘贴。'],
       ['模板存在哪里？', '存在你的 Mac 上，是普通的 Markdown 文件。同步是可选的，并且端到端加密。'],
     ] as [string, string][],
@@ -90,7 +90,7 @@ export const meta: Route.MetaFunction = ({ location }) => {
     name: 'Nekro Qantrip',
     alternateName: 'Qantrip',
     applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'macOS 14+',
+    operatingSystem: 'macOS 14+, Windows 10/11',
     description: t.description,
     url: SITE_ORIGIN + (locale === 'zh' ? '/zh' : '/'),
     downloadUrl: `${REPO_URL}/releases/latest`,

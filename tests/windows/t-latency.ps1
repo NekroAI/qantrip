@@ -6,7 +6,7 @@ if ($np) { "focus notepad: " + [Drv]::Focus($np.MainWindowHandle) }
 $startLines = (Get-Content $LogFile -Encoding UTF8).Count
 $fg = @(); $back = @()
 for ($i = 0; $i -lt $N; $i++) {
-  [Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+  [Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
   $fg += [Drv]::WaitFgProc("Qantrip", 2000)
   Start-Sleep -Milliseconds 250
   [Drv]::Combo($VK.ESC) | Out-Null
@@ -18,7 +18,7 @@ function Stats($name, $xs) {
   $p = { param($q) $s[[Math]::Min($s.Count - 1, [int][Math]::Floor($q * $s.Count))] }
   "{0}: n={1} first={2} median={3} p95={4} max={5}" -f $name, $s.Count, $xs[0], (& $p 0.5), (& $p 0.95), $s[-1]
 }
-Stats "driver: Alt+Q -> panel foreground (ms)" $fg
+Stats "driver: Ctrl+Q -> panel foreground (ms)" $fg
 Stats "driver: Esc -> previous window foreground (ms)" $back
 $shows = Get-Content $LogFile -Encoding UTF8 | Select-Object -Skip $startLines | Where-Object { $_ -match '"event":"show"' } | ForEach-Object { $_ | ConvertFrom-Json }
 Stats "app: handler -> panel visible+focused (ms)" @($shows | ForEach-Object { [double]$_.handler_to_shown_ms })

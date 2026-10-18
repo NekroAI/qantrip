@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml"><img src="https://github.com/NekroAI/qantrip/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey" alt="Platform: macOS 14+">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Windows%20(preview)-lightgrey" alt="Platform: macOS 14+ | Windows (preview)">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
 </p>
 
@@ -58,6 +58,8 @@ Download the DMG — [Apple silicon](https://github.com/NekroAI/qantrip/releases
 
 Qantrip isn't notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. Updates keep your permissions and templates.
 
+**Windows (preview):** download [Qantrip-Windows-x64.zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip), extract it and run `Qantrip.exe`, then press <kbd>Ctrl+Q</kbd>. It isn't code-signed yet, so SmartScreen may ask you to click **More info → Run anyway**. Requires Windows 10 2004 or later (x64).
+
 ## Writing a template
 
 Create `~/Library/Application Support/Qantrip/templates/review.md`:
@@ -95,7 +97,8 @@ The full format is described in the [input grammar](docs/input-grammar.md) and o
 | Sync server (Cloudflare Workers + D1, ciphertext only) | ✅ deployed |
 | End-to-end encrypted sync | ✅ 0.2.0 — [design](docs/sync-design.md) |
 | Command mode for creating templates in the panel | 📝 planned |
-| Windows / Linux | 📝 planned |
+| Windows | 🧪 0.3.0 preview (x64 zip) |
+| Linux | 📝 planned |
 | AI-assisted template editing | 📝 planned |
 
 ## Architecture

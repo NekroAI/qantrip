@@ -100,7 +100,7 @@ Invoke (El $w "lib_save")
 Start-Sleep -Milliseconds 600
 "renamed: new=" + (Test-Path "$tpl\qtlib-test.md") + " old gone=" + (-not (Test-Path "$tpl\my-template.md"))
 "---- qtlib-test.md"; Get-Content "$tpl\qtlib-test.md" -Encoding UTF8; "----"
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
 Start-Sleep -Milliseconds 250
 [Drv]::Type("qtl --param", 12); Start-Sleep -Milliseconds 400
@@ -108,7 +108,7 @@ Shot "lib-panel-new" 880 40 1700 1000 0.5
 [Drv]::Combo($VK.ESC) | Out-Null; Start-Sleep -Milliseconds 300
 
 # 8) /edit review：在模板库中打开并选中
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
 Start-Sleep -Milliseconds 250
 [Drv]::Type("/edit review", 12); Start-Sleep -Milliseconds 300

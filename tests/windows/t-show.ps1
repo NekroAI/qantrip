@@ -2,7 +2,7 @@
 EnsureApp -Restart
 LogTail 3
 "fg before: " + [Drv]::Fg()
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 $t = [Drv]::WaitFgProc("Qantrip", 2000)
 "panel foreground after $t ms"
 Start-Sleep -Milliseconds 400

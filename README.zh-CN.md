@@ -52,6 +52,8 @@ r security --scope=staged -s 重点看认证模块
 
 Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系统设置 → 隐私与安全性** 点 **仍要打开**。之后更新会保留权限与模板。
 
+**Windows（预览版）：** 下载 [Qantrip-Windows-x64.zip](https://github.com/NekroAI/qantrip/releases/latest/download/Qantrip-Windows-x64.zip)，解压后运行 `Qantrip.exe`，按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
+
 ## 编写模板
 
 新建 `~/Library/Application Support/Qantrip/templates/review.md`：
@@ -89,7 +91,8 @@ Qantrip 会自动重新加载。与内置模板同名的文件会覆盖内置版
 | 同步服务端（Cloudflare Workers + D1，只存密文） | ✅ 已部署 |
 | 端到端加密同步 | ✅ 0.2.0，见 [设计](docs/sync-design.md) |
 | 面板内快速创建模板的指令模式 | 📝 计划中 |
-| Windows / Linux | 📝 计划中 |
+| Windows | 🧪 0.3.0 预览版（x64 压缩包） |
+| Linux | 📝 计划中 |
 | AI 辅助编辑模板 | 📝 计划中 |
 
 ## 架构

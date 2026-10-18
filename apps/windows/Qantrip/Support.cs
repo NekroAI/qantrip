@@ -66,9 +66,9 @@ internal static class Settings
 
     private static string Lang(string key) => Str(key) is "zh" or "en" ? Str(key)! : "auto";
 
-    public const string DefaultHotKey = "Alt+Q";
+    public const string DefaultHotKey = "Ctrl+Q";
 
-    /// 唤起快捷键，如 "Alt+Q"（D5：Windows 默认 Alt+Q，Ctrl+Q 在许多程序中是退出）
+    /// 唤起快捷键，如 "Ctrl+Q"（D33：与 macOS 的 ⌃Q 一致；可在设置中更改）
     public static string HotKey { get => Str("hotKey") ?? DefaultHotKey; set => Set("hotKey", value); }
     /// 唤起时让输入框默认英文（D9）
     public static bool ForceAsciiInput { get => Bool("forceAsciiInput", true); set => Set("forceAsciiInput", value); }

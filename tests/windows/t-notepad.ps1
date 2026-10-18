@@ -21,7 +21,7 @@ for ($i = 0; $i -lt 20 -and -not $np; $i++) { $np = Get-Process Notepad -ErrorAc
 "notepad focus: " + [Drv]::Focus($np.MainWindowHandle) + "  fg=" + [Drv]::Fg()
 
 foreach ($cmd in @("r --strict", "zh 多行：第一行。第二行 —— 带 emoji 🎉 与 ""引号""")) {
-  [Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+  [Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
   "panel fg after " + [Drv]::WaitFgProc("Qantrip", 2000) + " ms"
   Start-Sleep -Milliseconds 150
   [Drv]::Type($cmd, 15)

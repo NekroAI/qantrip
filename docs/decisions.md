@@ -68,7 +68,7 @@
 
 - **负责人意向：** 结合 Ctrl+Q 设计，与产品名形成联动。
 - **评审意见：** Windows / Linux 上 `Ctrl+Q` 在浏览器和多数 GTK/Qt 应用中是"退出"，热键注册失败时会直接关掉用户的应用。
-- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。
+- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。（Windows 已由 D33 改为 `Ctrl+Q`。）
 - **待办：** 原型阶段做三平台冲突实测后定稿。**负责人尚未明确确认这一方案。**
 
 ### D6 技术路线：各平台原生外壳 + 共享 Rust 核心，不以 Tauri 为主框架（2026-10-17）
@@ -272,6 +272,12 @@
 - **环境：** 负责人的 Windows 11（x64）通过 `ssh nexus-win` 访问；需安装 Rust、.NET 8 SDK、VS 生成工具。
 - **顺序：** 先验证高风险能力（全局热键、不抢焦点的浮窗、剪贴板 + Ctrl+V 插入与剪贴板还原、输入法），再补齐面板与设置。
 - **进展（2026-10-18 夜）：** 三轮完成，见 `docs/windows-spike.md`。绑定改用 C ABI + JSON（`apps/windows/native`），因为 uniffi-bindgen-cs 尚不支持 UniFFI 0.32。已有面板、指令模式、设置、模板库、同步界面（DPAPI 加密的密钥文件，放在不漫游的 `%LOCALAPPDATA%`）、首次引导、字体与动效、zip 打包；目标框架 .NET 10。待负责人实测：真实登录与同步、Claude Code / Codex 粘贴、Alt+Q 冲突、搜狗等输入法。
+
+### D33 Windows 默认快捷键改为 Ctrl+Q（2026-10-18）
+
+- **背景：** 负责人指出宣传资料统一写 `^Q`。原先 Windows 用 `Alt+Q` 的理由是"Ctrl+Q 会退出浏览器"，但这只适用于 Linux 上的浏览器；Windows 上的 Chrome、Edge、Firefox 用 Ctrl+Q 都不会退出。
+- **决定：** Windows 默认 `Ctrl+Q`，与 macOS 的 `⌃Q` 及宣传一致；设置中可更改，注册失败时提示冲突。官网演示在 Mac 上用 ⌃Q、Windows 上用 Ctrl+Q，只有 Linux 用 Alt+Q。
+- **代价：** Qantrip 运行期间，Outlook（标为已读）、Word（清除段落格式）、Excel（快速分析）、VS Code（快速打开视图）、Telegram 桌面版（退出）等收不到 Ctrl+Q。
 
 ---
 

@@ -169,7 +169,7 @@ internal sealed class SettingsWindow : Window
         // 通用
         page.Children.Add(Section(Loc.T("通用", "General")));
         page.Children.Add(Card("", Loc.T("唤起快捷键", "Panel shortcut"),
-            Loc.T("在任意程序中按下即可唤起命令面板。默认 Alt+Q。", "Press it in any app to open the command panel. The default is Alt+Q."), (recorder = new HotKeyRecorder(app)).View));
+            Loc.T("在任意程序中按下即可唤起命令面板。默认 Ctrl+Q。", "Press it in any app to open the command panel. The default is Ctrl+Q."), (recorder = new HotKeyRecorder(app)).View));
         page.Children.Add(Card("", Loc.T("登录时启动", "Launch at login"), AutostartDescription(), AutostartToggle()));
         page.Children.Add(Card("", Loc.T("界面语言", "Language"), null,
             LanguageBox("uiLanguage", Loc.T("跟随系统", "System default"), Settings.Language, v => Settings.Language = v)));

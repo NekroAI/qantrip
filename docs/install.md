@@ -17,7 +17,7 @@ Requires Windows 10 version 2004 or later, x64. Windows 11 recommended.
 
 1. Download `Qantrip-Windows-x64.zip` and extract it, for example into your Documents folder.
 2. Run `Qantrip\Qantrip.exe`. It isn't code-signed yet, so SmartScreen may warn you: click **More info → Run anyway**.
-3. Press **Alt+Q** anywhere. Qantrip lives in the notification area; right-click its icon for Settings, the template library and Quit. Turn on **Launch at login** in Settings if you like.
+3. Press **Ctrl+Q** anywhere. Qantrip lives in the notification area; right-click its icon for Settings, the template library and Quit. Turn on **Launch at login** in Settings if you like.
 
 To update, quit Qantrip and replace the folder. Templates and settings are kept in `%APPDATA%\Qantrip`.
 
@@ -42,6 +42,6 @@ To update, quit Qantrip and replace the folder. Templates and settings are kept 
 
 1. 下载 `Qantrip-Windows-x64.zip` 并解压，例如解压到「文档」。
 2. 运行 `Qantrip\Qantrip.exe`。程序暂未签名，SmartScreen 可能拦截：点 **更多信息 → 仍要运行**。
-3. 在任何地方按 **Alt+Q**。Qantrip 常驻在通知区域，右键图标可打开设置、模板库或退出；需要时在设置中开启「登录时启动」。
+3. 在任何地方按 **Ctrl+Q**。Qantrip 常驻在通知区域，右键图标可打开设置、模板库或退出；需要时在设置中开启「登录时启动」。
 
 更新时退出 Qantrip，替换整个文件夹即可；模板与设置保存在 `%APPDATA%\Qantrip`。

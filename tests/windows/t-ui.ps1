@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Force "$Dev\data" | Out-Null
 EnsureApp -Restart -Env @{ QANTRIP_DEBUG_HOOKS = "1"; QANTRIP_DATA_DIR = "$Dev\data" }
 $np = Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if ($np) { [Drv]::Focus($np.MainWindowHandle) | Out-Null }
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
 Start-Sleep -Milliseconds 400
 Shot "ui-$Lang-home" 880 40 1700 1000 0.6

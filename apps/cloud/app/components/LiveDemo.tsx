@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { type Core, loadCore } from '../lib/core'
-import { useIsMac } from '../lib/downloads'
+import { useSummonKey } from '../lib/downloads'
 import { type Locale, useLocale } from '../lib/i18n'
 import snapshots from '../lib/demo-snapshot.json'
 
@@ -112,8 +112,8 @@ export function Preview({ preview }: { preview: NonNullable<Analysis['preview']>
 export function LiveDemo() {
   const locale = useLocale()
   const t = T[locale]
-  const mac = useIsMac()
-  const summonKey = mac ? '⌃Q' : 'Alt+Q'
+  const keyKind = useSummonKey()
+  const summonKey = keyKind === 'mac' ? '⌃Q' : keyKind === 'ctrl' ? 'Ctrl+Q' : 'Alt+Q'
   const snapshot = snapshots[locale]
 
   const core = useRef<Core | null>(null)
@@ -252,10 +252,10 @@ export function LiveDemo() {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  // 唤起快捷键：Mac 上 ⌃Q，其他系统 Alt+Q（Ctrl+Q 会退出部分浏览器）
+  // 唤起快捷键：Mac 上 ⌃Q、Windows 上 Ctrl+Q（与应用一致）、Linux 上 Alt+Q（Linux 浏览器中 Ctrl+Q 会退出）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const hit = e.code === 'KeyQ' && (mac ? e.ctrlKey && !e.metaKey && !e.altKey : e.altKey && !e.ctrlKey && !e.metaKey)
+      const hit = e.code === 'KeyQ' && (keyKind === 'alt' ? e.altKey && !e.ctrlKey && !e.metaKey : e.ctrlKey && !e.metaKey && !e.altKey)
       if (!hit || !ready) return
       const inside = root.current?.contains(document.activeElement)
       if (!inside && !visible.current) return
@@ -266,7 +266,7 @@ export function LiveDemo() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mac, ready, open, takeOver, openPanel, closePanel])
+  }, [keyKind, ready, open, takeOver, openPanel, closePanel])
 
   // 空闲时自动演示：唤出 → 逐字输入 → 回车插入 → 回车发送。访客一旦操作就停止，保留当前状态。
   useEffect(() => {

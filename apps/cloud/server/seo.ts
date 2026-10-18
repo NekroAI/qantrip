@@ -47,7 +47,8 @@ const SUMMARY = (o: string) => `# Nekro Qantrip
 - Website: ${o}/ (English), ${o}/zh (中文)
 - Source code: ${REPO} (app and core GPL-3.0-or-later, sync server AGPL-3.0-or-later)
 - Download (macOS 14+): ${REPO}/releases/latest/download/Qantrip-macOS-arm64.dmg (Apple silicon), ${REPO}/releases/latest/download/Qantrip-macOS-x86_64.dmg (Intel)
-- Platforms: macOS now; Windows and Linux planned.
+- Download (Windows 10/11 x64, preview): ${REPO}/releases/latest/download/Qantrip-Windows-x64.zip (unzip and run Qantrip.exe; shortcut Ctrl+Q)
+- Platforms: macOS, Windows (preview); Linux planned.
 - Made by NekroAI (https://github.com/NekroAI). Pronounced like "cantrip".
 
 ## Docs

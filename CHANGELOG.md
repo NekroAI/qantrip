@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-18
+
+### Added
+- Command mode in the panel: type `/` to manage templates without leaving the keyboard. `/new name text` creates a template (`{param}` and `{param:a|b}` placeholders become options; without text it uses the clipboard), plus `/edit`, `/dup`, `/alias`, `/rm` (asks for a second Enter, moves the file to the Trash), `/library`, `/settings`, `/sync` and `/lang auto|zh|en`.
+- Windows preview (x64): the panel with Alt+Q, paste insertion with clipboard restore (kept out of clipboard history), command mode, settings, template library, end-to-end encrypted sync and a welcome guide. Distributed as a zip; not code-signed yet.
+
+### Fixed
+- Template files that start with a UTF-8 BOM are read correctly.
+
 ## [0.2.0] — 2026-10-18
 
 ### Added
@@ -33,6 +42,7 @@ First macOS preview.
 - Settings (hotkey recorder with conflict detection, launch at login, input source switching) and first-run onboarding.
 - Signed arm64 and x86_64 DMGs built by GitHub Actions.
 
-[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NekroAI/qantrip/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.3.0
 [0.2.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.2.0
 [0.1.0]: https://github.com/NekroAI/qantrip/releases/tag/v0.1.0

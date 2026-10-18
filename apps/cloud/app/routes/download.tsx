@@ -6,7 +6,7 @@ import type { Route } from './+types/download'
 const T = {
   en: {
     title: 'Download Qantrip for macOS · Nekro Qantrip',
-    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ on Apple silicon or Intel. Free DMG download from GitHub Releases.',
+    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ (Apple silicon or Intel) and Windows 10/11 (preview). Free download from GitHub Releases.',
     h1: 'Download Qantrip',
     lead: 'Free and open source. The latest version, straight from GitHub Releases.',
     forYou: 'For your computer',
@@ -21,13 +21,14 @@ const T = {
       'First launch: System Settings → Privacy & Security → Open Anyway. (Qantrip is not notarized by Apple yet.)',
       'Press ⌃Q anywhere.',
     ],
+    stepsWin: ['Extract the zip, e.g. into Documents.', 'Run Qantrip\\Qantrip.exe. It isn\'t code-signed yet: if SmartScreen warns you, click More info → Run anyway.', 'Press Ctrl+Q anywhere.'],
     chip: 'Not sure which chip? Apple menu → About This Mac.',
     history: 'Release notes and older versions',
     docs: 'Read the docs',
   },
   zh: {
     title: '下载 Qantrip macOS 版 · Nekro Qantrip',
-    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+，Apple 芯片与 Intel 芯片。DMG 直接从 GitHub Releases 免费下载。',
+    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+（Apple 芯片与 Intel 芯片）与 Windows 10/11（预览版）。直接从 GitHub Releases 免费下载。',
     h1: '下载 Qantrip',
     lead: '免费、开源。最新版本，直接从 GitHub Releases 下载。',
     forYou: '适合你的电脑',
@@ -38,6 +39,7 @@ const T = {
     notAvailable: (os: string) => `Qantrip 还没有 ${os} 版本，这里先给出 macOS 版。`,
     stepsH: '下载之后',
     steps: ['打开 DMG，把 Qantrip 拖进「应用程序」。', '首次打开：系统设置 → 隐私与安全性 → 仍要打开（Qantrip 尚未经过 Apple 公证）。', '在任何地方按 ⌃Q。'],
+    stepsWin: ['解压压缩包，例如解压到「文档」。', '运行 Qantrip\\Qantrip.exe。程序暂未签名：如果 SmartScreen 拦截，点「更多信息 → 仍要运行」。', '在任何地方按 Ctrl+Q。'],
     chip: '不确定是哪种芯片：苹果菜单 → 关于本机。',
     history: '更新记录与历史版本',
     docs: '阅读文档',
@@ -97,13 +99,13 @@ export default function Download() {
             </li>
           ))}
         </ul>
-        <p className="muted small">{t.chip}</p>
+        {best.os === 'macos' && <p className="muted small">{t.chip}</p>}
       </div>
 
       <div className="dsec">
         <span className="label">{t.stepsH}</span>
         <ol className="install">
-          {t.steps.map((s, i) => (
+          {(best.os === 'windows' ? t.stepsWin : t.steps).map((s, i) => (
             <li key={s}>
               <span className="step-n">{i + 1}</span>
               <span>{s}</span>

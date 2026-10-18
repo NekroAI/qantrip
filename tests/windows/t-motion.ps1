@@ -5,7 +5,7 @@ if (Test-Path "$Dev\data\settings.json") { Remove-Item "$Dev\data\settings.json"
 EnsureApp -Restart -Env @{ QANTRIP_DEBUG_HOOKS = "1"; QANTRIP_DATA_DIR = "$Dev\data"; QANTRIP_REDUCE_MOTION = $Reduce }
 $tag = if ($Reduce -eq "1") { "reduced" } else { "motion" }
 $sw = [Diagnostics.Stopwatch]::StartNew()
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
 "panel fg at $($sw.ElapsedMilliseconds) ms"
 foreach ($i in 0..2) { Shot "$tag-enter-$i" 880 40 1700 1000 0.35; "  shot at $($sw.ElapsedMilliseconds) ms" }

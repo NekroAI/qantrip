@@ -6,7 +6,7 @@ EnsureApp -Restart -Env @{ QANTRIP_DEBUG_HOOKS = "1"; QANTRIP_DATA_DIR = "$Dev\d
 $np = Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if ($np) { "focus: " + [Drv]::Focus($np.MainWindowHandle) }
 $before = (Get-Process Notepad | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowTitle
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
 Start-Sleep -Milliseconds 150
 [Drv]::Type("en", 10); Start-Sleep -Milliseconds 200

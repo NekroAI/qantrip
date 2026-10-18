@@ -1,4 +1,4 @@
-﻿# 首次启动引导：没有 onboardingDone 时启动即显示；快捷键确认（真实 Alt+Q）→ 插入方式 → 在练习框中施放一次 → 开始使用；
+﻿# 首次启动引导：没有 onboardingDone 时启动即显示；快捷键确认（真实 Ctrl+Q）→ 插入方式 → 在练习框中施放一次 → 开始使用；
 # 重启后不再显示。UI 自动化操作，不点鼠标；最后删除测试设置。
 . "$PSScriptRoot\drv.ps1"
 . "$PSScriptRoot\uia.ps1"
@@ -19,7 +19,7 @@ ShotWin "onb-1" $w
 "before hotkey: " + (U (El $w "onb_verify").Current.Name)
 
 # 第一步：按一次快捷键（同时会打开面板，Esc 关闭）
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 1500) | Out-Null
 Start-Sleep -Milliseconds 400
 [Drv]::Combo($VK.ESC) | Out-Null
@@ -42,7 +42,7 @@ Start-Sleep -Milliseconds 600
 $box = El $w "onb_practice"
 [Drv]::Focus([IntPtr]$w.Current.NativeWindowHandle) | Out-Null
 $box.SetFocus(); Start-Sleep -Milliseconds 300
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 1500) | Out-Null
 Start-Sleep -Milliseconds 300
 [Drv]::Type("zh", 30); Start-Sleep -Milliseconds 400

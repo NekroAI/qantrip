@@ -13,7 +13,7 @@ $body = "QANTRIP-CMD 请用{level:简单|专业}的语言解释 {topic}"
 [System.Windows.Forms.Clipboard]::SetText($body)
 
 function Panel([string]$text) {
-  [Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+  [Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
   [Drv]::WaitFgProc("Qantrip", 2000) | Out-Null
   Start-Sleep -Milliseconds 250
   if ($text) { [Drv]::Type($text, 12); Start-Sleep -Milliseconds 300 }

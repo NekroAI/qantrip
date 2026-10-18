@@ -15,7 +15,7 @@ $np = Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.Main
 [Drv]::Combo($VK.ENTER) | Out-Null
 
 # 2) panel: real virtual keys through the IME
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 "panel fg after " + [Drv]::WaitFgProc("Qantrip", 2000) + " ms"
 Start-Sleep -Milliseconds 200
 [Drv]::TypeVk("rev", 40); [Drv]::Combo($VK.SPACE) | Out-Null

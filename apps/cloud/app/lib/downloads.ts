@@ -34,7 +34,14 @@ export const CLIENTS: Client[] = [
     name: { en: 'macOS · Intel', zh: 'macOS · Intel 芯片' },
     detail: { en: 'Intel Macs · macOS 14+', zh: 'Intel 芯片的 Mac · macOS 14+' },
   },
-  { id: 'windows', os: 'windows', file: null, url: null, name: { en: 'Windows', zh: 'Windows' }, detail: { en: 'Coming later', zh: '开发中' } },
+  {
+    id: 'windows',
+    os: 'windows',
+    file: 'Qantrip-Windows-x64.zip',
+    url: latest('Qantrip-Windows-x64.zip'),
+    name: { en: 'Windows · x64 (preview)', zh: 'Windows · x64（预览版）' },
+    detail: { en: 'Windows 10 2004+ · unzip and run', zh: 'Windows 10 2004+ · 解压即用' },
+  },
   { id: 'linux', os: 'linux', file: null, url: null, name: { en: 'Linux', zh: 'Linux' }, detail: { en: 'Planned', zh: '计划中' } },
 ]
 
@@ -68,9 +75,12 @@ export function useDetectedClient(): { id: ClientId; detected: boolean } {
   return state
 }
 
-/** 访客是否在 Mac 上（决定演示中唤起快捷键显示 ⌃Q 还是 Alt+Q） */
-export function useIsMac(): boolean {
-  const [mac, setMac] = useState(true)
-  useEffect(() => setMac(/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)), [])
-  return mac
+/** 演示中的唤起快捷键：Mac 上 ⌃Q，Windows 上 Ctrl+Q（与应用一致），Linux 上 Alt+Q（Linux 浏览器中 Ctrl+Q 是退出） */
+export function useSummonKey(): 'mac' | 'ctrl' | 'alt' {
+  const [kind, setKind] = useState<'mac' | 'ctrl' | 'alt'>('mac')
+  useEffect(() => {
+    const p = navigator.platform || navigator.userAgent
+    setKind(/Mac|iPhone|iPad/i.test(p) ? 'mac' : /Linux|X11|CrOS/i.test(p) && !/Android/i.test(navigator.userAgent) ? 'alt' : 'ctrl')
+  }, [])
+  return kind
 }

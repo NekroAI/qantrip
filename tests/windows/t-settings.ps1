@@ -71,7 +71,7 @@ $rec.SetFocus(); (Pat $rec ([Windows.Automation.InvokePattern]::Pattern)).Invoke
 [Drv]::Combo($VK.ALT, $VK.W) | Out-Null; Start-Sleep -Milliseconds 500
 "hotkey message: " + (U (El $w "hotkeyMessage").Current.Name)
 "settings hotKey: " + (J).hotKey
-# 新快捷键立即生效：Alt+W 唤起面板，旧的 Alt+Q 不再生效
+# 新快捷键立即生效：Alt+W 唤起面板，旧的 Ctrl+Q 不再生效
 [Drv]::Combo($VK.ALT, $VK.W) | Out-Null
 Start-Sleep -Milliseconds 400
 "Alt+W opens panel: " + ([Drv]::Fg() -match "title=Nekro Qantrip$")
@@ -100,7 +100,7 @@ $wEn = Win "Nekro Qantrip Settings"
 Start-Sleep -Milliseconds 500
 Shot "settings-en" 0 0 0 0 0.5
 "settings language: " + (J).language
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 [Drv]::WaitFgProc("Qantrip", 1500) | Out-Null
 Start-Sleep -Milliseconds 300
 Shot "settings-panel-en" 880 40 1700 1000 0.5
@@ -126,10 +126,10 @@ Start-Sleep -Milliseconds 500
 "conflict message: " + (U (El $w "hotkeyMessage").Current.Name)
 Shot "settings-conflict" 0 0 0 0 0.5
 [HK]::UnregisterHotKey([IntPtr]::Zero, 77) | Out-Null
-# 冲突解除后录制 Alt+Q 恢复
+# 冲突解除后录制 Ctrl+Q 恢复
 $rec = El $w "hotkeyRecorder"
 $rec.SetFocus(); (Pat $rec ([Windows.Automation.InvokePattern]::Pattern)).Invoke(); Start-Sleep -Milliseconds 300
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null; Start-Sleep -Milliseconds 500
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null; Start-Sleep -Milliseconds 500
 "after re-recording: " + (U (El $w "hotkeyMessage").Current.Name) + " / " + (J).hotKey
 
 # 清理：删除测试设置，退出应用

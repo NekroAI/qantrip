@@ -24,7 +24,7 @@ if (-not $w) { "no WT window"; exit }
 Start-Sleep -Seconds 2
 "wt focus: " + [Drv]::Focus($w.MainWindowHandle) + " " + [Drv]::Fg()
 
-[Drv]::Combo($VK.ALT, $VK.Q) | Out-Null
+[Drv]::Combo($VK.CTRL, $VK.Q) | Out-Null
 "panel fg after " + [Drv]::WaitFgProc("Qantrip", 2000) + " ms"
 Start-Sleep -Milliseconds 150
 [Drv]::Type("wtt", 20)
