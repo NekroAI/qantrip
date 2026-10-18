@@ -4,7 +4,17 @@ import { useEffect, useState } from 'react'
 import type { Locale } from './i18n'
 import { REPO_URL } from './site'
 
-export type ClientId = 'macos-arm64' | 'macos-x86_64' | 'windows' | 'windows-zip' | 'linux'
+export type ClientId =
+  | 'macos-arm64'
+  | 'macos-x86_64'
+  | 'windows'
+  | 'windows-zip'
+  | 'linux-x86_64'
+  | 'linux-aarch64'
+  | 'linux-deb-x86_64'
+  | 'linux-deb-aarch64'
+  | 'linux-rpm-x86_64'
+  | 'linux-rpm-aarch64'
 
 export interface Client {
   id: ClientId
@@ -13,6 +23,8 @@ export interface Client {
   url: string | null
   name: Record<Locale, string>
   detail: Record<Locale, string>
+  /** 首页下载按钮的下拉菜单中显示（其余只在下载页列出） */
+  featured: boolean
 }
 
 const latest = (file: string) => `${REPO_URL}/releases/latest/download/${file}`
@@ -25,6 +37,7 @@ export const CLIENTS: Client[] = [
     url: latest('Qantrip-macOS-arm64.dmg'),
     name: { en: 'macOS · Apple silicon', zh: 'macOS · Apple 芯片' },
     detail: { en: 'M1 and later · macOS 14+', zh: 'M1 及更新 · macOS 14+' },
+    featured: true,
   },
   {
     id: 'macos-x86_64',
@@ -33,6 +46,7 @@ export const CLIENTS: Client[] = [
     url: latest('Qantrip-macOS-x86_64.dmg'),
     name: { en: 'macOS · Intel', zh: 'macOS · Intel 芯片' },
     detail: { en: 'Intel Macs · macOS 14+', zh: 'Intel 芯片的 Mac · macOS 14+' },
+    featured: true,
   },
   {
     id: 'windows',
@@ -41,6 +55,7 @@ export const CLIENTS: Client[] = [
     url: latest('Qantrip-Windows-x64-Setup.exe'),
     name: { en: 'Windows · x64 (preview)', zh: 'Windows · x64（预览版）' },
     detail: { en: 'Windows 10 2004+ · installer, no admin rights', zh: 'Windows 10 2004+ · 安装程序，无需管理员权限' },
+    featured: true,
   },
   {
     id: 'windows-zip',
@@ -49,9 +64,31 @@ export const CLIENTS: Client[] = [
     url: latest('Qantrip-Windows-x64.zip'),
     name: { en: 'Windows · x64 portable', zh: 'Windows · x64 便携版' },
     detail: { en: 'Unzip and run Qantrip.exe', zh: '解压后运行 Qantrip.exe' },
+    featured: true,
   },
-  { id: 'linux', os: 'linux', file: null, url: null, name: { en: 'Linux', zh: 'Linux' }, detail: { en: 'Planned', zh: '计划中' } },
+  ...linux('x86_64'),
+  ...linux('aarch64'),
 ]
+
+/** Linux 预览版（docs/decisions.md D37）：AppImage 通用，另有 deb（Debian / Ubuntu）与 rpm（Fedora 等） */
+function linux(arch: 'x86_64' | 'aarch64'): Client[] {
+  const cpu = arch === 'x86_64' ? 'x86_64' : 'ARM64'
+  const req = { en: 'GTK 4.14+ and libadwaita 1.5+ (Ubuntu 24.04, Debian 13, Fedora 40 or later)', zh: '需要 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 或更新）' }
+  const pkg = (id: ClientId, ext: string, en: string, zh: string, featured: boolean): Client => ({
+    id,
+    os: 'linux',
+    file: `Qantrip-Linux-${arch}.${ext}`,
+    url: latest(`Qantrip-Linux-${arch}.${ext}`),
+    name: { en: `Linux · ${cpu} ${en} (preview)`, zh: `Linux · ${cpu} ${zh}（预览版）` },
+    detail: req,
+    featured,
+  })
+  return [
+    pkg(`linux-${arch}`, 'AppImage', 'AppImage', 'AppImage', true),
+    pkg(`linux-deb-${arch}`, 'deb', '.deb', '.deb', false),
+    pkg(`linux-rpm-${arch}`, 'rpm', '.rpm', '.rpm', false),
+  ]
+}
 
 export const RELEASES_URL = `${REPO_URL}/releases`
 export const client = (id: ClientId) => CLIENTS.find((c) => c.id === id)!
@@ -62,7 +99,10 @@ export function detectClient(): ClientId {
   const ua = navigator.userAgent
   const platform = nav.userAgentData?.platform ?? navigator.platform ?? ''
   if (/Win/i.test(platform) || /Windows/i.test(ua)) return 'windows'
-  if (/Linux|X11/i.test(platform) && !/Android/i.test(ua)) return 'linux'
+  if (/Linux|X11/i.test(platform) && !/Android/i.test(ua)) {
+    // 浏览器只在 UA 中透露 CPU：aarch64 / arm64；判断不了时按 x86_64 处理
+    return /aarch64|arm64|armv8/i.test(`${platform} ${ua}`) ? 'linux-aarch64' : 'linux-x86_64'
+  }
   if (/Mac/i.test(platform) || /Mac OS X/i.test(ua)) {
     try {
       const gl = document.createElement('canvas').getContext('webgl')

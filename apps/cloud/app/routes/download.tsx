@@ -5,8 +5,8 @@ import type { Route } from './+types/download'
 
 const T = {
   en: {
-    title: 'Download Qantrip for macOS · Nekro Qantrip',
-    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ (Apple silicon or Intel) and Windows 10/11 (preview). Free download from GitHub Releases.',
+    title: 'Download Qantrip for macOS, Windows and Linux · Nekro Qantrip',
+    description: 'Download Nekro Qantrip, the open-source prompt launcher, for macOS 14+ (Apple silicon or Intel), Windows 10/11 (preview) and Linux (preview: AppImage, .deb, .rpm). Free download from GitHub Releases.',
     h1: 'Download Qantrip',
     lead: 'Free and open source. The latest version, straight from GitHub Releases.',
     forYou: 'For your computer',
@@ -22,13 +22,18 @@ const T = {
       'Press ⌃Q anywhere.',
     ],
     stepsWin: ['Run the installer. It isn\'t code-signed yet: if SmartScreen warns you, click More info → Run anyway.', 'Follow the steps; no admin rights needed.', 'Press Ctrl+Q anywhere.'],
+    stepsLinux: [
+      'AppImage: make it executable (chmod +x, or Properties → Allow executing) and open it. Or install the .deb / .rpm with your package manager.',
+      'On GNOME or KDE (Wayland), confirm the shortcut when the system asks. The welcome guide lets you allow auto-paste once; without it, prompts are copied for you to paste.',
+      'Press Ctrl+Q anywhere.',
+    ],
     chip: 'Not sure which chip? Apple menu → About This Mac.',
     history: 'Release notes and older versions',
     docs: 'Read the docs',
   },
   zh: {
-    title: '下载 Qantrip macOS 版 · Nekro Qantrip',
-    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+（Apple 芯片与 Intel 芯片）与 Windows 10/11（预览版）。直接从 GitHub Releases 免费下载。',
+    title: '下载 Qantrip（macOS、Windows、Linux）· Nekro Qantrip',
+    description: '下载开源 Prompt 启动器 Nekro Qantrip，支持 macOS 14+（Apple 芯片与 Intel 芯片）、Windows 10/11（预览版）与 Linux（预览版：AppImage、deb、rpm）。直接从 GitHub Releases 免费下载。',
     h1: '下载 Qantrip',
     lead: '免费、开源。最新版本，直接从 GitHub Releases 下载。',
     forYou: '适合你的电脑',
@@ -40,6 +45,11 @@ const T = {
     stepsH: '下载之后',
     steps: ['打开 DMG，把 Qantrip 拖进「应用程序」。', '首次打开：系统设置 → 隐私与安全性 → 仍要打开（Qantrip 尚未经过 Apple 公证）。', '在任何地方按 ⌃Q。'],
     stepsWin: ['运行安装程序。程序暂未签名：如果 SmartScreen 拦截，点「更多信息 → 仍要运行」。', '按提示完成安装，不需要管理员权限。', '在任何地方按 Ctrl+Q。'],
+    stepsLinux: [
+      'AppImage：设为可执行（chmod +x，或在文件属性中允许执行）后打开；也可以用软件包管理器安装 deb / rpm。',
+      'GNOME、KDE（Wayland）首次启动时系统会询问是否允许注册快捷键，确认即可。引导中可以授权一次自动粘贴；不授权时 Prompt 会复制到剪贴板。',
+      '在任何地方按 Ctrl+Q。',
+    ],
     chip: '不确定是哪种芯片：苹果菜单 → 关于本机。',
     history: '更新记录与历史版本',
     docs: '阅读文档',
@@ -105,7 +115,7 @@ export default function Download() {
       <div className="dsec">
         <span className="label">{t.stepsH}</span>
         <ol className="install">
-          {(best.os === 'windows' ? t.stepsWin : t.steps).map((s, i) => (
+          {(best.os === 'windows' ? t.stepsWin : best.os === 'linux' ? t.stepsLinux : t.steps).map((s, i) => (
             <li key={s}>
               <span className="step-n">{i + 1}</span>
               <span>{s}</span>

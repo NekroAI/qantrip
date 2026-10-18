@@ -42,13 +42,14 @@ interface Tpl {
 
 const SUMMARY = (o: string) => `# Nekro Qantrip
 
-> Nekro Qantrip is a free, open-source prompt launcher for macOS. Press a global hotkey (⌃Q by default), type a short command such as \`r security --scope=staged -s\`, and a full, parameterized prompt is inserted at the cursor in any app: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, editors. Prompts are Markdown templates with typed options (MiniJinja). It works offline; optional sync is end-to-end encrypted.
+> Nekro Qantrip is a free, open-source prompt launcher for macOS, with Windows and Linux previews. Press a global hotkey (⌃Q on macOS, Ctrl+Q on Windows and Linux), type a short command such as \`r security --scope=staged -s\`, and a full, parameterized prompt is inserted at the cursor in any app: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, editors. Prompts are Markdown templates with typed options (MiniJinja). It works offline; optional sync is end-to-end encrypted.
 
 - Website: ${o}/ (English), ${o}/zh (中文)
 - Source code: ${REPO} (app and core GPL-3.0-or-later, sync server AGPL-3.0-or-later)
 - Download (macOS 14+): ${REPO}/releases/latest/download/Qantrip-macOS-arm64.dmg (Apple silicon), ${REPO}/releases/latest/download/Qantrip-macOS-x86_64.dmg (Intel)
 - Download (Windows 10/11 x64, preview): ${REPO}/releases/latest/download/Qantrip-Windows-x64-Setup.exe (installer, no admin rights) or Qantrip-Windows-x64.zip (portable); shortcut Ctrl+Q
-- Platforms: macOS, Windows (preview); Linux planned.
+- Download (Linux x86_64 / ARM64, preview): ${REPO}/releases/latest/download/Qantrip-Linux-x86_64.AppImage or Qantrip-Linux-aarch64.AppImage; also .deb and .rpm (Qantrip-Linux-<arch>.deb / .rpm); needs GTK 4.14+ and libadwaita 1.5+; shortcut Ctrl+Q
+- Platforms: macOS, Windows (preview), Linux (preview).
 - Made by NekroAI (https://github.com/NekroAI). Pronounced like "cantrip".
 
 ## Docs

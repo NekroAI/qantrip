@@ -57,7 +57,7 @@ export function DownloadButton() {
       )}
       {open && (
         <div className="dl-menu" role="menu">
-          {CLIENTS.map((c) =>
+          {CLIENTS.filter((c) => c.featured || c.id === id).map((c) =>
             c.url ? (
               <a key={c.id} role="menuitem" href={c.url} download className={c.id === id ? 'cur' : undefined}>
                 <b>{c.name[locale]}</b>

@@ -11,7 +11,7 @@ import type { Route } from './+types/docs'
 const T = {
   en: {
     title: 'Docs — commands, shortcuts and templates · Nekro Qantrip',
-    description: 'How to install Qantrip on macOS, the command syntax, keyboard shortcuts, all built-in prompt templates, and how to write your own template in Markdown + MiniJinja, with a live editor.',
+    description: 'How to install Qantrip on macOS, Windows and Linux, the command syntax, keyboard shortcuts, all built-in prompt templates, and how to write your own template in Markdown + MiniJinja, with a live editor.',
     h1: 'Docs',
     lead: 'Everything you need, mostly by trying it.',
     toc: [
@@ -23,7 +23,7 @@ const T = {
       ['reference', 'Reference'],
     ],
     install: [
-      { h: 'Download', p: 'Get the DMG for your Mac.', link: 'Downloads' },
+      { h: 'Download', p: 'Get the DMG for your Mac. Windows and Linux (AppImage, .deb, .rpm) are available as previews.', link: 'Downloads' },
       { h: 'Drag to Applications', p: 'Open the DMG and drag Qantrip into Applications.' },
       { h: 'Open it once', p: 'Qantrip is not notarized yet. Go to System Settings → Privacy & Security → Open Anyway.' },
       { h: 'Allow Accessibility', p: 'Optional. It lets Qantrip paste for you; without it, prompts are copied instead.' },
@@ -39,7 +39,7 @@ const T = {
     ] as [string, string, string][],
     keysH: 'Shortcuts',
     keys: [
-      [['⌃', 'Q'], 'Summon the panel (configurable)'],
+      [['⌃', 'Q'], 'Summon the panel (Ctrl+Q on Windows and Linux; configurable)'],
       [['⇥'], 'Accept the suggestion'],
       [['→'], 'Accept the grey inline hint'],
       [['↑', '↓'], 'Choose a suggestion'],
@@ -56,7 +56,7 @@ const T = {
     writeH: 'Write your own',
     writeP: (
       <>
-        A template is a Markdown file in <code>~/Library/Application Support/Qantrip/templates/</code>. The header declares options; the body is a MiniJinja template. Edit it here: this runs the real Qantrip core in your browser.
+        A template is a Markdown file in <code>~/Library/Application Support/Qantrip/templates/</code> (Windows: <code>%APPDATA%\Qantrip\templates</code>, Linux: <code>~/.local/share/qantrip/templates/</code>). The header declares options; the body is a MiniJinja template. Edit it here: this runs the real Qantrip core in your browser.
       </>
     ),
     tryLabel: 'Try it with',
@@ -92,7 +92,7 @@ const T = {
   },
   zh: {
     title: '文档 — 命令、快捷键与模板 · Nekro Qantrip',
-    description: '在 macOS 上安装 Qantrip、命令语法、快捷键、全部内置 Prompt 模板，以及如何用 Markdown + MiniJinja 编写自己的模板（带在线编辑器）。',
+    description: '在 macOS、Windows 与 Linux 上安装 Qantrip、命令语法、快捷键、全部内置 Prompt 模板，以及如何用 Markdown + MiniJinja 编写自己的模板（带在线编辑器）。',
     h1: '文档',
     lead: '大部分内容，动手试一下就明白。',
     toc: [
@@ -104,7 +104,7 @@ const T = {
       ['reference', '参考'],
     ],
     install: [
-      { h: '下载', p: '下载对应芯片的 DMG。', link: '下载页' },
+      { h: '下载', p: '下载对应芯片的 DMG。Windows 与 Linux（AppImage、deb、rpm）提供预览版。', link: '下载页' },
       { h: '拖进「应用程序」', p: '打开 DMG，把 Qantrip 拖进「应用程序」。' },
       { h: '首次打开', p: 'Qantrip 尚未经过 Apple 公证：到 系统设置 → 隐私与安全性，点「仍要打开」。' },
       { h: '授权辅助功能', p: '可选。授权后 Qantrip 可以替你粘贴；不授权时 Prompt 会复制到剪贴板。' },
@@ -120,7 +120,7 @@ const T = {
     ] as [string, string, string][],
     keysH: '快捷键',
     keys: [
-      [['⌃', 'Q'], '唤出面板（可自定义）'],
+      [['⌃', 'Q'], '唤出面板（Windows 与 Linux 上为 Ctrl+Q，可自定义）'],
       [['⇥'], '接受候选'],
       [['→'], '接受灰字提示'],
       [['↑', '↓'], '选择候选'],
@@ -137,7 +137,7 @@ const T = {
     writeH: '编写模板',
     writeP: (
       <>
-        模板是 <code>~/Library/Application Support/Qantrip/templates/</code> 里的 Markdown 文件：头部声明参数，正文是 MiniJinja 模板。可以直接在这里改，下面运行的是真实的 Qantrip 核心。
+        模板是 <code>~/Library/Application Support/Qantrip/templates/</code>（Windows：<code>%APPDATA%\Qantrip\templates</code>，Linux：<code>~/.local/share/qantrip/templates/</code>）里的 Markdown 文件：头部声明参数，正文是 MiniJinja 模板。可以直接在这里改，下面运行的是真实的 Qantrip 核心。
       </>
     ),
     tryLabel: '试用输入',
