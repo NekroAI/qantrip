@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LibraryWindow.model.reload()
         }
         SyncService.shared.start()
+        UpdateChecker.shared.start()
         // 排除的应用（D35）：前台切到这些应用时暂停快捷键，让按键原样交给应用
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.applyExclusion(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication) }
@@ -284,6 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func openUpdate() {
+        MainActor.assumeIsolated { UpdateChecker.shared.openDownload() }
+    }
+
     @objc func openSyncSettings() {
         LibraryWindow.showSettings(.sync)
     }
@@ -296,6 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if let update = MainActor.assumeIsolated({ UpdateChecker.shared.pending }) {
+            menu.addItem(withTitle: L("有新版本 \(update.version)，前往下载…", "Update Available: \(update.version)…"), action: #selector(openUpdate), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+        }
         if SyncService.shared.pendingJoinCount > 0 {
             menu.addItem(withTitle: L("有设备请求加入同步…", "A Mac wants to join sync…"), action: #selector(openSyncSettings), keyEquivalent: "").target = self
             menu.addItem(.separator())

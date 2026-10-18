@@ -394,19 +394,11 @@ private struct PhraseSheet: View {
     @State private var saved = false
     @State private var copied = false
 
-    /// 复制时标记为机密内容（剪贴板管理器不记录），60 秒后若剪贴板未被改动则清除
     private func copyPhrase() {
         let pb = NSPasteboard.general
         pb.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(phrase, forType: .string)
-        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-        pb.writeObjects([item])
-        let change = pb.changeCount
+        pb.setString(phrase, forType: .string)
         copied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-            if pb.changeCount == change { pb.clearContents() }
-        }
     }
 
     private func savePhrase() {
@@ -439,7 +431,7 @@ private struct PhraseSheet: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
             .textSelection(.enabled)
             HStack {
-                Button { copyPhrase() } label: { Label(copied ? L("已复制（60 秒后从剪贴板清除）", "Copied (cleared from the clipboard in 60 s)") : L("复制", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc") }
+                Button { copyPhrase() } label: { Label(copied ? L("已复制", "Copied") : L("复制", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc") }
                 Button { savePhrase() } label: { Label(L("保存为文件…", "Save to File…"), systemImage: "square.and.arrow.down") }
                 Spacer()
             }

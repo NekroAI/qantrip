@@ -323,6 +323,7 @@ private struct AboutView: View {
             Text("Nekro Qantrip").font(.qDisplay(26))
             Text(L("按 Q 施放一个戏法", "Press Q to cast a spell")).foregroundStyle(.secondary)
             Text(L("版本 \(version) · core \(coreVersion())", "Version \(version) · core \(coreVersion())")).font(.qMono(11)).foregroundStyle(.secondary)
+            UpdateSection().frame(width: 360)
             Divider().frame(width: 280)
             Text(L("以 GPL-3.0-or-later 许可开源\n内置字体 Monaspace Neon、Fraunces 以 SIL OFL 1.1 许可分发", "Open source under GPL-3.0-or-later\nBundled fonts Monaspace Neon and Fraunces are distributed under SIL OFL 1.1"))
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -405,6 +406,45 @@ private struct AppIcon: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 18, height: 18)
         } else {
             Image(systemName: "app").frame(width: 18, height: 18)
+        }
+    }
+}
+
+
+/// 设置 › 关于：检查更新（只提示，不自动更新）
+private struct UpdateSection: View {
+    @Bindable private var updates = UpdateChecker.shared
+    @State private var auto = UpdateChecker.shared.autoCheck
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let r = updates.available {
+                VStack(spacing: 6) {
+                    Text(L("有新版本 \(r.version)", "Version \(r.version) is available")).font(.headline)
+                    HStack {
+                        Button(L("前往下载", "Download")) { updates.openDownload() }.buttonStyle(.borderedProminent)
+                        if updates.skippedVersion != r.version {
+                            Button(L("跳过此版本", "Skip This Version")) { updates.skippedVersion = r.version }
+                        } else {
+                            Text(L("已跳过", "Skipped")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button(L("检查更新", "Check for Updates")) { updates.check(manual: true) }
+                        .disabled(updates.state == .checking)
+                    switch updates.state {
+                    case .checking: ProgressView().controlSize(.small)
+                    case .upToDate: Text(L("已是最新版本", "You're up to date")).font(.caption).foregroundStyle(.secondary)
+                    case .failed: Text(L("检查失败，请稍后再试", "Couldn't check. Try again later.")).font(.caption).foregroundStyle(.red)
+                    case .idle: EmptyView()
+                    }
+                }
+            }
+            Toggle(L("自动检查更新", "Check for updates automatically"), isOn: $auto)
+                .onChange(of: auto) { _, v in updates.autoCheck = v }
+                .font(.caption)
         }
     }
 }
