@@ -28,7 +28,7 @@ internal sealed class LibraryModel
         Engine.Reload();
         Entries = Engine.Entries();
         // 当前编辑的模板未修改时，跟随磁盘内容刷新（外部编辑器修改、同步拉取）
-        if (Editor is { Dirty: false } e && Entries.FirstOrDefault(x => x.Name == e.Entry.Name) is { } fresh
+        if (Editor is { Dirty: false } e && Entries.FirstOrDefault(x => Key(x) == Key(e.Entry)) is { } fresh
             && (fresh.Source != e.Entry.Source || fresh.Path != e.Entry.Path || fresh.OverridesBuiltin != e.Entry.OverridesBuiltin))
             Editor = new EditorModel(fresh, this);
         Changed?.Invoke();
@@ -45,11 +45,14 @@ internal sealed class LibraryModel
         }
     }
 
-    /// 选中模板（调用方负责未保存修改的确认）。
-    public void Select(string? name)
+    /// 列表中的标识：已删除的内置模板可能与同名的用户模板并存（D34）。
+    public static string Key(TemplateEntry e) => e.Deleted ? "deleted:" + e.Name : e.Name;
+
+    /// 按 Key 选中模板（调用方负责未保存修改的确认）。未删除的模板 Key 即名称。
+    public void Select(string? key)
     {
-        Selection = name;
-        Editor = name is null ? null : Entries.FirstOrDefault(e => e.Name == name) is { } entry ? new EditorModel(entry, this) : null;
+        Selection = key;
+        Editor = key is null ? null : Entries.FirstOrDefault(e => Key(e) == key) is { } entry ? new EditorModel(entry, this) : null;
         Changed?.Invoke();
     }
 
@@ -109,17 +112,36 @@ internal sealed class LibraryModel
         Log.Event("library", new() { ["action"] = "customize" });
     }
 
-    /// 删除用户模板（移到回收站）；覆盖内置的模板删除后恢复内置版本。返回是否成功。
-    public bool Delete(TemplateEntry e)
+    /// 删除模板（D34，与 /rm 相同）：用户模板移到回收站；内置模板（含修改过的）写入删除标记，之后可以恢复。
+    /// 返回错误信息，成功时为 null。
+    public string? Delete(TemplateEntry e)
     {
-        if (e.Path is not { } path) return false;
-        bool ok = RecycleBin.Move(path);
+        var err = Apply(Engine.DeleteTemplate(e.Name));
         if (Editor != null) Editor.Dirty = false;
         Reload();
-        if (e.OverridesBuiltin) Select(e.Name);
-        else Select(null);
-        Log.Event("library", new() { ["action"] = e.OverridesBuiltin ? "restore" : "delete", ["ok"] = ok });
-        return ok;
+        Select(null);
+        Log.Event("library", new() { ["action"] = "delete", ["builtin"] = e.Builtin || e.OverridesBuiltin, ["ok"] = err is null });
+        return err;
+    }
+
+    /// 恢复内置模板（与 /restore 相同）：撤销删除，或丢弃修改（修改版本移到回收站）。返回错误信息，成功时为 null。
+    public string? Restore(TemplateEntry e)
+    {
+        var err = Apply(Engine.RestoreTemplate(e.Name));
+        if (Editor != null) Editor.Dirty = false;
+        Reload();
+        Select(err is null ? e.Name : null);
+        Log.Event("library", new() { ["action"] = "restore", ["ok"] = err is null });
+        return err;
+    }
+
+    /// 把核心返回的 trash_path 移到回收站。
+    private static string? Apply(CommandResult r)
+    {
+        if (!r.Ok) return r.Error ?? "?";
+        if (r.Outcome?.TrashPath is { } path && !RecycleBin.Move(path))
+            return Loc.T("无法移到回收站：", "Couldn't move the file to the Recycle Bin: ") + path;
+        return null;
     }
 
     // MARK: 导入导出
