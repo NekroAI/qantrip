@@ -40,10 +40,22 @@ fn decode(data: &[u8]) -> BTreeMap<String, Vec<u8>> {
     m.into_iter().filter_map(|(k, v)| data_encoding::BASE64.decode(v.as_bytes()).ok().map(|b| (k, b))).collect()
 }
 
-/// 系统是否有可用的 Secret Service（能连接并取得一个集合）
+/// 持久保存的集合：默认集合（通常是"登录"密钥环），其次任意非临时集合。
+/// GNOME 密钥环的 `session` 集合只保存在内存中，注销后丢失，不能用来保存设备密钥。
+fn persistent_collection<'a>(ss: &'a SecretService<'a>) -> Option<secret_service::blocking::Collection<'a>> {
+    let is_session = |c: &secret_service::blocking::Collection| c.collection_path.as_str().ends_with("/session");
+    if let Ok(c) = ss.get_default_collection() {
+        if !is_session(&c) {
+            return Some(c);
+        }
+    }
+    ss.get_all_collections().ok()?.into_iter().find(|c| !is_session(c))
+}
+
+/// 系统是否有可用的 Secret Service 与持久保存的集合
 fn keyring_available() -> bool {
     match SecretService::connect(EncryptionType::Dh) {
-        Ok(ss) => ss.get_default_collection().or_else(|_| ss.get_any_collection()).is_ok(),
+        Ok(ss) => persistent_collection(&ss).is_some(),
         Err(_) => false,
     }
 }
@@ -79,9 +91,10 @@ impl LinuxSecretStore {
             },
             Backend::Keyring => {
                 let ss = SecretService::connect(EncryptionType::Dh).map_err(err)?;
-                let items = ss.search_items(self.attributes()).map_err(err)?;
-                let item = items.unlocked.into_iter().next().or_else(|| items.locked.into_iter().next());
-                let Some(item) = item else { return Ok(BTreeMap::new()) };
+                let collection = persistent_collection(&ss).ok_or_else(|| err("no persistent keyring"))?;
+                collection.ensure_unlocked().map_err(err)?;
+                let items = collection.search_items(self.attributes()).map_err(err)?;
+                let Some(item) = items.into_iter().next() else { return Ok(BTreeMap::new()) };
                 item.ensure_unlocked().map_err(err)?;
                 Ok(decode(&item.get_secret().map_err(err)?))
             }
@@ -94,7 +107,7 @@ impl LinuxSecretStore {
             Backend::File => crate::paths::write_private(&self.file, &data).map_err(err),
             Backend::Keyring => {
                 let ss = SecretService::connect(EncryptionType::Dh).map_err(err)?;
-                let collection = ss.get_default_collection().or_else(|_| ss.get_any_collection()).map_err(err)?;
+                let collection = persistent_collection(&ss).ok_or_else(|| err("no persistent keyring"))?;
                 collection.ensure_unlocked().map_err(err)?;
                 let label = format!("Qantrip sync ({})", self.host);
                 collection.create_item(&label, self.attributes(), &data, true, "application/json").map_err(err)?;

@@ -576,9 +576,13 @@ impl SyncService {
             match url {
                 Ok(Ok(authorize)) => {
                     #[cfg(all(feature = "debug-hooks", debug_assertions))]
-                    if crate::debug::enabled() {
-                        crate::log::event("debug_sign_in_url", serde_json::json!({"url_len": authorize.len()}));
+                    if let Some(cookie) = crate::debug::sync_cookie() {
+                        // 仅调试构建：对本地测试服务端，用预置的网页会话代替浏览器完成授权
+                        gio::spawn_blocking(move || crate::debug::authorize_with_cookie(&authorize, &cookie));
+                    } else {
+                        gtk::UriLauncher::new(&authorize).launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
                     }
+                    #[cfg(not(all(feature = "debug-hooks", debug_assertions)))]
                     gtk::UriLauncher::new(&authorize).launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
                 }
                 Ok(Err(e)) => {

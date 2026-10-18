@@ -156,6 +156,29 @@ fn debug_sync(app: &Rc<App>, op: &str) {
     }
 }
 
+/// 调试同步：`QANTRIP_DEBUG_SYNC_COOKIE` 为本地测试服务端的网页会话令牌时，登录不打开浏览器
+pub fn sync_cookie() -> Option<String> {
+    if !enabled() {
+        return None;
+    }
+    std::env::var("QANTRIP_DEBUG_SYNC_COOKIE").ok().filter(|s| !s.is_empty())
+}
+
+/// 以网页会话批准桌面端授权，再请求回调地址（本机回环）
+pub fn authorize_with_cookie(authorize: &str, cookie: &str) {
+    let agent: ureq::Agent = ureq::Agent::config_builder().max_redirects(0).http_status_as_error(false).build().into();
+    let r = agent
+        .post(authorize)
+        .header("cookie", &format!("qt_session={cookie}"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .send("intent=approve");
+    let location = r.ok().and_then(|resp| resp.headers().get("location").and_then(|v| v.to_str().ok()).map(str::to_string));
+    crate::log::event("debug_authorize", serde_json::json!({"redirected": location.is_some()}));
+    if let Some(loc) = location {
+        let _ = agent.get(&loc).call();
+    }
+}
+
 /// 常驻内存（MB）
 pub fn rss_mb() -> f64 {
     let s = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();

@@ -317,13 +317,12 @@ impl SyncPage {
                     g.add(&adw::ActionRow::builder().title(l("请求已过期", "The request expired")).build());
                 }
             }
-            let r = adw::ActionRow::new();
             let c = gtk::Button::with_label(&if join.stage == JoinStage::Expired { l("关闭", "Close") } else { l("取消", "Cancel") });
-            c.set_valign(gtk::Align::Center);
+            c.set_halign(gtk::Align::Start);
+            c.set_margin_top(8);
             let ss = s.clone();
             c.connect_clicked(move |_| ss.cancel_join());
-            r.add_suffix(&c);
-            g.add(&r);
+            g.add(&c);
             return;
         }
         if self.recover_mode.get() {
@@ -510,18 +509,20 @@ impl SyncPage {
         // 批准后显示给用户、在新设备上输入的确认码
         for (id, confirm) in s.confirm_codes.borrow().clone() {
             let g = self.group(Some(l("最后一步", "Last step")), Some(l("在新设备上输入这个确认码", "Enter this code on the new device")));
+            // 只放普通控件：AdwPreferencesGroup 总把列表行排在普通控件前面
+            let bx = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             let code = gtk::Label::new(Some(&confirm));
             code.add_css_class("big-code");
             code.set_selectable(true);
-            code.set_margin_top(6);
-            g.add(&code);
-            let r = adw::ActionRow::new();
+            code.set_hexpand(true);
+            code.set_xalign(0.0);
             let b = gtk::Button::with_label(&l("完成", "Done"));
             b.set_valign(gtk::Align::Center);
             let ss = s.clone();
             b.connect_clicked(move |_| ss.dismiss_confirm_code(&id));
-            r.add_suffix(&b);
-            g.add(&r);
+            bx.append(&code);
+            bx.append(&b);
+            g.add(&bx);
         }
 
         let requests: Vec<_> = s
@@ -532,7 +533,10 @@ impl SyncPage {
             .cloned()
             .collect();
         if !requests.is_empty() {
-            let g = self.group(Some(l("新设备请求加入", "A new device wants to join")), None);
+            let g = self.group(
+                Some(l("新设备请求加入", "A new device wants to join")),
+                Some(l("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new device. If this isn't you, reject it.")),
+            );
             for r in requests {
                 if r.status == JoinRequestStatus::WaitingForNewDevice {
                     let row = adw::ActionRow::builder().title(l("等待新设备显示校验码…", "Waiting for the new device to show its code…")).build();
@@ -819,6 +823,7 @@ impl SyncPage {
         let Some(phrase) = self.app.sync.take_phrase() else { return };
         self.phrase_dialog_open.set(true);
         let dialog = adw::Dialog::builder().title(l("你的恢复短语", "Your recovery phrase")).content_width(560).can_close(false).build();
+        // 恢复短语的标签可以选择文字；焦点放在确认框上，避免第一个词默认被选中
         let b = gtk::Box::new(gtk::Orientation::Vertical, 14);
         b.set_margin_start(22);
         b.set_margin_end(22);
@@ -873,6 +878,7 @@ impl SyncPage {
         b.append(&note);
         let saved = gtk::CheckButton::with_label(&l("我已经保存好了", "I've saved it"));
         b.append(&saved);
+        dialog.set_focus(Some(&saved));
         let done = gtk::Button::with_label(&l("完成", "Done"));
         done.add_css_class("suggested-action");
         done.set_halign(gtk::Align::End);

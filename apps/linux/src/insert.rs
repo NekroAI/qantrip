@@ -40,8 +40,13 @@ pub enum Outcome {
     Copied { reason: String },
 }
 
+/// 文本的各种 MIME 类型都直接给 UTF-8 字节：GTK 默认把字符串序列化为不带 charset 的 `text/plain` 时
+/// 会把非 ASCII 字符转义（`\E4\BD\A0`），按 `text/plain` 读取的程序（如 wl-paste、部分终端）就会得到乱码
+const TEXT_MIMES: [&str; 5] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "TEXT", "STRING"];
+
 fn text_provider(text: &str, hint: bool) -> gdk::ContentProvider {
-    let mut parts = vec![gdk::ContentProvider::for_value(&text.to_value())];
+    let bytes = glib::Bytes::from(text.as_bytes());
+    let mut parts: Vec<gdk::ContentProvider> = TEXT_MIMES.iter().map(|m| gdk::ContentProvider::for_bytes(m, &bytes)).collect();
     if hint {
         parts.push(gdk::ContentProvider::for_bytes(HISTORY_HINT_MIME, &glib::Bytes::from_static(b"secret")));
     }
