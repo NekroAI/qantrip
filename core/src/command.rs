@@ -37,6 +37,7 @@ enum Cmd {
     Dup,
     Alias,
     Rm,
+    Restore,
     Sync,
     Settings,
     Library,
@@ -49,6 +50,7 @@ const COMMANDS: &[(Cmd, &str)] = &[
     (Cmd::Dup, "dup"),
     (Cmd::Alias, "alias"),
     (Cmd::Rm, "rm"),
+    (Cmd::Restore, "restore"),
     (Cmd::Sync, "sync"),
     (Cmd::Settings, "settings"),
     (Cmd::Library, "library"),
@@ -66,6 +68,7 @@ impl Cmd {
             Cmd::Dup => tr!(loc, "/dup 名称 新名称", "/dup name new-name"),
             Cmd::Alias => tr!(loc, "/alias 名称 别名", "/alias name alias"),
             Cmd::Rm => tr!(loc, "/rm 名称", "/rm name"),
+            Cmd::Restore => tr!(loc, "/restore 名称", "/restore name"),
             Cmd::Sync => "/sync".into(),
             Cmd::Settings => "/settings".into(),
             Cmd::Library => tr!(loc, "/library [名称]", "/library [name]"),
@@ -79,10 +82,8 @@ impl Cmd {
             Cmd::Edit => tr!(loc, "在模板库中编辑", "Edit in the template library"),
             Cmd::Dup => tr!(loc, "复制一个模板（可改写内置模板）", "Copy a template (e.g. to change a built-in one)"),
             Cmd::Alias => tr!(loc, "给模板添加别名", "Add an alias to a template"),
-            Cmd::Rm => {
-                let (zh, en) = trash_word();
-                tr!(loc, "删除模板（移到{zh}）", "Delete a template (moves it to the {en})")
-            }
+            Cmd::Rm => tr!(loc, "删除模板（内置模板可以恢复）", "Delete a template (built-in ones can be restored)"),
+            Cmd::Restore => tr!(loc, "恢复内置模板（撤销删除或修改）", "Restore a built-in template (undo delete or changes)"),
             Cmd::Sync => tr!(loc, "立即同步", "Sync now"),
             Cmd::Settings => tr!(loc, "打开设置", "Open settings"),
             Cmd::Library => tr!(loc, "打开模板库", "Open the template library"),
@@ -94,6 +95,20 @@ impl Cmd {
 /// 系统回收站的叫法（中文, 英文）
 fn trash_word() -> (&'static str, &'static str) {
     if cfg!(target_os = "windows") { ("回收站", "Recycle Bin") } else { ("废纸篓", "Trash") }
+}
+
+fn is_builtin_name(lib: &Library, name: &str) -> bool {
+    builtin_source(lib, name).is_some()
+}
+
+/// 当前内置模板语言下的内置模板源码
+fn builtin_source(lib: &Library, name: &str) -> Option<&'static str> {
+    crate::library::builtin_source_in(name, lib.template_locale)
+}
+
+/// 删除标记文件：`名称.deleted.md`（与可能存在的用户修改版本 `名称.md` 不冲突）
+fn marker_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("{name}.deleted.md"))
 }
 
 /// 输入是否为指令（允许全角斜杠）。
@@ -289,6 +304,10 @@ enum Plan {
     Write { path: PathBuf, source: String, message: String, open: Option<String> },
     Open { name: String },
     Trash { path: PathBuf, name: String },
+    /// 删除内置模板：写入删除标记；`trash` 为同名的用户修改版本（一并移到废纸篓）
+    MarkDeleted { marker: PathBuf, name: String, trash: Option<PathBuf> },
+    /// 恢复内置模板：删除标记或移走用户修改版本
+    Restore { marker: Option<PathBuf>, trash: Option<PathBuf>, name: String },
     Action { action: String, message: String },
 }
 
@@ -595,7 +614,7 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             }
         }
         Cmd::Rm => {
-            suggest_templates(&mut a, 1, true);
+            suggest_templates(&mut a, 1, false);
             let Some(w) = arg(1) else { return finish(ctx, a, None) };
             ctx.token(TokenKind::Positional, w.start, w.end);
             match find_template(lib, w.text) {
@@ -604,19 +623,84 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                     ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
                     None
                 }
-                Some(t) if t.builtin => {
-                    ctx.error(tr!(loc, "内置模板不能删除", "Built-in templates can't be deleted"), w.start, w.end, false);
-                    a.template = Some(template_info(t));
-                    None
-                }
                 Some(t) => {
                     let n = t.name.clone();
                     a.template = Some(template_info(t));
                     a.preview = Some(plain_preview(&t.source));
-                    let (zh, en) = trash_word();
-                    a.hint = tr!(loc, "↩ 删除 {n}（移到{zh}）", "↩ delete {n} (moves it to the {en})");
-                    t.path.clone().map(|path| Plan::Trash { path, name: n })
+                    let has_builtin = is_builtin_name(lib, &n);
+                    if has_builtin {
+                        a.hint = tr!(loc, "↩ 删除 {n}（之后可用 /restore {n} 恢复）", "↩ delete {n} (bring it back with /restore {n})");
+                        user_dir.map(|dir| Plan::MarkDeleted { marker: marker_path(dir, &n), name: n.clone(), trash: t.path.clone() })
+                    } else {
+                        let (zh, en) = trash_word();
+                        a.hint = tr!(loc, "↩ 删除 {n}（移到{zh}）", "↩ delete {n} (moves it to the {en})");
+                        t.path.clone().map(|path| Plan::Trash { path, name: n })
+                    }
                 }
+            }
+        }
+        Cmd::Restore => {
+            // 候选：已删除的内置模板与被修改过的内置模板
+            let restorable: Vec<(String, String)> = lib
+                .deleted
+                .iter()
+                .map(|d| (d.name.clone(), tr!(loc, "已删除", "deleted")))
+                .chain(lib.visible().filter(|t| !t.builtin && is_builtin_name(lib, &t.name)).map(|t| (t.name.clone(), tr!(loc, "已修改", "changed"))))
+                .collect();
+            let current = arg(1).filter(|_| ws.len() == 2 && !ends_ws);
+            if current.is_some() || (ws.len() == 1 && ends_ws) {
+                let prefix = current.map(|w| w.text.to_lowercase()).unwrap_or_default();
+                let (start, end) = current.map(|w| (w.start, w.end)).unwrap_or((input.len(), input.len()));
+                for (n, state) in restorable.iter().filter(|(n, _)| n.starts_with(&prefix)) {
+                    a.candidates.push(Candidate {
+                        kind: CandidateKind::Template,
+                        key: n.clone(),
+                        title: n.clone(),
+                        subtitle: state.clone(),
+                        detail: state.clone(),
+                        edit: Edit { start: u16(input, start), end: u16(input, end), text: n.clone() },
+                        tier: Some(MatchTier::Prefix),
+                        active: false,
+                        section: String::new(),
+                    });
+                }
+                if let (Some(w), Some(c)) = (current, a.candidates.first())
+                    && c.title.len() > w.text.len()
+                    && c.title.starts_with(w.text)
+                {
+                    a.ghost = Some(c.title[w.text.len()..].to_string());
+                }
+            }
+            let Some(w) = arg(1) else {
+                a.hint = if restorable.is_empty() {
+                    tr!(loc, "没有需要恢复的内置模板", "No built-in template to restore")
+                } else {
+                    tr!(loc, "选择要恢复的内置模板", "Choose a built-in template to restore")
+                };
+                return finish(ctx, a, None);
+            };
+            ctx.token(TokenKind::Positional, w.start, w.end);
+            let n = w.text.to_string();
+            let marker = lib.deleted.iter().find(|d| d.name == n).map(|d| d.marker.clone());
+            let changed = lib.visible().find(|t| !t.builtin && t.name == n && is_builtin_name(lib, &n)).and_then(|t| t.path.clone());
+            if marker.is_none() && changed.is_none() {
+                let msg = if is_builtin_name(lib, &n) {
+                    tr!(loc, "`{n}` 已是内置版本", "`{n}` is already the built-in version")
+                } else {
+                    tr!(loc, "`{n}` 不是内置模板", "`{n}` is not a built-in template")
+                };
+                ctx.error(msg, w.start, w.end, ws.len() == 2 && !ends_ws);
+                None
+            } else {
+                if let Some(src) = builtin_source(lib, &n) {
+                    a.preview = Some(plain_preview(src));
+                }
+                a.hint = if changed.is_some() {
+                    tr!(loc, "↩ 恢复 {n} 的内置版本（你的修改移到废纸篓）", "↩ restore the built-in {n} (your version goes to the Trash)")
+                } else {
+                    tr!(loc, "↩ 恢复 {n}", "↩ restore {n}")
+                };
+                Some(Plan::Restore { marker, trash: changed, name: n })
             }
         }
         Cmd::Sync | Cmd::Settings => {
@@ -703,13 +787,17 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
 }
 
 fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
+    // 还没有可预览的内容时，右栏显示当前指令的提示（如"选择要恢复的内置模板"）
+    if a.template.is_none() && a.preview.is_none() && !a.hint.is_empty() {
+        a.preview = Some(plain_preview(&a.hint));
+    }
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
     let hard_errors = ctx.diags.iter().any(|d| d.severity == Severity::Error && !d.at_cursor);
     a.tokens = ctx.tokens;
     a.diagnostics = ctx.diags;
     let plan = plan.filter(|_| !errors);
     a.enter = match &plan {
-        Some(Plan::Trash { .. }) => EnterAction::Run { confirm: true },
+        Some(Plan::Trash { .. } | Plan::MarkDeleted { .. }) => EnterAction::Run { confirm: true },
         Some(_) => EnterAction::Run { confirm: false },
         // 正在输入指令名：回车补全为第一个候选
         None => match a.candidates.first() {
@@ -744,6 +832,29 @@ pub fn run(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Optio
             Ok(CommandOutcome { message, open_editor: open, trash_path: None, action: None })
         }
         Plan::Open { name } => Ok(CommandOutcome { message: String::new(), open_editor: Some(name), trash_path: None, action: None }),
+        Plan::MarkDeleted { marker, name, trash } => {
+            if let Some(dir) = marker.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&marker, format!("---\nname: {name}\ndeleted: true\n---\n")).map_err(|e| e.to_string())?;
+            Ok(CommandOutcome {
+                message: tr!(loc, "已删除 {name}，可用 /restore {name} 恢复", "Deleted {name}. Bring it back with /restore {name}"),
+                open_editor: None,
+                trash_path: trash.map(|p| p.to_string_lossy().to_string()),
+                action: None,
+            })
+        }
+        Plan::Restore { marker, trash, name } => {
+            if let Some(m) = marker {
+                std::fs::remove_file(&m).map_err(|e| e.to_string())?;
+            }
+            Ok(CommandOutcome {
+                message: tr!(loc, "已恢复内置模板 {name}", "Restored the built-in {name}"),
+                open_editor: None,
+                trash_path: trash.map(|p| p.to_string_lossy().to_string()),
+                action: None,
+            })
+        }
         Plan::Action { action, message } => Ok(CommandOutcome { message, open_editor: None, trash_path: None, action: Some(action) }),
         Plan::Trash { path, name } => Ok(CommandOutcome {
             message: {
@@ -831,7 +942,7 @@ mod tests {
         assert!(lib.problems.is_empty(), "{:?}", lib.problems);
         // 内置模板不能加别名、不能删
         assert_eq!(analyze(&lib, Some(&dir), "/alias review rv", None).enter, EnterAction::Blocked);
-        assert_eq!(analyze(&lib, Some(&dir), "/rm review", None).enter, EnterAction::Blocked);
+        assert_eq!(analyze(&lib, Some(&dir), "/rm review", None).enter, EnterAction::Run { confirm: true });
         // 已被占用的别名
         assert_eq!(analyze(&lib, Some(&dir), "/alias my-review r", None).enter, EnterAction::Blocked);
         run(&lib, Some(&dir), "/alias my-review mr", None).unwrap();
@@ -841,6 +952,46 @@ mod tests {
         assert_eq!(a.enter, EnterAction::Run { confirm: true });
         let out = run(&lib, Some(&dir), "/rm my-review", None).unwrap();
         assert!(out.trash_path.unwrap().ends_with("my-review.md"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_and_restore_builtins() {
+        let dir = tmp();
+        let lib = Library::load(Some(&dir));
+        // 删除内置模板：写入标记，名称与别名空出来
+        let out = run(&lib, Some(&dir), "/rm review", None).unwrap();
+        assert!(out.trash_path.is_none());
+        let lib = Library::load(Some(&dir));
+        assert!(lib.get("review").is_none());
+        assert_eq!(lib.deleted.len(), 1);
+        assert!(lib.problems.is_empty(), "{:?}", lib.problems);
+        // 空出来的名称和别名可以用于新模板
+        run(&lib, Some(&dir), "/new r 我自己的 r", None).unwrap();
+        let lib = Library::load(Some(&dir));
+        assert!(lib.get("r").is_some());
+        // 恢复后内置别名 r 与用户模板 r 冲突，按别名冲突规则停用该别名并报告
+        let a = analyze(&lib, Some(&dir), "/restore ", None);
+        assert_eq!(a.candidates.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["review"]);
+        run(&lib, Some(&dir), "/restore review", None).unwrap();
+        let lib = Library::load(Some(&dir));
+        assert!(lib.get("review").is_some_and(|t| t.builtin));
+        assert!(lib.deleted.is_empty());
+        // 修改过的内置模板：/rm 把修改版本移到废纸篓并写入标记；/restore 恢复内置版本
+        run(&lib, Some(&dir), "/dup explain explain2", None).unwrap();
+        std::fs::write(dir.join("explain.md"), "---\nname: explain\n---\n我的解释\n").unwrap();
+        let lib = Library::load(Some(&dir));
+        assert!(!lib.get("explain").unwrap().builtin);
+        let out = run(&lib, Some(&dir), "/rm explain", None).unwrap();
+        assert!(out.trash_path.unwrap().ends_with("explain.md"));
+        std::fs::remove_file(dir.join("explain.md")).unwrap();
+        let lib = Library::load(Some(&dir));
+        assert!(lib.get("explain").is_none());
+        run(&lib, Some(&dir), "/restore explain", None).unwrap();
+        let lib = Library::load(Some(&dir));
+        assert!(lib.get("explain").is_some_and(|t| t.builtin));
+        // 内置版本不需要恢复
+        assert_eq!(analyze(&lib, Some(&dir), "/restore explain", None).enter, EnterAction::Blocked);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -866,7 +1017,7 @@ mod tests {
     fn command_completion() {
         let lib = Library::load(None);
         let a = analyze(&lib, None, "/", None);
-        assert_eq!(a.candidates.len(), 9);
+        assert_eq!(a.candidates.len(), 10);
         let a = analyze(&lib, None, "/n", None);
         assert_eq!(a.ghost.as_deref(), Some("ew "));
         assert!(matches!(a.enter, EnterAction::Complete { .. }));

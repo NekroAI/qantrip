@@ -46,11 +46,14 @@ final class LibraryModel {
         }
     }
 
-    func select(_ name: String?) {
-        guard name != selection else { return }
+    /// 列表中的标识：已删除的内置模板可能与同名的用户模板并存
+    static func key(_ e: TemplateEntry) -> String { e.deleted ? "deleted:\(e.name)" : e.name }
+
+    func select(_ key: String?) {
+        guard key != selection else { return }
         if let e = editor, e.dirty, !confirmDiscard(e.doc?.name ?? e.entry.name) { return }
-        selection = name
-        editor = name.flatMap { n in entries.first { $0.name == n } }.map { EditorModel(entry: $0, library: self) }
+        selection = key
+        editor = key.flatMap { k in entries.first { Self.key($0) == k } }.map { EditorModel(entry: $0, library: self) }
     }
 
     private func confirmDiscard(_ name: String) -> Bool {
@@ -110,24 +113,47 @@ final class LibraryModel {
         editor = entries.first { $0.name == e.name }.map { EditorModel(entry: $0, library: self) }
     }
 
-    /// 删除用户模板（移到废纸篓）；覆盖内置的模板删除后恢复内置版本。
+    /// 删除模板（docs/decisions.md D34）：用户模板移到废纸篓；内置模板（含修改过的）删除后可以恢复。
     func delete(_ e: TemplateEntry) {
-        guard let path = e.path else { return }
         let a = NSAlert()
-        a.messageText = e.overridesBuiltin ? L("恢复「\(e.name)」为内置版本？", "Restore “\(e.name)” to the built-in version?") : L("删除模板「\(e.name)」？", "Delete template “\(e.name)”?")
-        a.informativeText = L("文件会被移到废纸篓。", "The file will be moved to the Trash.")
-        a.addButton(withTitle: e.overridesBuiltin ? L("恢复内置", "Restore") : L("删除", "Delete"))
+        if e.builtin || e.overridesBuiltin {
+            a.messageText = L("删除内置模板「\(e.name)」？", "Delete the built-in template “\(e.name)”?")
+            a.informativeText = e.overridesBuiltin
+                ? L("你的修改会移到废纸篓。之后可以在“已删除”中恢复内置版本，它的名称和别名在此期间可以给你自己的模板使用。", "Your changes go to the Trash. You can restore the built-in version from “Deleted” later; meanwhile its name and aliases are free for your own templates.")
+                : L("之后可以在“已删除”中恢复。它的名称和别名在此期间可以给你自己的模板使用。", "You can restore it from “Deleted” later. Meanwhile its name and aliases are free for your own templates.")
+        } else {
+            a.messageText = L("删除模板「\(e.name)」？", "Delete template “\(e.name)”?")
+            a.informativeText = L("文件会被移到废纸篓。", "The file will be moved to the Trash.")
+        }
+        a.addButton(withTitle: L("删除", "Delete"))
         a.addButton(withTitle: L("取消", "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
-        editor?.dirty = false
-        reload()
+        apply(try? engine.deleteTemplate(name: e.name))
+        selection = nil
+        editor = nil
+    }
+
+    /// 恢复内置模板：撤销删除，或丢弃修改（修改版本移到废纸篓）。
+    func restore(_ e: TemplateEntry) {
         if e.overridesBuiltin {
-            editor = entries.first { $0.name == e.name }.map { EditorModel(entry: $0, library: self) }
-        } else {
-            selection = nil
-            editor = nil
+            let a = NSAlert()
+            a.messageText = L("恢复「\(e.name)」为内置版本？", "Restore “\(e.name)” to the built-in version?")
+            a.informativeText = L("你的修改会移到废纸篓。", "Your changes will be moved to the Trash.")
+            a.addButton(withTitle: L("恢复内置", "Restore"))
+            a.addButton(withTitle: L("取消", "Cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else { return }
         }
+        apply(try? engine.restoreTemplate(name: e.name))
+        editor?.dirty = false
+        selection = nil
+        select(e.name)
+    }
+
+    private func apply(_ outcome: CommandOutcome?) {
+        if let path = outcome?.trashPath {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        }
+        reload()
     }
 
     // MARK: 导入导出
@@ -349,15 +375,16 @@ struct LibraryView: View {
         let items = model.filtered
         let groups: [(String, [TemplateEntry])] = [
             (L("我的模板", "My templates"), items.filter { !$0.builtin && !$0.partial }),
-            (L("内置", "Built-in"), items.filter { $0.builtin && !$0.partial }),
+            (L("内置", "Built-in"), items.filter { $0.builtin && !$0.partial && !$0.deleted }),
             (L("公共片段", "Shared snippets"), items.filter { $0.partial }),
+            (L("已删除", "Deleted"), items.filter { $0.deleted }),
         ]
         return List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
             ForEach(groups, id: \.0) { title, list in
                 if !list.isEmpty {
                     Section(title) {
                         ForEach(list, id: \.name) { e in
-                            SidebarRow(entry: e).tag(e.name).contextMenu { menu(e) }
+                            SidebarRow(entry: e).tag(LibraryModel.key(e)).contextMenu { menu(e) }
                         }
                     }
                 }
@@ -369,10 +396,17 @@ struct LibraryView: View {
     @ViewBuilder private func menu(_ e: TemplateEntry) -> some View {
         Button(L("复制为新模板", "Duplicate as New Template")) { model.duplicate(e) }
         Button(L("导出…", "Export…")) { model.exportOne(e) }
-        if let path = e.path {
+        if let path = e.path, !e.deleted {
             Button(L("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+        }
+        if !e.partial {
             Divider()
-            Button(e.overridesBuiltin ? L("恢复内置版本", "Restore Built-in Version") : L("删除", "Delete"), role: .destructive) { model.delete(e) }
+            if e.deleted || e.overridesBuiltin {
+                Button(L("恢复内置版本", "Restore Built-in Version")) { model.restore(e) }
+            }
+            if !e.deleted {
+                Button(L("删除", "Delete"), role: .destructive) { model.delete(e) }
+            }
         }
     }
 }
@@ -446,7 +480,23 @@ struct EditorView: View {
         }
     }
 
-    private var readOnlyBanner: some View {
+    @ViewBuilder private var readOnlyBanner: some View {
+        if editor.entry.deleted {
+            HStack {
+                Image(systemName: "trash")
+                Text(L("这个内置模板已删除，它的名称和别名可以给你自己的模板使用。", "This built-in template is deleted; its name and aliases are free for your own templates."))
+                Spacer()
+                Button(L("恢复", "Restore")) { library.restore(editor.entry) }
+            }
+            .font(.callout)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(Color.orange.opacity(0.12))
+        } else {
+            builtinBanner
+        }
+    }
+
+    private var builtinBanner: some View {
         HStack {
             Image(systemName: "lock")
             Text(L("内置模板为只读。自定义后会保存为你自己的模板并覆盖内置版本，随时可以恢复。", "Built-in templates are read-only. Customizing saves your own copy that overrides the built-in version; you can restore it anytime."))

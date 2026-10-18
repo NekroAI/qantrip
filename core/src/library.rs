@@ -1,7 +1,7 @@
 //! 模板库：内置模板 + 用户目录中的模板，以及 MiniJinja 渲染环境。
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use minijinja::syntax::SyntaxConfig;
 use minijinja::{Environment, UndefinedBehavior};
@@ -47,11 +47,23 @@ fn builtins(loc: Locale) -> &'static [&'static str] {
     }
 }
 
+/// 被用户删除的内置模板（docs/decisions.md D34）
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletedBuiltin {
+    pub name: String,
+    /// 删除标记文件；删除它即恢复
+    pub marker: PathBuf,
+}
+
 pub struct Library {
     pub templates: Vec<Template>,
     pub problems: Vec<String>,
+    /// 已删除的内置模板（可恢复）
+    pub deleted: Vec<DeletedBuiltin>,
     /// 界面文字（诊断、提示、分区标题）的语言
     pub locale: Locale,
+    /// 内置模板的语言
+    pub template_locale: Locale,
     env: Environment<'static>,
 }
 
@@ -63,8 +75,8 @@ impl Library {
 
     /// `ui`：界面文字语言；`templates`：内置模板语言（可以与界面不同）。
     pub fn load_with(user_dir: Option<&Path>, ui: Locale, templates: Locale) -> Library {
-        let (list, problems) = collect(user_dir, ui, templates);
-        build(list, problems, ui)
+        let (list, problems, deleted) = collect(user_dir, ui, templates);
+        build(list, problems, deleted, ui, templates)
     }
 
     /// 编辑器预览：在当前模板库上用 `source` 覆盖（或新增）一个模板。
@@ -74,7 +86,7 @@ impl Library {
     }
 
     pub fn with_override_in(user_dir: Option<&Path>, source: &str, ui: Locale, tpl: Locale) -> (Library, Option<String>, Vec<String>) {
-        let (mut templates, problems) = collect(user_dir, ui, tpl);
+        let (mut templates, problems, deleted) = collect(user_dir, ui, tpl);
         let mut own = Vec::new();
         let name = match template::parse_in(source, false, ui) {
             Ok(t) => {
@@ -88,7 +100,7 @@ impl Library {
                 None
             }
         };
-        let lib = build(templates, problems, ui);
+        let lib = build(templates, problems, deleted, ui, tpl);
         if let Some(n) = &name {
             own.extend(lib.problems.iter().filter(|p| p.contains(&format!("`{n}`"))).cloned());
         }
@@ -123,7 +135,8 @@ impl Library {
     }
 }
 
-fn collect(user_dir: Option<&Path>, ui: Locale, tpl: Locale) -> (Vec<Template>, Vec<String>) {
+fn collect(user_dir: Option<&Path>, ui: Locale, tpl: Locale) -> (Vec<Template>, Vec<String>, Vec<DeletedBuiltin>) {
+    let mut deleted: Vec<DeletedBuiltin> = Vec::new();
     let mut problems = Vec::new();
     let mut templates: Vec<Template> = Vec::new();
 
@@ -148,6 +161,13 @@ fn collect(user_dir: Option<&Path>, ui: Locale, tpl: Locale) -> (Vec<Template>, 
             match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| template::parse_in(&s, false, ui)) {
                 Ok(mut t) => {
                     t.path = Some(path.clone());
+                    // 删除标记只隐藏同名内置模板，不影响同名的用户模板
+                    if t.deleted {
+                        if builtins(tpl).iter().any(|s| template::parse(s, true).is_ok_and(|b| b.name == t.name && !b.is_partial())) {
+                            deleted.push(DeletedBuiltin { name: t.name.clone(), marker: path.clone() });
+                        }
+                        continue;
+                    }
                     // 用户模板与内置模板同名时覆盖内置版本
                     templates.retain(|o| !(o.builtin && o.name == t.name));
                     if templates.iter().any(|o| o.name == t.name) {
@@ -161,10 +181,11 @@ fn collect(user_dir: Option<&Path>, ui: Locale, tpl: Locale) -> (Vec<Template>, 
             }
         }
     }
-    (templates, problems)
+    templates.retain(|t| !(t.builtin && deleted.iter().any(|d| d.name == t.name)));
+    (templates, problems, deleted)
 }
 
-fn build(mut templates: Vec<Template>, mut problems: Vec<String>, loc: Locale) -> Library {
+fn build(mut templates: Vec<Template>, mut problems: Vec<String>, deleted: Vec<DeletedBuiltin>, loc: Locale, tpl: Locale) -> Library {
     resolve_alias_conflicts(&mut templates, &mut problems, loc);
 
     let mut env = Environment::new();
@@ -182,7 +203,7 @@ fn build(mut templates: Vec<Template>, mut problems: Vec<String>, loc: Locale) -
             }
         }
     }
-    Library { templates: ok, problems, locale: loc, env }
+    Library { templates: ok, problems, deleted, locale: loc, template_locale: tpl, env }
 }
 
 /// 内置模板源码（不含被用户覆盖的情况），用于"恢复默认"。

@@ -96,6 +96,8 @@ pub struct Template {
     pub source: String,
     /// 用户模板的文件路径；内置模板为 None
     pub path: Option<std::path::PathBuf>,
+    /// 这是一个删除标记，不是模板
+    pub deleted: bool,
 }
 
 impl Template {
@@ -124,6 +126,9 @@ struct RawFront {
     category: String,
     #[serde(default)]
     params: serde_norway::Mapping,
+    /// 删除标记：用户目录中的 `名称.deleted.md`，表示同名内置模板已被删除（D34）
+    #[serde(default)]
+    deleted: bool,
 }
 
 #[derive(Deserialize)]
@@ -213,6 +218,7 @@ pub fn parse_in(source: &str, builtin: bool, loc: Locale) -> Result<Template, St
         builtin,
         source: source.to_string(),
         path: None,
+        deleted: raw.deleted,
     })
 }
 

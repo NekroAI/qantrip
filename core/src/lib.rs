@@ -56,6 +56,8 @@ pub struct TemplateEntry {
     pub partial: bool,
     pub path: Option<String>,
     pub source: String,
+    /// 已删除的内置模板（模板库中显示为可恢复）
+    pub deleted: bool,
 }
 
 /// 编辑器的实时校验与试用结果。
@@ -158,7 +160,24 @@ impl Engine {
                 partial: t.is_partial(),
                 path: t.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 source: t.source.clone(),
+                deleted: false,
             })
+            .chain(lib.deleted.iter().filter_map(|d| {
+                let src = library::builtin_source_in(&d.name, tpl)?;
+                let t = template::parse_in(src, true, lib.locale).ok()?;
+                Some(TemplateEntry {
+                    name: t.name,
+                    aliases: t.aliases,
+                    description: t.description,
+                    category: t.category,
+                    builtin: true,
+                    overrides_builtin: false,
+                    partial: false,
+                    path: Some(d.marker.to_string_lossy().to_string()),
+                    source: src.to_string(),
+                    deleted: true,
+                })
+            }))
             .collect();
         // 保持模板库顺序（内置模板按工作流分组），同分类相邻
         let rank = |c: &str| out.iter().position(|e| e.category == c).unwrap_or(usize::MAX);
@@ -188,6 +207,17 @@ impl Engine {
     /// 指令模式使用的剪贴板文字（外壳在输入 `/new` 时读取并传入）。
     pub fn set_clipboard(&self, text: Option<String>) {
         *self.clipboard.write().unwrap() = text;
+    }
+
+    /// 删除模板（模板库的"删除"，与 `/rm` 相同）：用户模板移到废纸篓，内置模板写入可恢复的删除标记。
+    /// 返回值中的 `trash_path` 由外壳移到废纸篓。
+    pub fn delete_template(&self, name: String) -> Result<command::CommandOutcome, DocError> {
+        self.run_command(format!("/rm {name}"))
+    }
+
+    /// 恢复内置模板（撤销删除或修改，与 `/restore` 相同）。
+    pub fn restore_template(&self, name: String) -> Result<command::CommandOutcome, DocError> {
+        self.run_command(format!("/restore {name}"))
     }
 
     /// 执行指令（输入以 `/` 开头）。成功后重新加载模板库。
