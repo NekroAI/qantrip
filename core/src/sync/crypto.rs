@@ -32,8 +32,8 @@ pub const D_STATE: &[u8] = b"qantrip/v1/state";
 pub const D_ROSTER: &[u8] = b"qantrip/v1/roster";
 pub const D_COMMIT: &[u8] = b"qantrip/v1/commit";
 pub const D_SAS: &[u8] = b"qantrip/v1/sas";
-/// 加入协议的反向确认码（v0.3）
-pub const D_JOIN_CONFIRM: &[u8] = b"qantrip/v1/join-confirm";
+/// 加入结果的批准设备签名（v0.5）
+pub const D_JOIN_RESULT: &[u8] = b"qantrip/v2/join-result";
 
 /// 记录密文格式版本
 pub const RECORD_VERSION: u8 = 0x01;
@@ -374,29 +374,25 @@ pub fn sas(vault_id: &str, head: &[u8; 32], pk_n: &[u8; 96], pk_e: &[u8; 96], n_
 }
 
 /// 截取哈希的前 40 位，显示为 `XXXX-XXXX`（Base32）。
-fn short_code(h: &[u8; 32]) -> String {
+fn short_code(h: &[u8]) -> String {
     let s = codec::base32(&h[..5]);
     format!("{}-{}", &s[..4], &s[4..])
 }
 
-/// 加入协议的反向确认码（v0.3）：E 在用户输入 SAS、追加 add_device 并发出结果之后显示，用户在 N 上输入。
+/// 与 SAS 格式相同的随机码：批准设备在 SAS 之外再显示两个，由用户选出与新设备上相同的那个（v0.5）。
+pub fn random_code() -> String {
+    short_code(&random::<5>())
+}
+
+/// 加入结果的签名消息（v0.5）：批准设备用花名册密钥签名，新设备用 reply 中锁定的 pk_E 验证。
 ///
-/// `confirm = 截取 40 位(SHA-256("qantrip/v1/join-confirm" || vault_id || SHA-256(commit) || SHA-256(reply)
-///             || SHA-256(reveal) || SHA-256(result) || u32_be(新头部 index) || 新头部哈希))`
+/// `msg = "qantrip/v2/join-result" || vault_id || SHA-256(commit) || SHA-256(reply) || SHA-256(reveal) || SHA-256(body)`
 ///
-/// 四段消息取各自的完整字节（N 收到的与 E 发出的必须逐字节一致），格式与字母表同 SAS。
-pub fn join_confirm_code(vault_id: &str, transcript: [&[u8]; 4], new_index: u32, new_head: &[u8; 32]) -> String {
-    let [commit, reply, reveal, result] = transcript;
-    short_code(&sha256(&[
-        D_JOIN_CONFIRM,
-        vault_id.as_bytes(),
-        &sha256(&[commit]),
-        &sha256(&[reply]),
-        &sha256(&[reveal]),
-        &sha256(&[result]),
-        &new_index.to_be_bytes(),
-        new_head,
-    ]))
+/// 签名把结果（花名册新条目、信封、状态记录锚点）绑定到这一次加入的完整消息上；用户在两台设备上
+/// 比对的 SAS 已经认证了 pk_E。
+pub fn join_result_message(vault_id: &str, transcript: [&[u8]; 3], body: &[u8]) -> Vec<u8> {
+    let [commit, reply, reveal] = transcript;
+    [D_JOIN_RESULT, vault_id.as_bytes(), &sha256(&[commit]), &sha256(&[reply]), &sha256(&[reveal]), &sha256(&[body])].concat()
 }
 
 /// 规范化用户输入的校验码：去掉空白与连字符、转大写，并纠正 Base32 中不存在的易混字符（0→O、1→I、8→B）。

@@ -229,7 +229,8 @@ fn reencrypt_all(core: &mut Core, epoch: u32, report: &mut SyncReport) -> Result
                 skipped.insert(w.record_id.clone());
                 continue;
             }
-            let mut p = core.build_write(&w.record_id, acc.pt.kind, acc.pt.deleted, acc.pt.body.clone(), meta.as_ref(), &key)?;
+            // 重新加密不改变这一版本的修改时间（§5.5 按修改时间比较）
+            let mut p = core.build_write_at(&w.record_id, acc.pt.kind, acc.pt.deleted, acc.pt.body.clone(), meta.as_ref(), &key, acc.pt.time as i64)?;
             p.req.base_seq = Some(w.seq);
             // 模板文件映射保持不变（内容未变）
             p.file = meta.and_then(|m| m.file.zip(m.file_hash));

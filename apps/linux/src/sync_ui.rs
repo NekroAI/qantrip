@@ -3,7 +3,6 @@
 //! 页面只在显示内容真正变化时重建，避免轮询时打断正在输入的校验码。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -27,10 +26,20 @@ pub struct SyncPage {
     poll: RefCell<Option<glib::SourceId>>,
     /// 恢复短语模式（未加入时）
     recover_mode: Cell<bool>,
-    /// 输入中的校验码（按 join_id）与恢复短语
-    codes: RefCell<HashMap<String, String>>,
+    /// 输入中的恢复短语
     phrase_input: RefCell<String>,
     phrase_dialog_open: Cell<bool>,
+}
+
+/// 大号等宽显示的校验码
+fn big_code(text: &str) -> gtk::Label {
+    let code = gtk::Label::new(Some(text));
+    code.add_css_class("big-code");
+    code.set_selectable(true);
+    code.set_margin_top(8);
+    code.set_margin_bottom(4);
+    code.set_xalign(0.0);
+    code
 }
 
 fn relative(ts: i64) -> String {
@@ -72,7 +81,6 @@ impl SyncPage {
             visible: Cell::new(false),
             poll: RefCell::new(None),
             recover_mode: Cell::new(false),
-            codes: RefCell::new(HashMap::new()),
             phrase_input: RefCell::new(String::new()),
             phrase_dialog_open: Cell::new(false),
         });
@@ -134,8 +142,8 @@ impl SyncPage {
             )),
             s.remote_vault.borrow(),
             s.join.borrow().as_ref().map(|j| (j.stage, j.sas.clone())),
-            s.join_requests.borrow().iter().map(|r| (r.join_id.clone(), r.status)).collect::<Vec<_>>(),
-            s.confirm_codes.borrow(),
+            s.join_requests.borrow().iter().map(|r| (r.join_id.clone(), r.status, r.choices.clone())).collect::<Vec<_>>(),
+            s.approved_joins.borrow(),
             s.working.borrow(),
             s.error.borrow(),
             s.devices.borrow().iter().map(|d| d.device_id.clone()).collect::<Vec<_>>(),
@@ -143,7 +151,7 @@ impl SyncPage {
                 .borrow()
                 .as_ref()
                 .map(|a| (a.max_devices, a.devices.iter().map(|d| (d.grant_id.clone(), d.last_seen_at / 60, d.limited, d.in_vault)).collect::<Vec<_>>())),
-            s.last_report.borrow().as_ref().map(|r| r.conflicts),
+            s.last_report.borrow().as_ref().map(|r| r.replaced),
             self.recover_mode.get(),
             self.app.settings.sync_server(),
             crate::i18n::is_zh(),
@@ -281,40 +289,39 @@ impl SyncPage {
                     r.add_prefix(&gtk::Spinner::builder().spinning(true).build());
                     g.add(&r);
                 }
-                JoinStage::EnterCodeOnOtherDevice => {
-                    g.set_title(&l("在另一台设备上输入这个校验码", "Enter this code on your other device"));
-                    let code = gtk::Label::new(Some(&join.sas.clone().unwrap_or_default()));
-                    code.add_css_class("big-code");
-                    code.set_selectable(true);
-                    code.set_margin_top(8);
-                    code.set_margin_bottom(4);
-                    g.add(&code);
-                    let note = gtk::Label::new(Some(&l("这台设备上不需要任何确认。", "Nothing to confirm on this device.")));
-                    note.add_css_class("dim-label");
-                    g.add(&note);
-                }
-                JoinStage::EnterCodeHere => {
-                    g.set_title(&l("输入另一台设备上显示的确认码", "Enter the code shown on your other device"));
+                JoinStage::CompareCode => {
+                    g.set_title(&l("核对校验码", "Check the code"));
                     g.set_description(Some(&l(
-                        "两边互相输入校验码，确保这台设备加入的是你自己的保险库。",
-                        "Entering a code on each side makes sure this device joins your own vault.",
+                        "在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。",
+                        "On your other device, pick this code from the three shown. If both devices show the same code, click Match.",
                     )));
-                    let e = adw::EntryRow::builder().title(l("确认码", "Code")).show_apply_button(true).build();
-                    e.add_css_class("mono");
+                    g.add(&big_code(join.sas.as_deref().unwrap_or_default()));
+                    let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    let ok = gtk::Button::with_label(&l("一致", "Match"));
+                    ok.add_css_class("suggested-action");
+                    ok.set_sensitive(!self.busy());
                     let ss = s.clone();
-                    e.connect_apply(move |e| {
-                        let c = e.text().trim().to_string();
-                        if c.chars().count() >= 4 {
-                            ss.confirm_join(c);
-                        }
-                    });
-                    g.add(&e);
+                    ok.connect_clicked(move |_| ss.confirm_join());
+                    let no = gtk::Button::with_label(&l("不一致", "Doesn't match"));
+                    let ss = s.clone();
+                    no.connect_clicked(move |_| ss.cancel_join());
+                    bx.append(&ok);
+                    bx.append(&no);
+                    g.add(&bx);
+                    return;
+                }
+                JoinStage::WaitingForOtherDevice => {
+                    g.add(&big_code(join.sas.as_deref().unwrap_or_default()));
+                    let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    bx.append(&gtk::Spinner::builder().spinning(true).build());
+                    bx.append(&gtk::Label::new(Some(&l("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))));
+                    g.add(&bx);
                 }
                 JoinStage::Completed => {
                     g.add(&adw::ActionRow::builder().title(l("已加入", "Joined")).build());
                 }
                 JoinStage::Expired => {
-                    g.add(&adw::ActionRow::builder().title(l("请求已过期", "The request expired")).build());
+                    g.add(&adw::ActionRow::builder().title(l("请求已过期或已取消", "The request expired or was cancelled")).build());
                 }
             }
             let c = gtk::Button::with_label(&if join.stage == JoinStage::Expired { l("关闭", "Close") } else { l("取消", "Cancel") });
@@ -395,8 +402,8 @@ impl SyncPage {
                 let g = self.group(
                     Some(l("把这台设备加入保险库", "Add this device to your vault")),
                     Some(l(
-                        "在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。",
-                        "On a device that already syncs, open Qantrip Settings › Sync and enter the code shown here.",
+                        "开始后，在一台已经同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这里显示的那个。",
+                        "Then, on a device that already syncs, open Qantrip Settings › Sync and pick the code shown here.",
                     )),
                 );
                 let r = adw::ActionRow::new();
@@ -466,14 +473,13 @@ impl SyncPage {
                 .build();
             g.add(&r);
         }
-        if let Some(n) = s.last_report.borrow().as_ref().map(|r| r.conflicts).filter(|n| *n > 0) {
+        if let Some(n) = s.last_report.borrow().as_ref().map(|r| r.replaced).filter(|n| *n > 0) {
             let r = adw::ActionRow::builder()
                 .subtitle(t!(
-                    "有 {n} 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。",
-                    "{n} template(s) changed on two devices at once. Both versions were kept; merge them in the template library."
+                    "有 {n} 个模板在两台设备上都改过，已保留最后修改的版本，另一版存入历史版本。",
+                    "{n} template(s) were changed on two devices. The latest edit was kept; the other version is in History."
                 ))
                 .build();
-            r.add_css_class("warning");
             g.add(&r);
         }
         let actions = adw::ActionRow::new();
@@ -485,7 +491,19 @@ impl SyncPage {
         let out = gtk::Button::with_label(&l("退出登录", "Sign out"));
         let ss = s.clone();
         out.connect_clicked(move |_| ss.sign_out());
-        for b in [&out, &sync] {
+        let history = gtk::Button::with_label(&l("历史版本", "History"));
+        history.set_tooltip_text(Some(&l(
+            "同一模板在两台设备上都改过时，保留最后修改的版本；被覆盖的版本保存在这里 30 天。",
+            "When a template is changed on two devices, the latest edit wins. The overwritten version is kept here for 30 days.",
+        )));
+        let ss = s.clone();
+        let parent = self.parent.clone();
+        history.connect_clicked(move |_| {
+            if let Some(dir) = ss.history_dir() {
+                gtk::FileLauncher::new(Some(&gio::File::for_path(&dir))).launch(Some(&parent), gio::Cancellable::NONE, |_| {});
+            }
+        });
+        for b in [&out, &history, &sync] {
             b.set_valign(gtk::Align::Center);
             actions.add_suffix(b);
         }
@@ -506,21 +524,18 @@ impl SyncPage {
             g.add(&r);
         }
 
-        // 批准后显示给用户、在新设备上输入的确认码
-        for (id, confirm) in s.confirm_codes.borrow().clone() {
-            let g = self.group(Some(l("最后一步", "Last step")), Some(l("在新设备上输入这个确认码", "Enter this code on the new device")));
-            // 只放普通控件：AdwPreferencesGroup 总把列表行排在普通控件前面
+        // 刚批准的请求：提示到新设备上确认
+        for id in s.approved_joins.borrow().clone() {
+            let g = self.group(Some(l("已批准", "Approved")), None);
             let bx = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            let code = gtk::Label::new(Some(&confirm));
-            code.add_css_class("big-code");
-            code.set_selectable(true);
-            code.set_hexpand(true);
-            code.set_xalign(0.0);
+            let note = gtk::Label::new(Some(&l("在新设备上点「一致」即可完成。", "Click Match on the new device to finish.")));
+            note.set_hexpand(true);
+            note.set_xalign(0.0);
             let b = gtk::Button::with_label(&l("完成", "Done"));
             b.set_valign(gtk::Align::Center);
             let ss = s.clone();
-            b.connect_clicked(move |_| ss.dismiss_confirm_code(&id));
-            bx.append(&code);
+            b.connect_clicked(move |_| ss.dismiss_approved(&id));
+            bx.append(&note);
             bx.append(&b);
             g.add(&bx);
         }
@@ -529,56 +544,55 @@ impl SyncPage {
             .join_requests
             .borrow()
             .iter()
-            .filter(|r| r.status != JoinRequestStatus::HandledElsewhere && !s.confirm_codes.borrow().contains_key(&r.join_id))
+            .filter(|r| r.status != JoinRequestStatus::HandledElsewhere && !s.approved_joins.borrow().contains(&r.join_id))
             .cloned()
             .collect();
-        if !requests.is_empty() {
-            let g = self.group(
-                Some(l("新设备请求加入", "A new device wants to join")),
-                Some(l("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new device. If this isn't you, reject it.")),
-            );
-            for r in requests {
-                if r.status == JoinRequestStatus::WaitingForNewDevice {
+        for r in requests {
+            let reject = gtk::Button::with_label(&l("拒绝", "Reject"));
+            reject.add_css_class("destructive-action");
+            reject.set_valign(gtk::Align::Center);
+            let ss = s.clone();
+            let id = r.join_id.clone();
+            reject.connect_clicked(move |_| ss.reject(id.clone()));
+            match r.status {
+                JoinRequestStatus::WaitingForNewDevice => {
+                    let g = self.group(Some(l("新设备请求加入", "A new device wants to join")), None);
                     let row = adw::ActionRow::builder().title(l("等待新设备显示校验码…", "Waiting for the new device to show its code…")).build();
                     row.add_prefix(&gtk::Spinner::builder().spinning(true).build());
                     g.add(&row);
-                } else {
-                    let e = adw::EntryRow::builder()
-                        .title(l(
-                            "输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。",
-                            "Enter the code shown on the new device. If this isn't you, reject it.",
-                        ))
-                        .text(self.codes.borrow().get(&r.join_id).cloned().unwrap_or_default())
-                        .build();
-                    e.add_css_class("mono");
-                    let approve = gtk::Button::with_label(&l("批准", "Approve"));
-                    approve.add_css_class("suggested-action");
-                    approve.set_valign(gtk::Align::Center);
-                    let reject = gtk::Button::with_label(&l("拒绝", "Reject"));
-                    reject.add_css_class("destructive-action");
-                    reject.set_valign(gtk::Align::Center);
-                    e.add_suffix(&approve);
-                    e.add_suffix(&reject);
-                    let weak = Rc::downgrade(self);
-                    let id = r.join_id.clone();
-                    e.connect_changed(move |e| {
-                        if let Some(p) = weak.upgrade() {
-                            p.codes.borrow_mut().insert(id.clone(), e.text().to_string());
-                        }
-                    });
-                    let ss = s.clone();
-                    let id = r.join_id.clone();
-                    let e2 = e.clone();
-                    approve.connect_clicked(move |_| {
-                        let c = e2.text().trim().to_string();
-                        if c.chars().count() >= 4 {
-                            ss.approve(id.clone(), c);
-                        }
-                    });
-                    let ss = s.clone();
-                    let id = r.join_id.clone();
-                    reject.connect_clicked(move |_| ss.reject(id.clone()));
-                    g.add(&e);
+                }
+                JoinRequestStatus::Incompatible => {
+                    let g = self.group(
+                        Some(l("新设备请求加入", "A new device wants to join")),
+                        Some(l(
+                            "新设备上的 Qantrip 版本与这台不同，无法加入。请把两台设备都更新到最新版本。",
+                            "The new device runs a different version of Qantrip and can't join. Update both devices to the latest version.",
+                        )),
+                    );
+                    reject.set_halign(gtk::Align::Start);
+                    g.add(&reject);
+                }
+                _ => {
+                    // 只放普通控件：AdwPreferencesGroup 总把列表行排在普通控件前面
+                    let g = self.group(
+                        Some(l("新设备请求加入", "A new device wants to join")),
+                        Some(l("新设备上显示的是哪一个码？如果不是你本人在操作，请拒绝。", "Which code does the new device show? If this isn't you, reject it.")),
+                    );
+                    let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    for c in &r.choices {
+                        let b = gtk::Button::with_label(c);
+                        b.add_css_class("mono");
+                        b.add_css_class("code-choice");
+                        b.set_sensitive(!self.busy());
+                        let ss = s.clone();
+                        let (id, c) = (r.join_id.clone(), c.clone());
+                        b.connect_clicked(move |_| ss.approve(id.clone(), c.clone()));
+                        bx.append(&b);
+                    }
+                    g.add(&bx);
+                    reject.set_label(&l("都不是，拒绝", "None of these — reject"));
+                    reject.set_halign(gtk::Align::Start);
+                    g.add(&reject);
                 }
             }
         }

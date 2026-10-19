@@ -48,13 +48,13 @@ fn commit_replaced_after_reply_is_rejected() {
     let attacker = DeviceKeys::from_seeds([8; 32], [9; 32], [10; 32]);
     let n_a = [7u8; 32];
     let commit = crypto::join_commit(&vault, &attacker.public().concat(), &n_a);
-    let commit_msg = codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", codec::bytes(&commit))]));
+    let commit_msg = codec::encode(&codec::map(vec![("v", codec::uint(2)), ("commit", codec::bytes(&commit))]));
     let reveal = codec::encode(&codec::map(vec![("pk", codec::bytes(&attacker.public().concat())), ("nonce", codec::bytes(&n_a))]));
     vault_mut(&server, |v| {
         v.joins[0].commit = commit_msg;
         v.joins[0].reveal = Some(reveal);
     });
-    // 模拟穷举成功：用户输入的校验码恰好等于 E 对攻击者公开值计算出的 SAS
+    // 模拟穷举成功：用户选择的校验码恰好等于 E 对攻击者公开值计算出的 SAS
     let sas_e = crypto::sas(&vault, &head, &attacker.public().concat(), &pk_e.try_into().unwrap(), &n_a, &n_e);
     assert!(matches!(a.client.approve_join(p.join_id, sas_e), Err(SyncError::Security { .. })));
     assert!(a.has_alert("join_failed"));
@@ -62,6 +62,7 @@ fn commit_replaced_after_reply_is_rejected() {
     assert!(vault_mut(&server, |v| !v.envelopes.contains_key(&(attacker.device_id(), 1))), "没有给攻击者发信封");
 }
 
+/// 旧版本（加入协议 v1）的新设备：不回复，提示两台设备升级到同一版本。
 #[test]
 fn unsupported_commit_version_is_not_answered() {
     let server = server();
@@ -71,16 +72,22 @@ fn unsupported_commit_version_is_not_answered() {
     vault_mut(&server, |v| {
         let mut f = codec::Fields::exact(codec::decode(&v.joins[0].commit).unwrap(), &["v", "commit"]).unwrap();
         let _ = f.u64("v");
-        v.joins[0].commit = codec::encode(&codec::map(vec![("v", codec::uint(2)), ("commit", f.value("commit"))]));
+        v.joins[0].commit = codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", f.value("commit"))]));
     });
-    assert!(a.client.list_join_requests().unwrap().is_empty());
+    let reqs = a.client.list_join_requests().unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].status, JoinRequestStatus::Incompatible);
+    assert!(reqs[0].choices.is_empty());
     assert!(vault_mut(&server, |v| v.joins[0].reply.is_none()));
 }
 
 // MARK: C2 —— N 必须经用户确认才采用花名册与钥匙环
 
-/// 服务端（或盗用令牌者）以自己的设备 G 为 genesis 伪造保险库并立即伪造 result：N 停在"输入确认码"，
-/// 用户拿不到正确的确认码，N 不加入、不上传任何数据。
+/// 服务端（或盗用令牌者）以自己的设备 G 为 genesis 伪造保险库，并立即发出由 G 签名、自洽的 result：
+/// N 停在"核对校验码"，用户没有点"一致"之前不加入、不上传任何数据。真实设备 A 上没有这个请求的候选码
+/// （A 没有回复过它），用户在 A 上找不到 N 显示的码，于是不会点"一致"。
+///
+/// 已知局限（v0.5，docs/sync-design.md 6.2）：用户不核对就在 N 上点"一致"时，N 会加入伪造的保险库。
 #[test]
 fn new_device_does_not_adopt_fabricated_vault() {
     let server = server();
@@ -99,7 +106,8 @@ fn new_device_does_not_adopt_fabricated_vault() {
         ("roster", ciborium::Value::Array(vec![codec::bytes(&genesis.encode())])),
     ]));
     vault_mut(&server, |v| v.joins[0].reply = Some(reply));
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeOnOtherDevice);
+    let shown = n.client.poll_join().unwrap();
+    assert_eq!(shown.stage, JoinStage::CompareCode);
     let reveal = vault_mut(&server, |v| v.joins[0].reveal.clone().unwrap());
     let mut r = codec::Fields::exact(codec::decode(&reveal).unwrap(), &["pk", "nonce"]).unwrap();
     let pk_n = crypto::PublicKeys::from_concat(&r.bytes("pk").unwrap()).unwrap();
@@ -110,23 +118,27 @@ fn new_device_does_not_adopt_fabricated_vault() {
     let info = crypto::envelope_info(&vault, &pk_n.device_id(), 1, 1);
     let (enc, ct) = crypto::seal_envelope(&mut crypto::system_rng(), g.enc_secret(), &pk_n.x25519, &info, &pt).unwrap();
     let env = codec::encode(&codec::map(vec![("sender", codec::text(&g.device_id())), ("enc", codec::bytes(&enc)), ("ct", codec::bytes(&ct))]));
-    let result = codec::encode(&codec::map(vec![
+    let body = codec::encode(&codec::map(vec![
         ("roster", ciborium::Value::Array(vec![codec::bytes(&add.encode())])),
         ("envelope", codec::bytes(&env)),
         ("epoch", codec::uint(1)),
         ("roster_index", codec::uint(1)),
         ("anchor", ciborium::Value::Null),
     ]));
+    let (commit, reply) = vault_mut(&server, |v| (v.joins[0].commit.clone(), v.joins[0].reply.clone().unwrap()));
+    let sig = g.roster_sign(&crypto::join_result_message(&vault, [&commit, &reply, &reveal], &body));
+    let result = codec::encode(&codec::map(vec![("body", codec::bytes(&body)), ("sig", codec::bytes(&sig))]));
     vault_mut(&server, |v| {
         v.joins[0].result = Some(result);
         v.roster = vec![genesis.encode(), add.encode()];
     });
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    // 结果通过了校验（G 是 reply 中的批准设备），但用户还没有确认
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
     assert!(!n.client.status().enrolled && !n.client.status().has_vault);
-    // 攻击者只能猜确认码：3 次后冷却，本次加入取消
-    assert!(matches!(n.client.confirm_join("AAAA-AAAA".into()), Err(SyncError::SasMismatch { .. })));
-    assert!(matches!(n.client.confirm_join("BBBB-BBBB".into()), Err(SyncError::SasMismatch { .. })));
-    assert!(matches!(n.client.confirm_join("CCCC-CCCC".into()), Err(SyncError::Cooldown { .. })));
+    // 真实设备 A 上没有可选的候选码，用户发现不一致，在 N 上取消
+    let reqs = a.client.list_join_requests().unwrap();
+    assert!(reqs.iter().all(|r| !r.choices.contains(shown.sas.as_ref().unwrap())));
+    n.client.cancel_join();
     assert!(!n.client.status().enrolled && !n.client.status().has_vault);
     assert!(n.client.sync_now().is_err());
     // 没有任何用伪造 VK 加密的数据被上传
@@ -137,10 +149,10 @@ fn new_device_does_not_adopt_fabricated_vault() {
     }
 }
 
-/// 用户在真实 E 上批准后，服务端修改转给 N 的 result（这里删掉 M1 的锚点，result 仍然自洽、能通过校验）：
-/// N 计算出的确认码与 E 显示的不同，加入不会完成。
+/// 用户在真实 E 上批准后，服务端修改转给 N 的 result（这里删掉 M1 的锚点，其余部分仍然自洽）：
+/// E 的签名不再匹配，N 拒绝并取消本次加入。
 #[test]
-fn result_substituted_after_approval_fails_confirmation() {
+fn result_substituted_after_approval_is_rejected() {
     let server = server();
     let (a, _) = first_device(&server);
     a.client.sync_now().unwrap();
@@ -148,10 +160,13 @@ fn result_substituted_after_approval_fails_confirmation() {
     let p = n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
-    let code = a.client.approve_join(p.join_id, sas).unwrap();
+    n.client.confirm_join().unwrap();
+    a.client.approve_join(p.join_id, sas).unwrap();
     vault_mut(&server, |v| {
         let raw = v.joins[0].result.clone().unwrap();
-        let mut f = codec::Fields::exact(codec::decode(&raw).unwrap(), &["roster", "envelope", "epoch", "roster_index", "anchor"]).unwrap();
+        let mut outer = codec::Fields::exact(codec::decode(&raw).unwrap(), &["body", "sig"]).unwrap();
+        let body = outer.bytes("body").unwrap();
+        let mut f = codec::Fields::exact(codec::decode(&body).unwrap(), &["roster", "envelope", "epoch", "roster_index", "anchor"]).unwrap();
         assert_ne!(f.value("anchor"), ciborium::Value::Null);
         let rebuilt = codec::encode(&codec::map(vec![
             ("roster", f.value("roster")),
@@ -160,14 +175,14 @@ fn result_substituted_after_approval_fails_confirmation() {
             ("roster_index", f.value("roster_index")),
             ("anchor", ciborium::Value::Null),
         ]));
-        v.joins[0].result = Some(rebuilt);
+        v.joins[0].result = Some(codec::encode(&codec::map(vec![("body", codec::bytes(&rebuilt)), ("sig", outer.value("sig"))])));
     });
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    assert!(matches!(n.client.confirm_join(code), Err(SyncError::SasMismatch { .. })));
+    assert!(matches!(n.client.poll_join(), Err(SyncError::Security { .. })));
+    assert!(n.has_alert("join_failed"));
     assert!(!n.client.status().enrolled);
 }
 
-/// 确认码正确，但服务端此时给出的花名册不以批准设备发来的花名册为前缀：拒绝采用。
+/// 用户确认一致，但服务端此时给出的花名册不以批准设备发来的花名册为前缀：拒绝采用。
 #[test]
 fn confirm_requires_server_roster_to_extend_reply() {
     let server = server();
@@ -176,15 +191,15 @@ fn confirm_requires_server_roster_to_extend_reply() {
     let p = n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
-    let code = a.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
     let real = vault_mut(&server, |v| v.roster.clone());
     vault_mut(&server, |v| v.roster.truncate(1));
-    assert!(matches!(n.client.confirm_join(code.clone()), Err(SyncError::Security { .. })));
+    assert!(matches!(n.client.confirm_join(), Err(SyncError::Security { .. })));
     assert!(n.has_alert("join_failed"));
     assert!(!n.client.status().enrolled);
     vault_mut(&server, |v| v.roster = real);
-    assert!(n.client.confirm_join(code).is_err(), "失败后本次加入已取消");
+    assert!(n.client.confirm_join().is_err(), "失败后本次加入已取消");
 }
 
 // MARK: L1 —— seq = 0 不得下溢
@@ -402,7 +417,7 @@ fn oversized_roster_and_join_lists_are_bounded() {
         }
     }));
     assert!(matches!(b.client.sync_now(), Err(SyncError::Security { .. })));
-    let commit = b64u(&codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", codec::bytes(&[0; 32]))])));
+    let commit = b64u(&codec::encode(&codec::map(vec![("v", codec::uint(2)), ("commit", codec::bytes(&[0; 32]))])));
     server.world.lock().unwrap().hook = Some(Box::new(move |method, path, v: &mut Json| {
         if method == "GET" && path.ends_with("/joins") {
             let fake: Vec<Json> = (0..50).map(|i| json!({ "join_id": format!("j_fake{i}"), "commit": commit, "reply": null, "reveal": null, "result": null, "expires_at": 0 })).collect();

@@ -1,15 +1,16 @@
 //! 登录（PKCE，§9）、创建保险库、新设备加入（§6.2）与恢复短语加入（§6.3）。
 //!
-//! 加入协议的四段消息（确定性 CBOR，服务端只转发）：
-//! - commit（N → E）：`{ v: 1, commit }`，`commit = SHA-256("qantrip/v1/commit" || vault_id || pk_N || n_N)`
+//! 加入协议的四段消息（确定性 CBOR，服务端只转发；协议版本 2，v0.5）：
+//! - commit（N → E）：`{ v: 2, commit }`，`commit = SHA-256("qantrip/v1/commit" || vault_id || pk_N || n_N)`
 //! - reply（E → N）：`{ pk: pk_E, nonce: n_E, roster: [条目…] }`——E 回复时锁定 commit 的完整字节
 //! - reveal（N → E）：`{ pk: pk_N, nonce: n_N }`——N 在收到并锁定 pk_E 与花名册头部之后才发送
-//! - result（E → N）：`{ roster: [头部之后的新条目…], envelope, epoch, roster_index, anchor }`，
-//!   `anchor` 为 E 自己的状态记录锚点 `{ seq, counter, hash }` 或 null（E 还没有写过状态记录）
+//! - result（E → N）：`{ body, sig }`，`body = { roster: [头部之后的新条目…], envelope, epoch, roster_index, anchor }`，
+//!   `anchor` 为 E 自己的状态记录锚点 `{ seq, counter, hash }` 或 null（E 还没有写过状态记录）；
+//!   `sig` 为 E 的花名册密钥对 [`crypto::join_result_message`] 的签名
 //!
-//! 双向确认（v0.3）：用户在 E 上输入 N 显示的 SAS；E 追加 add_device、发出 result 之后显示反向确认码
-//! （[`crypto::join_confirm_code`]，覆盖四段消息的完整字节与新的花名册头部），用户再在 N 上输入。
-//! N 在确认码通过之前不采用花名册与钥匙环，也不向服务端写入任何数据。
+//! 确认方式（v0.5）：两台设备显示同一个 SAS。E 上同时显示 SAS 与两个随机码，用户选出与 N 上相同的那个
+//! （选错即取消本次加入）；N 上用户点"一致"。E 选对之后才追加 add_device 并发出 result；N 在用户点"一致"
+//! 且收到通过校验的 result 之后才采用花名册与钥匙环，在此之前不向服务端写入任何数据（C2）。
 //!
 //! 双方的进行中状态保存在平台安全存储中（`join_new_device` / `join_approver`），应用重启后可以继续；
 //! 完成、过期、拒绝或失败时删除。
@@ -24,13 +25,13 @@ use zeroize::Zeroizing;
 use super::codec::{self, Fields};
 use super::crypto::{self, PhraseLanguage, PublicKeys, RecoveryKeys};
 use super::engine::{Core, Keyring, open_verified_envelope};
-use super::net::{CLIENT_ID, WireEnvelope};
+use super::net::{CLIENT_ID, JoinView, WireEnvelope};
 use super::roster::{Entry, Op, Roster, Signer, ZERO_HASH, recovery_bind_message};
 use super::state::JoinAnchor;
 use super::{JoinProgress, JoinRequest, JoinRequestStatus, JoinStage, SecretStore, SyncError, SyncReport};
 
-const SAS_MAX_FAILURES: u32 = 3;
-const SAS_COOLDOWN_SECS: i64 = 10 * 60;
+/// 加入协议版本（v0.5 起为 2：两台设备比对同一个校验码，结果由批准设备签名）
+const JOIN_VERSION: u64 = 2;
 /// 本地保存的加入状态的有效期（服务端加入请求 10 分钟过期；留出余量）
 const JOIN_LOCAL_TTL: i64 = 15 * 60;
 /// 每次列出加入请求时最多处理的请求数（服务端同一时间只允许一个，L3）
@@ -58,26 +59,6 @@ fn opt_bytes(v: Value) -> Result<Option<Vec<u8>>, String> {
 
 fn opt_value(b: &Option<Vec<u8>>) -> Value {
     b.as_ref().map_or(Value::Null, |b| codec::bytes(b))
-}
-
-/// 校验码冷却：输入错误 3 次后冷却 10 分钟（E 输入 SAS、N 输入确认码共用）。
-fn check_cooldown(core: &Core) -> Result<(), SyncError> {
-    let now = core.now();
-    match core.state.sas_cooldown_until {
-        Some(until) if until > now => Err(SyncError::Cooldown { seconds: (until - now) as u64 }),
-        _ => Ok(()),
-    }
-}
-
-/// 记录一次输入错误。达到上限时进入冷却并返回 `Cooldown`，否则返回 `SasMismatch`。
-fn code_failure(core: &mut Core) -> SyncError {
-    core.state.sas_failures += 1;
-    if core.state.sas_failures >= SAS_MAX_FAILURES {
-        core.state.sas_failures = 0;
-        core.state.sas_cooldown_until = Some(core.now() + SAS_COOLDOWN_SECS);
-        return SyncError::Cooldown { seconds: SAS_COOLDOWN_SECS as u64 };
-    }
-    SyncError::SasMismatch { remaining: SAS_MAX_FAILURES - core.state.sas_failures }
 }
 
 // MARK: - 登录（PKCE S256）
@@ -189,7 +170,7 @@ pub fn create_vault(core: &mut Core, lang: PhraseLanguage) -> Result<Zeroizing<S
 
 // MARK: - 新设备（N）
 
-/// 新设备的加入状态。只保存原始消息与 n_N，其余（锁定的花名册、SAS、钥匙环）每次由消息重新推出并校验。
+/// 新设备的加入状态。只保存原始消息、n_N 与用户的确认，其余（锁定的花名册、SAS、钥匙环）每次由消息重新推出并校验。
 #[derive(Clone)]
 pub struct JoinN {
     join_id: String,
@@ -201,9 +182,11 @@ pub struct JoinN {
     /// 收到的 reply 与本机据此发出的 reveal（同时出现）
     reply: Option<Vec<u8>>,
     reveal: Option<Vec<u8>>,
-    /// 收到并通过校验的 result（等待用户输入确认码）
+    /// 收到并通过校验的 result
     result: Option<Vec<u8>>,
-    /// 已确认并加入（只在内存中）
+    /// 用户已在本机确认两台设备上显示的校验码一致
+    confirmed: bool,
+    /// 已加入（只在内存中）
     done: bool,
 }
 
@@ -218,11 +201,12 @@ impl JoinN {
             ("reply", opt_value(&self.reply)),
             ("reveal", opt_value(&self.reveal)),
             ("result", opt_value(&self.result)),
+            ("confirmed", Value::Bool(self.confirmed)),
         ])))
     }
 
     fn decode(b: &[u8]) -> Result<JoinN, String> {
-        let mut f = Fields::exact(codec::decode(b)?, &["join_id", "vault", "nonce", "started", "commit", "reply", "reveal", "result"])?;
+        let mut f = Fields::exact(codec::decode(b)?, &["join_id", "vault", "nonce", "started", "commit", "reply", "reveal", "result", "confirmed"])?;
         Ok(JoinN {
             join_id: f.text("join_id")?,
             vault: f.text("vault")?,
@@ -232,8 +216,13 @@ impl JoinN {
             reply: opt_bytes(f.value("reply"))?,
             reveal: opt_bytes(f.value("reveal"))?,
             result: opt_bytes(f.value("result"))?,
+            confirmed: f.bool("confirmed")?,
             done: false,
         })
+    }
+
+    fn stage(&self) -> JoinStage {
+        if self.confirmed { JoinStage::WaitingForOtherDevice } else { JoinStage::CompareCode }
     }
 }
 
@@ -265,14 +254,24 @@ pub fn start_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
     if core.enrolled() {
         return Err(invalid("本机已加入保险库"));
     }
-    check_cooldown(core)?;
     cancel_join(core);
     let vault = core.api.vault()?.ok_or_else(|| SyncError::NoVault { message: "此账号还没有保险库，请先在一台设备上创建".into() })?;
     let nonce = Zeroizing::new(crypto::random::<32>());
     let commit = crypto::join_commit(&vault, &keys.public().concat(), &nonce);
-    let msg = codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", codec::bytes(&commit))]));
+    let msg = codec::encode(&codec::map(vec![("v", codec::uint(JOIN_VERSION)), ("commit", codec::bytes(&commit))]));
     let join_id = core.api.create_join(&vault, &msg)?;
-    let j = JoinN { join_id: join_id.clone(), vault, nonce, started: core.now(), commit: msg, reply: None, reveal: None, result: None, done: false };
+    let j = JoinN {
+        join_id: join_id.clone(),
+        vault,
+        nonce,
+        started: core.now(),
+        commit: msg,
+        reply: None,
+        reveal: None,
+        result: None,
+        confirmed: false,
+        done: false,
+    };
     set_join_n(core, Some(j))?;
     Ok(progress(&join_id, JoinStage::WaitingForApprover, None))
 }
@@ -294,8 +293,13 @@ fn fail_join(core: &mut Core, message: &str) -> SyncError {
     security(message)
 }
 
-/// 解析并校验 reply：花名册链、pk_E 在册、本机尚未出现在花名册中。返回 (锁定的花名册, pk_E, n_E)。
-fn parse_reply(vault: &str, reply: &[u8], me: &str) -> Result<(Roster, PublicKeys, [u8; 32]), String> {
+/// 本机曾被移出保险库：同一套设备密钥不能再次加入。
+const MSG_REMOVED: &str = "本机曾被移出保险库，请在 设置 › 同步 中重置本机后重新加入";
+
+/// 解析并校验 reply：花名册链、pk_E 在册、本机没有被移出过。返回 (锁定的花名册, pk_E, n_E)。
+///
+/// 本机已在册（上一次加入时批准设备已追加了本机，但本机没有完成确认）时允许继续：批准设备不再追加，只重新发送钥匙环。
+fn parse_reply(vault: &str, reply: &[u8], me: &str, pk_n: &PublicKeys) -> Result<(Roster, PublicKeys, [u8; 32]), String> {
     let mut f = Fields::exact(codec::decode(reply)?, &["pk", "nonce", "roster"])?;
     let pk_e = PublicKeys::from_concat(&f.bytes("pk")?)?;
     let n_e: [u8; 32] = f.array("nonce")?;
@@ -310,20 +314,26 @@ fn parse_reply(vault: &str, reply: &[u8], me: &str) -> Result<(Roster, PublicKey
     if roster.member(&e_id).is_none_or(|m| m.removed.is_some() || m.keys != pk_e) {
         return Err("批准设备不在册".into());
     }
-    if roster.member(me).is_some() {
-        return Err("本机已在花名册中出现过".into());
+    if let Some(m) = roster.member(me)
+        && (m.removed.is_some() || m.keys != *pk_n)
+    {
+        return Err(MSG_REMOVED.into());
     }
     Ok((roster, pk_e, n_e))
 }
 
-/// 校验 result：新花名册从锁定的头部延伸、含由 E 签名的 add_device(本机)，钥匙环来自 E 且通过承诺校验。
-/// 返回 (新花名册, 钥匙环, E 的状态记录锚点)。
-fn verify_result(core: &Core, roster: &Roster, pk_e: &PublicKeys, result: &[u8]) -> Result<(Roster, Keyring, Option<JoinAnchor>), String> {
+/// 校验 result：批准设备对本次加入的签名、新花名册从锁定的头部延伸且本机在册（由 E 追加，或锁定时已在册）、
+/// 钥匙环来自 E 且通过承诺校验。返回 (新花名册, 钥匙环, E 的状态记录锚点)。
+fn verify_result(core: &Core, roster: &Roster, pk_e: &PublicKeys, transcript: [&[u8]; 3], result: &[u8]) -> Result<(Roster, Keyring, Option<JoinAnchor>), String> {
     let keys = core.keys().map_err(|_| "本机缺少设备密钥".to_string())?;
     let me = keys.device_id();
     let pk_n = keys.public();
     let e_id = pk_e.device_id();
-    let mut f = Fields::exact(codec::decode(result)?, &["roster", "envelope", "epoch", "roster_index", "anchor"])?;
+    let mut outer = Fields::exact(codec::decode(result)?, &["body", "sig"])?;
+    let body = outer.bytes("body")?;
+    let sig: [u8; 64] = outer.array("sig")?;
+    crypto::verify(&pk_e.roster, &crypto::join_result_message(roster.vault_id(), transcript, &body), &sig)?;
+    let mut f = Fields::exact(codec::decode(&body)?, &["roster", "envelope", "epoch", "roster_index", "anchor"])?;
     let Value::Array(items) = f.value("roster") else { return Err("花名册格式不正确".into()) };
     if items.len() > super::net::ROSTER_MAX_ENTRIES as usize {
         return Err("花名册过长".into());
@@ -332,8 +342,8 @@ fn verify_result(core: &Core, roster: &Roster, pk_e: &PublicKeys, result: &[u8])
     let start = roster.len() as usize;
     let next = roster.extended(&raws)?;
     let added_by_e = next.entries()[start..].iter().any(|e| e.signer == Signer::Device(e_id.clone()) && e.op == Op::AddDevice { device: pk_n.clone() });
-    if !added_by_e || !next.is_enrolled(&me) {
-        return Err("花名册中没有由批准设备签名的加入条目".into());
+    if !(added_by_e || roster.is_enrolled(&me)) || !next.is_enrolled(&me) {
+        return Err("花名册中没有本机的加入条目".into());
     }
     let envelope = f.bytes("envelope")?;
     let env = WireEnvelope { epoch: f.u32("epoch")?, roster_index: f.u32("roster_index")?, data: codec::b64u(&envelope) };
@@ -356,6 +366,20 @@ fn verify_result(core: &Core, roster: &Roster, pk_e: &PublicKeys, result: &[u8])
     Ok((next, ring, anchor))
 }
 
+/// 由保存的 reply 重新推出锁定的花名册、pk_E 与 SAS。
+fn locked(j: &JoinN, reply: &[u8], me: &str, pk_n: &PublicKeys) -> Result<(Roster, PublicKeys, String), String> {
+    let (roster, pk_e, n_e) = parse_reply(&j.vault, reply, me, pk_n)?;
+    let (_, head) = roster.head().ok_or("花名册为空")?;
+    let sas = crypto::sas(&j.vault, &head, &pk_n.concat(), &pk_e.concat(), &j.nonce, &n_e);
+    Ok((roster, pk_e, sas))
+}
+
+/// reply 校验失败时的报错：本机曾被移除时给出明确的处理方法，其余一律使用固定文本。
+fn fail_reply(core: &mut Core, e: &str) -> SyncError {
+    fail_join(core, if e == MSG_REMOVED { MSG_REMOVED } else { "批准设备的回复未通过校验" })
+}
+
+/// 新设备：轮询加入进度。收到 reply 后发出 reveal 并显示 SAS；用户已确认且收到通过校验的 result 时完成加入。
 pub fn poll_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
     let keys = core.keys()?;
     let me = keys.device_id();
@@ -369,89 +393,89 @@ pub fn poll_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
         cancel_join(core);
         return Ok(progress(&join_id, JoinStage::Expired, None));
     }
-    // 已收到并校验过结果：等待用户在本机输入确认码，不再访问服务端
-    if j.result.is_some() {
-        return Ok(progress(&join_id, JoinStage::EnterCodeHere, None));
-    }
     let vault = j.vault.clone();
-    let Some(view) = core.api.join(&vault, &join_id)? else {
-        set_join_n(core, None)?;
-        return Ok(progress(&join_id, JoinStage::Expired, None));
-    };
-    let (reply, reveal) = match (&j.reply, &j.reveal) {
-        (Some(reply), Some(reveal)) => (reply.clone(), reveal.clone()),
-        _ => {
-            let Some(reply_b64) = view.reply else { return Ok(progress(&join_id, JoinStage::WaitingForApprover, None)) };
-            let Ok(reply) = codec::from_b64u(&reply_b64) else { return Err(fail_join(core, "批准设备的回复格式不正确")) };
-            let (roster, pk_e, n_e) = match parse_reply(&vault, &reply, &me) {
-                Ok(v) => v,
-                Err(_) => return Err(fail_join(core, "批准设备的回复未通过校验")),
-            };
-            // 锁定 pk_E 与花名册头部之后才公开 n_N（先保存，崩溃重启后可以重发同一个 reveal）
-            let reveal = codec::encode(&codec::map(vec![("pk", codec::bytes(&pk_n.concat())), ("nonce", codec::bytes(&j.nonce[..]))]));
-            j.reply = Some(reply);
-            j.reveal = Some(reveal.clone());
-            set_join_n(core, Some(j))?;
-            if !core.api.put_join_step(&vault, &join_id, "reveal", &reveal)? {
-                return Err(fail_join(core, "加入流程的状态异常"));
-            }
-            let (_, head) = roster.head().unwrap();
-            let nonce = core.join_n.as_ref().unwrap().nonce.clone();
-            let sas = crypto::sas(&vault, &head, &pk_n.concat(), &pk_e.concat(), &nonce, &n_e);
-            return Ok(progress(&join_id, JoinStage::EnterCodeOnOtherDevice, Some(sas)));
+    let Some(reply) = j.reply.clone() else {
+        let Some(view) = core.api.join(&vault, &join_id)? else {
+            set_join_n(core, None)?;
+            return Ok(progress(&join_id, JoinStage::Expired, None));
+        };
+        let Some(reply_b64) = view.reply else { return Ok(progress(&join_id, JoinStage::WaitingForApprover, None)) };
+        let Ok(reply) = codec::from_b64u(&reply_b64) else { return Err(fail_join(core, "批准设备的回复格式不正确")) };
+        let sas = match locked(&j, &reply, &me, &pk_n) {
+            Ok((_, _, sas)) => sas,
+            Err(e) => return Err(fail_reply(core, &e)),
+        };
+        // 锁定 pk_E 与花名册头部之后才公开 n_N（先保存，崩溃重启后可以重发同一个 reveal）
+        let reveal = codec::encode(&codec::map(vec![("pk", codec::bytes(&pk_n.concat())), ("nonce", codec::bytes(&j.nonce[..]))]));
+        j.reply = Some(reply);
+        j.reveal = Some(reveal.clone());
+        set_join_n(core, Some(j.clone()))?;
+        if !core.api.put_join_step(&vault, &join_id, "reveal", &reveal)? {
+            return Err(fail_join(core, "加入流程的状态异常"));
         }
+        return Ok(progress(&join_id, j.stage(), Some(sas)));
     };
-    let (roster, pk_e, n_e) = match parse_reply(&vault, &reply, &me) {
+    let (roster, pk_e, sas) = match locked(&j, &reply, &me, &pk_n) {
         Ok(v) => v,
-        Err(_) => return Err(fail_join(core, "批准设备的回复未通过校验")),
+        Err(e) => return Err(fail_reply(core, &e)),
     };
-    let (_, head) = roster.head().unwrap();
-    let sas = crypto::sas(&vault, &head, &pk_n.concat(), &pk_e.concat(), &j.nonce, &n_e);
-    // 服务端上的 reveal 必须是本机发出的那一份；缺失（例如发送前应用退出）时重发
-    match view.reveal.as_deref().map(codec::from_b64u) {
-        None => {
-            core.api.put_join_step(&vault, &join_id, "reveal", &reveal)?;
+    if j.result.is_none() {
+        let Some(view) = core.api.join(&vault, &join_id)? else {
+            set_join_n(core, None)?;
+            return Ok(progress(&join_id, JoinStage::Expired, None));
+        };
+        let reveal = j.reveal.clone().unwrap_or_default();
+        // 服务端上的 reveal 必须是本机发出的那一份；缺失（例如发送前应用退出）时重发
+        match view.reveal.as_deref().map(codec::from_b64u) {
+            None => {
+                core.api.put_join_step(&vault, &join_id, "reveal", &reveal)?;
+            }
+            Some(Ok(r)) if r == reveal => {}
+            Some(_) => return Err(fail_join(core, "加入流程的状态异常")),
         }
-        Some(Ok(r)) if r == reveal => {}
-        Some(_) => return Err(fail_join(core, "加入流程的状态异常")),
+        if let Some(result_b64) = view.result {
+            let Ok(result) = codec::from_b64u(&result_b64) else { return Err(fail_join(core, "批准设备的结果格式不正确")) };
+            if verify_result(core, &roster, &pk_e, [&j.commit, &reply, &reveal], &result).is_err() {
+                return Err(fail_join(core, "批准设备的结果未通过校验"));
+            }
+            j.result = Some(result);
+            set_join_n(core, Some(j.clone()))?;
+        }
     }
-    let Some(result_b64) = view.result else { return Ok(progress(&join_id, JoinStage::EnterCodeOnOtherDevice, Some(sas))) };
-    let Ok(result) = codec::from_b64u(&result_b64) else { return Err(fail_join(core, "批准设备的结果格式不正确")) };
-    if verify_result(core, &roster, &pk_e, &result).is_err() {
-        return Err(fail_join(core, "批准设备的结果未通过校验"));
+    if j.confirmed && j.result.is_some() {
+        finish_join(core, j)?;
+        return Ok(progress(&join_id, JoinStage::Completed, None));
     }
-    j.result = Some(result);
-    set_join_n(core, Some(j))?;
-    Ok(progress(&join_id, JoinStage::EnterCodeHere, None))
+    Ok(progress(&join_id, j.stage(), Some(sas)))
 }
 
-/// 新设备：输入已登录设备在批准后显示的确认码。通过后才采用花名册与钥匙环（之后调用 `sync_now`）。
-/// 输入不符时本地计数，3 次后冷却 10 分钟并取消本次加入。
-pub fn confirm_join(core: &mut Core, typed: &str) -> Result<(), SyncError> {
-    let me = core.me()?;
-    check_cooldown(core)?;
-    let Some(j) = core.join_n.clone() else { return Err(invalid("没有进行中的加入请求")) };
+/// 新设备：用户确认两台设备上显示的校验码一致。已收到批准设备的结果时立即完成加入，否则等待（之后由
+/// `poll_join` 完成）。不一致时应调用 `cancel_join`。
+pub fn confirm_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
+    let Some(mut j) = core.join_n.clone() else { return Err(invalid("没有进行中的加入请求")) };
     if j.done {
-        return Ok(());
+        return Ok(progress(&j.join_id, JoinStage::Completed, None));
     }
+    if j.reply.is_none() {
+        return Err(invalid("还没有显示校验码"));
+    }
+    if !j.confirmed {
+        j.confirmed = true;
+        set_join_n(core, Some(j))?;
+    }
+    poll_join(core)
+}
+
+/// 采用 result 中的花名册与钥匙环。调用前用户已确认、result 已通过校验；这里重新校验一遍。
+fn finish_join(core: &mut Core, j: JoinN) -> Result<(), SyncError> {
+    let keys = core.keys()?;
+    let me = keys.device_id();
     let (Some(reply), Some(reveal), Some(result)) = (&j.reply, &j.reveal, &j.result) else {
         return Err(invalid("尚未收到已登录设备的批准"));
     };
     let vault = j.vault.clone();
-    let verified = parse_reply(&vault, reply, &me).and_then(|(roster, pk_e, _)| verify_result(core, &roster, &pk_e, result));
+    let verified = parse_reply(&vault, reply, &me, &keys.public()).and_then(|(roster, pk_e, _)| verify_result(core, &roster, &pk_e, [&j.commit, reply, reveal], result));
     let Ok((next, ring, anchor)) = verified else { return Err(fail_join(core, "批准设备的结果未通过校验")) };
-    let (idx, head) = next.head().unwrap();
-    let expected = crypto::join_confirm_code(&vault, [&j.commit, reply, reveal, result], idx, &head);
-    if !crypto::ct_eq(crypto::normalize_sas(typed).as_bytes(), crypto::normalize_sas(&expected).as_bytes()) {
-        let err = code_failure(core);
-        if matches!(err, SyncError::Cooldown { .. }) {
-            cancel_join(core);
-            core.alert("sas_cooldown", "确认码连续输入错误 3 次，本次加入已取消，10 分钟后才能重新加入");
-        }
-        core.save()?;
-        return Err(err);
-    }
-    core.state.sas_failures = 0;
     // 服务端当前的花名册必须以本机将要采用的花名册（含 reply 中锁定的部分）为前缀
     let (raws, _) = core.api.roster(&vault, 0)?;
     if raws.len() < next.raw().len() || raws[..next.raw().len()] != *next.raw() {
@@ -479,6 +503,9 @@ pub struct JoinE {
     /// 本机发出的 reply 消息
     reply: Vec<u8>,
     at: i64,
+    /// 与 SAS 一起显示的两个随机码，以及 SAS 在三个选项中的位置（回复时生成，每次显示都相同）
+    decoys: Vec<String>,
+    slot: u32,
 }
 
 impl JoinE {
@@ -490,11 +517,18 @@ impl JoinE {
             ("commit", codec::bytes(&self.commit)),
             ("reply", codec::bytes(&self.reply)),
             ("at", codec::uint(self.at.max(0) as u64)),
+            ("decoys", Value::Array(self.decoys.iter().map(|d| codec::text(d)).collect())),
+            ("slot", codec::uint(self.slot as u64)),
         ])
     }
 
     fn parse(v: Value) -> Result<JoinE, String> {
-        let mut f = Fields::exact(v, &["nonce", "roster_len", "head", "commit", "reply", "at"])?;
+        let mut f = Fields::exact(v, &["nonce", "roster_len", "head", "commit", "reply", "at", "decoys", "slot"])?;
+        let Value::Array(items) = f.value("decoys") else { return Err("格式不正确".into()) };
+        let decoys: Vec<String> = items.into_iter().map(|d| d.into_text().map_err(|_| "格式不正确".to_string())).collect::<Result<_, _>>()?;
+        if decoys.len() != 2 {
+            return Err("格式不正确".into());
+        }
         Ok(JoinE {
             nonce: Zeroizing::new(f.array("nonce")?),
             roster_len: f.u32("roster_len")?,
@@ -502,7 +536,16 @@ impl JoinE {
             commit: f.bytes("commit")?,
             reply: f.bytes("reply")?,
             at: f.u64("at")? as i64,
+            decoys,
+            slot: f.u32("slot")? % 3,
         })
+    }
+
+    /// 三个选项：SAS 放在回复时随机选定的位置。
+    fn choices(&self, sas: String) -> Vec<String> {
+        let mut v = self.decoys.clone();
+        v.insert(self.slot as usize, sas);
+        v
     }
 }
 
@@ -537,17 +580,52 @@ fn drop_join_e(core: &mut Core, join_id: &str) -> Result<(), SyncError> {
     Ok(())
 }
 
-/// commit 消息：`{ v: 1, commit }`，只接受版本 1。
-fn parse_commit(msg: &[u8]) -> Result<[u8; 32], String> {
+/// 结束一个加入请求：删除本机状态与服务端上的请求。
+fn abort_join_e(core: &mut Core, vault: &str, join_id: &str) -> Result<(), SyncError> {
+    drop_join_e(core, join_id)?;
+    let _ = core.api.delete_join(vault, join_id);
+    Ok(())
+}
+
+/// commit 消息：`{ v, commit }`。返回协议版本与承诺值；版本不是 [`JOIN_VERSION`] 时由调用方处理。
+fn parse_commit(msg: &[u8]) -> Result<(u64, [u8; 32]), String> {
     let mut c = Fields::exact(codec::decode(msg)?, &["v", "commit"])?;
-    if c.u64("v")? != 1 {
-        return Err("不支持的加入协议版本".into());
+    Ok((c.u64("v")?, c.array("commit")?))
+}
+
+/// 通过校验的新设备公开值：(pk_N, n_N, reveal 消息的完整字节)
+type Revealed = (PublicKeys, [u8; 32], Vec<u8>);
+
+/// 校验新设备的 reveal：服务端当前的 commit 与回复时锁定的逐字节相同，reveal 与承诺相符。
+/// 返回 None 表示新设备还没有发出 reveal。
+fn checked_reveal(vault: &str, e: &JoinE, view: &JoinView) -> Result<Option<Revealed>, &'static str> {
+    let Some(reveal) = &view.reveal else { return Ok(None) };
+    // C1：服务端当前的 commit 必须与回复时锁定的逐字节相同；校验只使用锁定的那一份
+    let current = view.commit.as_deref().and_then(|c| codec::from_b64u(c).ok());
+    if current.as_deref() != Some(&e.commit[..]) {
+        return Err("新设备的承诺在本机回复之后被替换");
     }
-    c.array("commit")
+    let (_, c_value) = parse_commit(&e.commit).map_err(|_| "新设备的承诺格式不正确")?;
+    let reveal = codec::from_b64u(reveal).map_err(|_| "新设备的公开值格式不正确")?;
+    let mut r = codec::decode(&reveal).and_then(|v| Fields::exact(v, &["pk", "nonce"])).map_err(|_| "新设备的公开值格式不正确")?;
+    let pk_n = r.bytes("pk").and_then(|b| PublicKeys::from_concat(&b)).map_err(|_| "新设备的公开值格式不正确")?;
+    let n_n: [u8; 32] = r.array("nonce").map_err(|_| "新设备的公开值格式不正确")?;
+    if !crypto::ct_eq(&crypto::join_commit(vault, &pk_n.concat(), &n_n), &c_value) {
+        return Err("新设备的承诺校验失败");
+    }
+    Ok(Some((pk_n, n_n, reveal)))
+}
+
+/// reveal 未通过校验：取消请求并告警。
+fn reject_tampered(core: &mut Core, vault: &str, join_id: &str, msg: &str) -> SyncError {
+    let _ = abort_join_e(core, vault, join_id);
+    core.alert("join_failed", format!("加入请求被拒绝：{msg}"));
+    let _ = core.save();
+    security(msg)
 }
 
 /// 列出进行中的加入请求。对尚未回复的请求，本机发送回复（pk_E、完整花名册、n_E；都不是秘密），
-/// 同时锁定该请求的 commit。每次最多处理 3 个请求。
+/// 同时锁定该请求的 commit。新设备发出 reveal 之后给出三个候选校验码。每次最多处理 3 个请求。
 pub fn list_join_requests(core: &mut Core) -> Result<Vec<JoinRequest>, SyncError> {
     core.require_enrolled()?;
     core.refresh_roster()?;
@@ -560,8 +638,13 @@ pub fn list_join_requests(core: &mut Core) -> Result<Vec<JoinRequest>, SyncError
     let mut out = Vec::new();
     for v in &views {
         if v.reply.is_none() && !core.join_e.contains_key(&v.join_id) {
-            let commit = v.commit.as_deref().and_then(|c| codec::from_b64u(c).ok()).filter(|c| parse_commit(c).is_ok());
-            let Some(commit) = commit else { continue };
+            let commit = v.commit.as_deref().and_then(|c| codec::from_b64u(c).ok());
+            let Some((version, commit)) = commit.and_then(|c| parse_commit(&c).ok().map(|(version, _)| (version, c))) else { continue };
+            if version != JOIN_VERSION {
+                // 对方的 Qantrip 版本不同：不回复，提示用户升级
+                out.push(JoinRequest { join_id: v.join_id.clone(), expires_at: v.expires_at, status: JoinRequestStatus::Incompatible, choices: vec![] });
+                continue;
+            }
             let nonce = Zeroizing::new(crypto::random::<32>());
             let roster = core.roster()?;
             let (_, head) = roster.head().unwrap();
@@ -571,19 +654,38 @@ pub fn list_join_requests(core: &mut Core) -> Result<Vec<JoinRequest>, SyncError
                 ("roster", Value::Array(roster.raw().iter().map(|r| codec::bytes(r)).collect())),
             ]));
             let len = roster.len();
+            let e = JoinE {
+                nonce,
+                roster_len: len,
+                head,
+                commit,
+                reply: msg.clone(),
+                at: now,
+                decoys: vec![crypto::random_code(), crypto::random_code()],
+                slot: u32::from(crypto::random::<1>()[0]) % 3,
+            };
             // 先保存再发送：回复发出后应用重启也能继续批准
-            core.join_e.insert(v.join_id.clone(), JoinE { nonce, roster_len: len, head, commit, reply: msg.clone(), at: now });
+            core.join_e.insert(v.join_id.clone(), e);
             persist_e(core)?;
             if !core.api.put_join_step(&vault, &v.join_id, "reply", &msg)? {
                 drop_join_e(core, &v.join_id)?;
             }
         }
-        let status = match (core.join_e.contains_key(&v.join_id), v.reveal.is_some()) {
-            (true, true) => JoinRequestStatus::ReadyForCode,
-            (true, false) => JoinRequestStatus::WaitingForNewDevice,
-            (false, _) => JoinRequestStatus::HandledElsewhere,
+        let (status, choices) = match core.join_e.get(&v.join_id).cloned() {
+            None => (JoinRequestStatus::HandledElsewhere, vec![]),
+            Some(e) => match checked_reveal(&vault, &e, v) {
+                Ok(None) => (JoinRequestStatus::WaitingForNewDevice, vec![]),
+                Ok(Some((pk_n, n_n, _))) => {
+                    let sas = crypto::sas(&vault, &e.head, &pk_n.concat(), &keys.public().concat(), &n_n, &e.nonce);
+                    (JoinRequestStatus::ReadyForCode, e.choices(sas))
+                }
+                Err(msg) => {
+                    reject_tampered(core, &vault, &v.join_id, msg);
+                    continue;
+                }
+            },
         };
-        out.push(JoinRequest { join_id: v.join_id.clone(), expires_at: v.expires_at, status });
+        out.push(JoinRequest { join_id: v.join_id.clone(), expires_at: v.expires_at, status, choices });
     }
     let before = core.join_e.len();
     core.join_e.retain(|id, e| views.iter().any(|v| v.join_id == *id) && now - e.at <= JOIN_LOCAL_TTL);
@@ -599,11 +701,10 @@ pub fn reject_join(core: &mut Core, join_id: &str) -> Result<(), SyncError> {
     core.api.delete_join(&vault, join_id)
 }
 
-/// 用户在本机输入新设备上显示的校验码。输入不符时本地计数，3 次后冷却 10 分钟。
-/// 通过后追加 add_device、发送钥匙环，返回要在本机显示、由用户在新设备上输入的确认码。
-pub fn approve_join(core: &mut Core, join_id: &str, typed_sas: &str) -> Result<String, SyncError> {
+/// 用户在本机三个候选码中选出新设备上显示的那个。选错即取消本次加入（新设备需要重新发起）。
+/// 选对后追加 add_device（新设备已在册时不再追加）、发送钥匙环与签名的结果。
+pub fn approve_join(core: &mut Core, join_id: &str, chosen: &str) -> Result<(), SyncError> {
     let me = core.require_enrolled()?;
-    check_cooldown(core)?;
     let vault = core.vault()?;
     let keys = core.keys()?;
     let Some(e) = core.join_e.get(join_id).cloned() else { return Err(invalid("该加入请求不是由本机处理的，请在列表中重新打开")) };
@@ -615,60 +716,41 @@ pub fn approve_join(core: &mut Core, join_id: &str, typed_sas: &str) -> Result<S
         drop_join_e(core, join_id)?;
         return Err(invalid("加入请求已过期"));
     };
-    let Some(reveal) = view.reveal else { return Err(invalid("新设备尚未显示校验码")) };
-    let checked = (|| -> Result<(PublicKeys, [u8; 32], Vec<u8>), &'static str> {
-        // C1：服务端当前的 commit 必须与回复时锁定的逐字节相同；校验只使用锁定的那一份
-        let current = view.commit.as_deref().and_then(|c| codec::from_b64u(c).ok());
-        if current.as_deref() != Some(&e.commit[..]) {
-            return Err("新设备的承诺在本机回复之后被替换");
-        }
-        let c_value = parse_commit(&e.commit).map_err(|_| "新设备的承诺格式不正确")?;
-        let reveal = codec::from_b64u(&reveal).map_err(|_| "新设备的公开值格式不正确")?;
-        let mut r = codec::decode(&reveal).and_then(|v| Fields::exact(v, &["pk", "nonce"])).map_err(|_| "新设备的公开值格式不正确")?;
-        let pk_n = r.bytes("pk").and_then(|b| PublicKeys::from_concat(&b)).map_err(|_| "新设备的公开值格式不正确")?;
-        let n_n: [u8; 32] = r.array("nonce").map_err(|_| "新设备的公开值格式不正确")?;
-        if !crypto::ct_eq(&crypto::join_commit(&vault, &pk_n.concat(), &n_n), &c_value) {
-            return Err("新设备的承诺校验失败");
-        }
-        Ok((pk_n, n_n, reveal))
-    })();
-    let (pk_n, n_n, reveal) = match checked {
-        Ok(v) => v,
-        Err(msg) => {
-            drop_join_e(core, join_id)?;
-            let _ = core.api.delete_join(&vault, join_id);
-            core.alert("join_failed", format!("加入请求被拒绝：{msg}"));
-            core.save()?;
-            return Err(security(msg));
-        }
+    let (pk_n, n_n, reveal) = match checked_reveal(&vault, &e, &view) {
+        Ok(Some(v)) => v,
+        Ok(None) => return Err(invalid("新设备尚未显示校验码")),
+        Err(msg) => return Err(reject_tampered(core, &vault, join_id, msg)),
     };
     let expected = crypto::sas(&vault, &e.head, &pk_n.concat(), &keys.public().concat(), &n_n, &e.nonce);
-    if !crypto::ct_eq(crypto::normalize_sas(typed_sas).as_bytes(), crypto::normalize_sas(&expected).as_bytes()) {
-        let err = code_failure(core);
-        if matches!(err, SyncError::Cooldown { .. }) {
-            drop_join_e(core, join_id)?;
-            let _ = core.api.delete_join(&vault, join_id);
-            core.alert("sas_cooldown", "校验码连续输入错误 3 次，加入请求已取消，10 分钟后才能再次批准");
-        }
+    if !crypto::ct_eq(crypto::normalize_sas(chosen).as_bytes(), crypto::normalize_sas(&expected).as_bytes()) {
+        abort_join_e(core, &vault, join_id)?;
         core.save()?;
-        return Err(err);
+        return Err(SyncError::CodeMismatch { message: "选择的校验码与新设备上显示的不一致，本次加入已取消，请在新设备上重新开始".into() });
     }
-    core.state.sas_failures = 0;
-    core.save()?;
 
     // CAS 追加 add_device(N)，然后发送 HPKE Auth 钥匙环
     let n_id = pk_n.device_id();
     core.refresh_roster()?;
-    let added = core.append_roster(|r| {
-        if r.member(&n_id).is_some() {
-            return Err(invalid("该设备已在花名册中出现过"));
+    match core.roster()?.member(&n_id) {
+        Some(m) if m.removed.is_some() || m.keys != pk_n => {
+            abort_join_e(core, &vault, join_id)?;
+            return Err(invalid("这台设备曾被移出保险库，请在它上面重置同步身份后重新加入"));
         }
-        let (idx, prev) = r.head().unwrap();
-        let entry = Entry::signed(&vault, idx + 1, prev, Op::AddDevice { device: pk_n.clone() }, Signer::Device(me.clone()), |m| keys.roster_sign(m));
-        Ok(Some(entry.encode()))
-    })?;
-    if !added {
-        return Err(invalid("无法加入该设备"));
+        // 上一次加入已追加、但新设备没有完成确认：不再追加，重新发送钥匙环
+        Some(_) => {}
+        None => {
+            let added = core.append_roster(|r| {
+                if r.member(&n_id).is_some() {
+                    return Ok(None);
+                }
+                let (idx, prev) = r.head().unwrap();
+                let entry = Entry::signed(&vault, idx + 1, prev, Op::AddDevice { device: pk_n.clone() }, Signer::Device(me.clone()), |m| keys.roster_sign(m));
+                Ok(Some(entry.encode()))
+            })?;
+            if !added && !core.roster()?.is_enrolled(&n_id) {
+                return Err(invalid("无法加入该设备"));
+            }
+        }
     }
     let ring = core.ensure_keys()?;
     let (epoch, roster_index, envelope) = core.write_envelope(&ring, &n_id, &pk_n.x25519)?;
@@ -679,20 +761,20 @@ pub fn approve_join(core: &mut Core, join_id: &str, typed_sas: &str) -> Result<S
         let hash = codec::from_b64u(&m.hash).ok()?;
         Some(codec::map(vec![("seq", codec::uint(m.seq?)), ("counter", codec::uint(m.counter)), ("hash", codec::bytes(&hash))]))
     });
-    let result = codec::encode(&codec::map(vec![
+    let body = codec::encode(&codec::map(vec![
         ("roster", Value::Array(new_entries)),
         ("envelope", codec::bytes(&envelope)),
         ("epoch", codec::uint(epoch as u64)),
         ("roster_index", codec::uint(roster_index as u64)),
         ("anchor", anchor.unwrap_or(Value::Null)),
     ]));
+    let sig = keys.roster_sign(&crypto::join_result_message(&vault, [&e.commit, &e.reply, &reveal], &body));
+    let result = codec::encode(&codec::map(vec![("body", codec::bytes(&body)), ("sig", codec::bytes(&sig))]));
     if !core.api.put_join_step(&vault, join_id, "result", &result)? {
         return Err(invalid("加入流程的状态异常，请让新设备重新发起"));
     }
-    let (idx, head) = core.roster()?.head().unwrap();
-    let code = crypto::join_confirm_code(&vault, [&e.commit, &e.reply, &reveal, &result], idx, &head);
     drop_join_e(core, join_id)?;
-    Ok(code)
+    Ok(())
 }
 
 // MARK: - 恢复短语加入（§6.3）

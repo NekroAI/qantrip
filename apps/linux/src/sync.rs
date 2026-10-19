@@ -3,7 +3,7 @@
 //! 把状态交给界面。与 macOS 的 SyncService.swift 逐项对应。
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -47,11 +47,10 @@ pub fn describe(e: &SyncError) -> String {
                 "Security check failed. Sync has been paused for safety.".into()
             }
         }
-        SyncError::SasMismatch { remaining } => t!("校验码不正确，还可以再试 {remaining} 次", "Wrong code. {remaining} attempts left."),
-        SyncError::Cooldown { seconds } => {
-            let m = seconds.div_ceil(60);
-            t!("错误次数过多，请 {m} 分钟后再试", "Too many attempts. Try again in {m} min.")
-        }
+        SyncError::CodeMismatch { .. } => l(
+            "选的码和新设备上显示的不一样，这次请求已取消。请在新设备上重新开始。",
+            "That isn't the code shown on the new device, so the request was cancelled. Start again on the new device.",
+        ),
         SyncError::RecoveryRequired { .. } => l("这个操作需要恢复短语", "This needs your recovery phrase"),
         SyncError::Conflict { .. } => l("其他设备同时在操作，请稍后重试", "Another device is busy. Try again shortly."),
         SyncError::InvalidInput { message } => {
@@ -214,8 +213,8 @@ pub struct SyncService {
     pub join_requests: RefCell<Vec<JoinRequest>>,
     pub devices: RefCell<Vec<DeviceInfo>>,
     pub join: RefCell<Option<JoinProgress>>,
-    /// 已登录设备批准后要显示给用户、在新设备上输入的确认码（按 join_id）
-    pub confirm_codes: RefCell<BTreeMap<String, String>>,
+    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    pub approved_joins: RefCell<BTreeSet<String>>,
     pub working: RefCell<Option<String>>,
     pub error: RefCell<Option<String>>,
     /// 刚创建保险库时的恢复短语，只显示一次
@@ -248,7 +247,7 @@ impl SyncService {
             join_requests: RefCell::new(Vec::new()),
             devices: RefCell::new(Vec::new()),
             join: RefCell::new(None),
-            confirm_codes: RefCell::new(BTreeMap::new()),
+            approved_joins: RefCell::new(BTreeSet::new()),
             working: RefCell::new(None),
             error: RefCell::new(None),
             phrase: RefCell::new(None),
@@ -442,7 +441,7 @@ impl SyncService {
             move |c| c.maybe_sync(trigger),
             |s, report| {
                 if let Some(r) = report {
-                    if r.pulled > 0 || r.conflicts > 0 {
+                    if r.pulled > 0 || r.replaced > 0 {
                         s.templates_changed();
                     }
                     *s.last_report.borrow_mut() = Some(r);
@@ -543,7 +542,7 @@ impl SyncService {
             Some(l("正在同步…", "Syncing…")),
             |c| c.sync_now(),
             |s, report| {
-                if report.pulled > 0 || report.conflicts > 0 {
+                if report.pulled > 0 || report.replaced > 0 {
                     s.templates_changed();
                 }
                 *s.last_report.borrow_mut() = Some(report);
@@ -703,32 +702,27 @@ impl SyncService {
         self.run(
             None,
             |c| c.poll_join(),
-            |s, progress| {
-                let stage = progress.stage;
-                *s.join.borrow_mut() = Some(progress);
-                match stage {
-                    JoinStage::Completed => {
-                        s.stop_join_timer();
-                        *s.join.borrow_mut() = None;
-                        s.sync_now();
-                    }
-                    JoinStage::Expired | JoinStage::EnterCodeHere => s.stop_join_timer(),
-                    _ => {}
-                }
-            },
+            |s, progress| s.join_progressed(progress),
         );
     }
 
-    /// 新设备：输入已登录设备上显示的确认码，完成双向确认后才加入
-    pub fn confirm_join(self: &Rc<Self>, code: String) {
-        self.run(
-            Some(l("正在验证…", "Verifying…")),
-            move |c| c.confirm_join(code),
-            |s, _| {
-                *s.join.borrow_mut() = None;
-                s.sync_now();
-            },
-        );
+    fn join_progressed(self: &Rc<Self>, progress: JoinProgress) {
+        let stage = progress.stage;
+        *self.join.borrow_mut() = Some(progress);
+        match stage {
+            JoinStage::Completed => {
+                self.stop_join_timer();
+                *self.join.borrow_mut() = None;
+                self.sync_now();
+            }
+            JoinStage::Expired => self.stop_join_timer(),
+            _ => {}
+        }
+    }
+
+    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
+    pub fn confirm_join(self: &Rc<Self>) {
+        self.run(Some(l("正在确认…", "Confirming…")), |c| c.confirm_join(), |s, progress| s.join_progressed(progress));
     }
 
     pub fn cancel_join(self: &Rc<Self>) {
@@ -753,25 +747,34 @@ impl SyncService {
         self.run(None, |c| c.list_join_requests(), |s, r| *s.join_requests.borrow_mut() = r);
     }
 
+    /// 已登录设备：用户在三个候选码中选出新设备上显示的那个。选错时核心取消这次请求。
     pub fn approve(self: &Rc<Self>, join_id: String, code: String) {
         let id = join_id.clone();
         self.run(
-            Some(l("正在验证…", "Verifying…")),
+            Some(l("正在批准…", "Approving…")),
             move |c| c.approve_join(join_id, code),
-            move |s, confirm| {
-                s.confirm_codes.borrow_mut().insert(id, confirm);
+            move |s, _| {
+                s.approved_joins.borrow_mut().insert(id);
                 s.refresh();
             },
         );
+        self.poll_join_requests();
     }
 
     pub fn reject(self: &Rc<Self>, join_id: String) {
         self.run(None, move |c| c.reject_join(join_id), |s, _| s.refresh());
     }
 
-    pub fn dismiss_confirm_code(&self, join_id: &str) {
-        self.confirm_codes.borrow_mut().remove(join_id);
+    pub fn dismiss_approved(&self, join_id: &str) {
+        self.approved_joins.borrow_mut().remove(join_id);
         self.notify();
+    }
+
+    /// 历史版本目录：同步时被较新版本覆盖的模板备份在这里（保留 30 天）。目录不存在时创建。
+    pub fn history_dir(&self) -> Option<std::path::PathBuf> {
+        let dir = std::path::PathBuf::from(self.client.borrow().as_ref()?.history_dir());
+        let _ = std::fs::create_dir_all(&dir);
+        Some(dir)
     }
 
     // MARK: 设备管理

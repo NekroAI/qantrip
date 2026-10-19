@@ -138,12 +138,12 @@ fn compute() -> Vec<(&'static str, String)> {
     let commit = crypto::join_commit(VAULT, &pb.concat(), &[0x0a; 32]);
     out.push(("join.commit", hex(&commit)));
     out.push(("join.sas", crypto::sas(VAULT, &head, &pb.concat(), &pa.concat(), &[0x0a; 32], &[0x0b; 32])));
-    out.push(("join.confirm", crypto::join_confirm_code(VAULT, [b"commit", b"reply", b"reveal", b"result"], head_idx, &head)));
+    out.push(("join.result_message", hex(&crypto::sha256(&[&crypto::join_result_message(VAULT, [b"commit", b"reply", b"reveal"], b"body")]))));
     out.push(("cbor.keyring", codec::b64u(&ring.encode())));
     out
 }
 
-// 已用 Python（hashlib/hmac）独立复核 vk_commit、device_id、state_record_id。
+// 已用 Python（hashlib/hmac）独立复核 vk_commit、device_id、state_record_id、join.result_message。
 const EXPECTED: &[(&str, &str)] = &[
     ("a.x25519", "a4e09292b651c278b9772c569f5fa9bb13d906b46ab68c9df9dc2b4409f8a209"),
     ("a.roster", "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"),
@@ -174,7 +174,7 @@ const EXPECTED: &[(&str, &str)] = &[
     ("envelope.ct", "3081151fb23e989671586a3aff206620c85b0307fb01edd599ff5d5e74e653ac9bbcfe25362a13b0ef51ecc371dca29bcd1380e37128627742d3da756e818c49c87bf2395211670d1f6165aef1d6fda9d1c51d99270041fba850249a5277b8cc3743b432af4b3f9007e2411bc561dda9"),
     ("join.commit", "8828557875f71542eaac583c9d13c0aab04802ac5a1335406a3079df9f9b11f3"),
     ("join.sas", "ZJYS-FGMM"),
-    ("join.confirm", "GXA4-VC4X"),
+    ("join.result_message", "406fe52419a24b531a9869b12984a987667d0f509ef4b1ea3f48983973bbd85f"),
     ("cbor.keyring", "oQFYICoqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioq"),
 ];
 

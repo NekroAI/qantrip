@@ -55,7 +55,7 @@ foreach ($state in @("novault", "join", "join-sas", "join-code", "enrolled", "bl
   $w = OpenSync
   switch ($state) {
     "join-sas" { "sas: " + (El $w "sync_sas").Current.Name }
-    "enrolled" { "confirm code: " + (El $w "sync_confirmcode").Current.Name + " / last sync: " + (U (El $w "sync_lastsync").Current.Name) + " / server locked: " + (-not (El $w "sync_server").Current.IsEnabled) }
+    "enrolled" { "approved: " + (El $w "sync_approved").Current.Name + " / choices: " + (El $w "sync_choice0").Current.Name + " / last sync: " + (U (El $w "sync_lastsync").Current.Name) + " / server locked: " + (-not (El $w "sync_server").Current.IsEnabled) }
     "phrase" {
       $done = ByName $w "完成"
       "phrase dialog: shown=" + [bool](TryEl $w "sync_phrasesaved") + " done enabled before check=" + $done.Current.IsEnabled

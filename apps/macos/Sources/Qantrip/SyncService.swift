@@ -144,8 +144,7 @@ func describe(_ error: Error) -> String {
     case .NoVault: return L("还没有保险库", "There is no vault yet")
     case .NotEnrolled: return L("这台设备还没有加入保险库", "This device hasn't joined the vault")
     case let .Security(message): return AppSettings.shared.uiLocale == .zh ? message : "Security check failed. Sync has been paused for safety."
-    case let .SasMismatch(remaining): return L("校验码不正确，还可以再试 \(remaining) 次", "Wrong code. \(remaining) attempts left.")
-    case let .Cooldown(seconds): return L("错误次数过多，请 \((seconds + 59) / 60) 分钟后再试", "Too many attempts. Try again in \((seconds + 59) / 60) min.")
+    case .CodeMismatch: return L("选的码和新设备上显示的不一样，这次请求已取消。请在新设备上重新开始。", "That isn't the code shown on the new device, so the request was cancelled. Start again on the new device.")
     case .RecoveryRequired: return L("这个操作需要恢复短语", "This needs your recovery phrase")
     case .Conflict: return L("其他设备同时在操作，请稍后重试", "Another device is busy. Try again shortly.")
     case let .InvalidInput(message): return AppSettings.shared.uiLocale == .zh ? message : "Invalid input"
@@ -166,8 +165,8 @@ final class SyncService {
     private(set) var joinRequests: [JoinRequest] = []
     private(set) var devices: [DeviceInfo] = []
     private(set) var join: JoinProgress?
-    /// 已登录设备批准后要显示给用户、在新设备上输入的确认码（按 join_id）
-    private(set) var confirmCodes: [String: String] = [:]
+    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    private(set) var approvedJoins: Set<String> = []
     private(set) var working: String?
     var error: String?
     /// 刚创建保险库时的恢复短语，只显示一次
@@ -258,7 +257,7 @@ final class SyncService {
         run(nil, { try $0.maybeSync(trigger: trigger) }) { report in
             if let report {
                 self.lastReport = report
-                if report.pulled > 0 || report.conflicts > 0 { self.onChange?() }
+                if report.pulled > 0 || report.replaced > 0 { self.onChange?() }
             }
             self.schedulePush()
             if (self.status?.pendingJoins ?? 0) > 0 || self.settingsVisible { self.pollJoinRequests() }
@@ -336,7 +335,7 @@ final class SyncService {
     func syncNow() {
         run(L("正在同步…", "Syncing…"), { try $0.syncNow() }) { report in
             self.lastReport = report
-            if report.pulled > 0 || report.conflicts > 0 { self.onChange?() }
+            if report.pulled > 0 || report.replaced > 0 { self.onChange?() }
             self.refresh()
         }
     }
@@ -463,24 +462,26 @@ final class SyncService {
     private func pollJoin() {
         run(nil, { try $0.pollJoin() }) { progress in
             self.join = progress
-            switch progress.stage {
-            case .completed:
-                self.joinTimer?.invalidate()
-                self.join = nil
-                self.syncNow()
-            case .expired, .enterCodeHere:
-                self.joinTimer?.invalidate()
-            default: break
-            }
+            self.joinProgressed(progress)
         }
     }
 
-    /// 新设备：输入已登录设备上显示的确认码，完成双向确认后才加入。
-    func confirmJoin(_ code: String) {
-        run(L("正在验证…", "Verifying…"), { try $0.confirmJoin(code: code) }) { _ in
-            self.join = nil
-            self.syncNow()
+    private func joinProgressed(_ progress: JoinProgress) {
+        join = progress
+        switch progress.stage {
+        case .completed:
+            joinTimer?.invalidate()
+            join = nil
+            syncNow()
+        case .expired:
+            joinTimer?.invalidate()
+        default: break
         }
+    }
+
+    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
+    func confirmJoin() {
+        run(L("正在确认…", "Confirming…"), { try $0.confirmJoin() }) { self.joinProgressed($0) }
     }
 
     func cancelJoin() {
@@ -496,11 +497,13 @@ final class SyncService {
         run(nil, { try $0.listJoinRequests() }) { self.joinRequests = $0 }
     }
 
+    /// 已登录设备：用户在三个候选码中选出新设备上显示的那个。选错时核心取消这次请求。
     func approve(_ joinId: String, code: String) {
-        run(L("正在验证…", "Verifying…"), { try $0.approveJoin(joinId: joinId, sas: code) }) { confirm in
-            self.confirmCodes[joinId] = confirm
+        run(L("正在批准…", "Approving…"), { try $0.approveJoin(joinId: joinId, code: code) }) { _ in
+            self.approvedJoins.insert(joinId)
             self.refresh()
         }
+        pollJoinRequests()
     }
 
     func reject(_ joinId: String) {
@@ -540,8 +543,16 @@ final class SyncService {
         run(L("正在重新验证…", "Re-verifying…"), { try $0.reverify() }) { _ in self.refresh() }
     }
 
-    func dismissConfirmCode(_ joinId: String) {
-        confirmCodes[joinId] = nil
+    func dismissApproved(_ joinId: String) {
+        approvedJoins.remove(joinId)
+    }
+
+    /// 打开历史版本目录：同步时被较新版本覆盖的模板备份在这里（保留 30 天）。
+    func openHistory() {
+        guard let path = client?.historyDir() else { return }
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(url)
     }
 
     func dismissAlerts() {

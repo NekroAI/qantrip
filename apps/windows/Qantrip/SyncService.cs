@@ -21,8 +21,8 @@ internal sealed class SyncService
     public List<JoinRequest> JoinRequests { get; private set; } = new();
     public List<DeviceInfo> Devices { get; private set; } = new();
     public JoinProgress? Join { get; private set; }
-    /// 批准加入后要显示、在新设备上输入的确认码（按 join_id）
-    public Dictionary<string, string> ConfirmCodes { get; } = new();
+    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    public HashSet<string> ApprovedJoins { get; } = new();
     /// 进行中的操作（显示为进度）
     public string? Working { get; private set; }
     public string? Error { get; set; }
@@ -255,8 +255,8 @@ internal sealed class SyncService
     private void AfterReport(SyncReport report)
     {
         LastReport = report;
-        Log.Event("sync", new() { ["pulled"] = report.Pulled, ["pushed"] = report.Pushed, ["conflicts"] = report.Conflicts, ["rejected"] = report.Rejected });
-        if (report.Pulled > 0 || report.Conflicts > 0) OnTemplatesChanged?.Invoke();
+        Log.Event("sync", new() { ["pulled"] = report.Pulled, ["pushed"] = report.Pushed, ["replaced"] = report.Replaced, ["rejected"] = report.Rejected });
+        if (report.Pulled > 0 || report.Replaced > 0) OnTemplatesChanged?.Invoke();
     }
 
     private void AfterSync(SyncReport report)
@@ -396,7 +396,9 @@ internal sealed class SyncService
         joinTimer.Start();
     });
 
-    private void PollJoin() => Run(null, c => c.PollJoin(), progress =>
+    private void PollJoin() => Run(null, c => c.PollJoin(), JoinProgressed);
+
+    private void JoinProgressed(JoinProgress progress)
     {
         Join = progress;
         switch (progress.Stage)
@@ -406,18 +408,14 @@ internal sealed class SyncService
                 Join = null;
                 SyncNow();
                 break;
-            case "expired" or "enter_code_here":
+            case "expired":
                 joinTimer?.Stop();
                 break;
         }
-    });
+    }
 
-    /// 新设备：输入已登录设备上显示的确认码，完成双向确认后才加入。
-    public void ConfirmJoin(string code) => Run(Loc.T("正在验证…", "Verifying…"), c => c.ConfirmJoin(code.Trim()), () =>
-    {
-        Join = null;
-        SyncNow();
-    });
+    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
+    public void ConfirmJoin() => Run(Loc.T("正在确认…", "Confirming…"), c => c.ConfirmJoin(), JoinProgressed);
 
     public void CancelJoin()
     {
@@ -435,11 +433,16 @@ internal sealed class SyncService
         Run(null, c => c.ListJoinRequests(), v => JoinRequests = v);
     }
 
-    public void Approve(string joinId, string code) => Run(Loc.T("正在验证…", "Verifying…"), c => c.ApproveJoin(joinId, code.Trim()), confirm =>
+    /// 已登录设备：用户在三个候选码中选出新设备上显示的那个。选错时核心取消这次请求。
+    public void Approve(string joinId, string code)
     {
-        ConfirmCodes[joinId] = confirm;
-        Refresh();
-    });
+        Run(Loc.T("正在批准…", "Approving…"), c => c.ApproveJoin(joinId, code), () =>
+        {
+            ApprovedJoins.Add(joinId);
+            Refresh();
+        });
+        PollJoinRequests();
+    }
 
     public void Reject(string joinId) => Run(null, c => c.RejectJoin(joinId), Refresh);
 
@@ -457,10 +460,23 @@ internal sealed class SyncService
     /// 重新验证：服务端恢复正常后解除停止写入。
     public void Reverify() => Run(Loc.T("正在重新验证…", "Re-verifying…"), c => c.Reverify(), _ => Refresh());
 
-    public void DismissConfirmCode(string joinId)
+    public void DismissApproved(string joinId)
     {
-        ConfirmCodes.Remove(joinId);
+        ApprovedJoins.Remove(joinId);
         Notify();
+    }
+
+    /// 打开历史版本目录：同步时被较新版本覆盖的模板备份在这里（保留 30 天）。
+    public void OpenHistory()
+    {
+        if (client == null) return;
+        try
+        {
+            var dir = client.HistoryDir();
+            Directory.CreateDirectory(dir);
+            Process.Start("explorer.exe", $"\"{dir}\"");
+        }
+        catch (Exception ex) { Log.Error("explorer", ex); }
     }
 
     public void DismissAlerts()
@@ -490,8 +506,8 @@ internal sealed class SyncService
         {
             case "novault": RemoteVault = false; break;
             case "join": RemoteVault = true; break;
-            case "join-sas": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "enter_code_on_other_device", Sas = "482 913" }; break;
-            case "join-code": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "enter_code_here" }; break;
+            case "join-sas": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "compare_code", Sas = "K7QM-2XRA" }; break;
+            case "join-code": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "waiting_for_other_device", Sas = "K7QM-2XRA" }; break;
             case "phrase":
                 RemoteVault = false;
                 Phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";
@@ -513,9 +529,9 @@ internal sealed class SyncService
                     new DeviceInfo { DeviceId = "B3D5F7H9JKMNPQRSTVWXYZ2345", RosterIndex = 1 },
                     new DeviceInfo { DeviceId = "D5F7H9JKMNPQRSTVWXYZ234567", RosterIndex = 2 }, // 已退出登录、仍在保险库中
                 };
-                JoinRequests = new() { new JoinRequest { JoinId = "r1", Status = "ready_for_code", ExpiresAt = now + 600 } };
-                LastReport = new SyncReport { Pulled = 1, Conflicts = 1 };
-                ConfirmCodes["r0"] = "719 204";
+                JoinRequests = new() { new JoinRequest { JoinId = "r1", Status = "ready_for_code", ExpiresAt = now + 600, Choices = new() { "H3PD-W7LA", "K7QM-2XRA", "R2XN-6CVE" } } };
+                LastReport = new SyncReport { Pulled = 1, Replaced = 1 };
+                ApprovedJoins.Add("r0");
                 break;
         }
         Log.Event("sync_mock", new() { ["state"] = m });

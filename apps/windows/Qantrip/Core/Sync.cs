@@ -93,8 +93,9 @@ public sealed class SyncReport
 {
     public uint Pulled { get; set; }
     public uint Pushed { get; set; }
-    public uint Conflicts { get; set; }
-    public List<string> ConflictFiles { get; set; } = new();
+    /// 同一模板在两台设备上都改过时以最后修改为准，被覆盖的版本备份到历史版本目录：本次备份的版本数
+    public uint Replaced { get; set; }
+    public List<string> ReplacedFiles { get; set; } = new();
     public uint Rejected { get; set; }
     public uint Alerts { get; set; }
     public uint Deferred { get; set; }
@@ -104,7 +105,7 @@ public sealed class SyncReport
 public sealed class JoinProgress
 {
     public string JoinId { get; set; } = "";
-    /// waiting_for_approver / enter_code_on_other_device / enter_code_here / completed / expired
+    /// waiting_for_approver / compare_code / waiting_for_other_device / completed / expired
     public string Stage { get; set; } = "";
     public string? Sas { get; set; }
 }
@@ -113,8 +114,10 @@ public sealed class JoinRequest
 {
     public string JoinId { get; set; } = "";
     public long ExpiresAt { get; set; }
-    /// waiting_for_new_device / ready_for_code / handled_elsewhere
+    /// waiting_for_new_device / ready_for_code / handled_elsewhere / incompatible
     public string Status { get; set; } = "";
+    /// ready_for_code 时的三个候选校验码（其中一个与新设备上显示的相同）
+    public List<string> Choices { get; set; } = new();
 }
 
 public sealed class DeviceInfo
@@ -151,8 +154,7 @@ public sealed class SyncException : Exception
             "no_vault" => Loc.T("还没有保险库", "There is no vault yet"),
             "not_enrolled" => Loc.T("这台设备还没有加入保险库", "This device hasn't joined the vault"),
             "security" => zh ? Message : "Security check failed. Sync has been paused for safety.",
-            "sas_mismatch" => Loc.T($"校验码不正确，还可以再试 {Remaining} 次", $"Wrong code. {Remaining} attempts left."),
-            "cooldown" => Loc.T($"错误次数过多，请 {(Seconds + 59) / 60} 分钟后再试", $"Too many attempts. Try again in {(Seconds + 59) / 60} min."),
+            "code_mismatch" => Loc.T("选的码和新设备上显示的不一样，这次请求已取消。请在新设备上重新开始。", "That isn't the code shown on the new device, so the request was cancelled. Start again on the new device."),
             "recovery_required" => Loc.T("这个操作需要恢复短语", "This needs your recovery phrase"),
             "conflict" => Loc.T("其他设备同时在操作，请稍后重试", "Another device is busy. Try again shortly."),
             "invalid_input" => zh ? Message : "Invalid input",
@@ -215,11 +217,14 @@ public sealed class SyncClient : IDisposable
     public string CreateVault(string language) => Call("create_vault", new { language })!.GetValue<string>();
     public JoinProgress StartJoin() => Get<JoinProgress>("start_join");
     public JoinProgress PollJoin() => Get<JoinProgress>("poll_join");
-    public void ConfirmJoin(string code) => Call("confirm_join", new { code });
+    /// 用户确认两台设备上的校验码一致；另一台设备已选好时立即加入（stage 为 completed）
+    public JoinProgress ConfirmJoin() => Get<JoinProgress>("confirm_join");
     public void CancelJoin() => Call("cancel_join");
     public List<JoinRequest> ListJoinRequests() => Get<List<JoinRequest>>("list_join_requests");
-    /// 输入新设备显示的校验码以批准加入，返回要在新设备上输入的确认码
-    public string ApproveJoin(string joinId, string sas) => Call("approve_join", new { join_id = joinId, sas })!.GetValue<string>();
+    /// 从三个候选码中选出新设备上显示的那个以批准加入；选错时抛出 code_mismatch 并取消这次请求
+    public void ApproveJoin(string joinId, string code) => Call("approve_join", new { join_id = joinId, code });
+    /// 历史版本目录（同步时被较新版本覆盖的模板备份在这里，保留 30 天；目录可能还不存在）
+    public string HistoryDir() => Call("history_dir")!.GetValue<string>();
     public void RejectJoin(string joinId) => Call("reject_join", new { join_id = joinId });
     public void Recover(string phrase) => Call("recover", new { phrase });
     public SyncReport SyncNow() => Get<SyncReport>("sync_now");

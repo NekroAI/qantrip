@@ -79,8 +79,8 @@ fn report_json(r: &SyncReport) -> Value {
     json!({
         "pulled": r.pulled,
         "pushed": r.pushed,
-        "conflicts": r.conflicts,
-        "conflict_files": r.conflict_files,
+        "replaced": r.replaced,
+        "replaced_files": r.replaced_files,
         "rejected": r.rejected,
         "alerts": r.alerts,
         "deferred": r.deferred,
@@ -91,8 +91,8 @@ fn report_json(r: &SyncReport) -> Value {
 fn stage_name(s: JoinStage) -> &'static str {
     match s {
         JoinStage::WaitingForApprover => "waiting_for_approver",
-        JoinStage::EnterCodeOnOtherDevice => "enter_code_on_other_device",
-        JoinStage::EnterCodeHere => "enter_code_here",
+        JoinStage::CompareCode => "compare_code",
+        JoinStage::WaitingForOtherDevice => "waiting_for_other_device",
         JoinStage::Completed => "completed",
         JoinStage::Expired => "expired",
     }
@@ -107,8 +107,9 @@ fn request_json(r: &JoinRequest) -> Value {
         JoinRequestStatus::WaitingForNewDevice => "waiting_for_new_device",
         JoinRequestStatus::ReadyForCode => "ready_for_code",
         JoinRequestStatus::HandledElsewhere => "handled_elsewhere",
+        JoinRequestStatus::Incompatible => "incompatible",
     };
-    json!({ "join_id": r.join_id, "expires_at": r.expires_at, "status": status })
+    json!({ "join_id": r.join_id, "expires_at": r.expires_at, "status": status, "choices": r.choices })
 }
 
 fn device_json(d: &DeviceInfo) -> Value {
@@ -125,8 +126,7 @@ pub fn error_json(e: &SyncError) -> Value {
         SyncError::NoVault { .. } => json!({ "kind": "no_vault", "message": msg }),
         SyncError::NotEnrolled { .. } => json!({ "kind": "not_enrolled", "message": msg }),
         SyncError::Security { .. } => json!({ "kind": "security", "message": msg }),
-        SyncError::SasMismatch { remaining } => json!({ "kind": "sas_mismatch", "remaining": remaining, "message": msg }),
-        SyncError::Cooldown { seconds } => json!({ "kind": "cooldown", "seconds": seconds, "message": msg }),
+        SyncError::CodeMismatch { .. } => json!({ "kind": "code_mismatch", "message": msg }),
         SyncError::RecoveryRequired { .. } => json!({ "kind": "recovery_required", "message": msg }),
         SyncError::Conflict { .. } => json!({ "kind": "conflict", "message": msg }),
         SyncError::InvalidInput { .. } => json!({ "kind": "invalid_input", "message": msg }),
@@ -165,16 +165,17 @@ pub fn dispatch(c: &SyncClient, op: &str, args: &Value) -> Result<Value, SyncErr
         }
         "start_join" => progress_json(&c.start_join()?),
         "poll_join" => progress_json(&c.poll_join()?),
-        "confirm_join" => {
-            c.confirm_join(arg(args, "code")?)?;
-            Value::Null
-        }
+        "confirm_join" => progress_json(&c.confirm_join()?),
         "cancel_join" => {
             c.cancel_join();
             Value::Null
         }
         "list_join_requests" => Value::Array(c.list_join_requests()?.iter().map(request_json).collect()),
-        "approve_join" => json!(c.approve_join(arg(args, "join_id")?, arg(args, "sas")?)?),
+        "approve_join" => {
+            c.approve_join(arg(args, "join_id")?, arg(args, "code")?)?;
+            Value::Null
+        }
+        "history_dir" => json!(c.history_dir()),
         "reject_join" => {
             c.reject_join(arg(args, "join_id")?)?;
             Value::Null

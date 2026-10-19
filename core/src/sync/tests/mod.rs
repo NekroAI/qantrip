@@ -110,6 +110,15 @@ impl Dev {
         v
     }
 
+    /// 历史版本目录中各版本的内容（按文件名排序）。
+    pub fn history(&self) -> Vec<String> {
+        let dir = PathBuf::from(self.client.history_dir());
+        let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
+        let mut names: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        names.sort();
+        names.into_iter().map(|p| std::fs::read_to_string(p).unwrap()).collect()
+    }
+
     pub fn alert_codes(&self) -> Vec<String> {
         self.client.status().alerts.into_iter().map(|a| a.code).collect()
     }
@@ -140,20 +149,21 @@ pub fn first_device(server: &Arc<FakeServer>) -> (Dev, String) {
     (a, phrase)
 }
 
-/// 按 §6.2 走完加入流程（用户在 E 上输入 N 显示的校验码，再在 N 上输入 E 显示的确认码）。
+/// 按 §6.2 走完加入流程（两台设备显示同一个校验码：用户在 E 的三个候选码中选出它，在 N 上确认一致）。
 pub fn join(e: &Dev, n: &Dev) {
     let p = n.client.start_join().unwrap();
     assert_eq!(p.stage, JoinStage::WaitingForApprover);
     let reqs = e.client.list_join_requests().unwrap();
     assert_eq!(reqs.len(), 1);
     let p = n.client.poll_join().unwrap();
-    assert_eq!(p.stage, JoinStage::EnterCodeOnOtherDevice);
+    assert_eq!(p.stage, JoinStage::CompareCode);
     let sas = p.sas.unwrap();
-    e.client.list_join_requests().unwrap();
-    let code = e.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    assert!(!n.client.status().enrolled, "确认码输入之前不加入");
-    n.client.confirm_join(code).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    let choices = e.client.list_join_requests().unwrap()[0].choices.clone();
+    assert_eq!(choices.len(), 3);
+    assert_eq!(choices.iter().filter(|c| **c == sas).count(), 1);
+    e.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
+    assert!(!n.client.status().enrolled, "本机确认一致之前不加入");
+    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::Completed);
     assert!(n.client.status().enrolled);
 }

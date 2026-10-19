@@ -37,6 +37,9 @@ pub struct RecordMeta {
     /// 接受该版本时本地花名册的长度：轮换只重新加密在轮换开始（rotate 条目）之前接受的版本（§7）
     #[serde(default)]
     pub accepted_len: u32,
+    /// 本机发现模板文件被删除的时间（删除尚未上传时），用于与其他设备的修改比较先后（§5.5）
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
 }
 
 /// 加入时批准设备在认证结果中给出的本机状态记录锚点（§6.2，v0.3）：新设备首次同步必须看到
@@ -96,10 +99,6 @@ pub struct LocalState {
     /// 上次写入的本机状态记录内容的哈希，未变化时不重复写入
     #[serde(default)]
     pub own_state_digest: Option<String>,
-    #[serde(default)]
-    pub sas_failures: u32,
-    #[serde(default)]
-    pub sas_cooldown_until: Option<i64>,
     /// 他人发起、尚未完成的轮换：(epoch, 本机首次看到的时间)，用于 24 小时接管
     #[serde(default)]
     pub pending_rotation_seen: Option<(u32, i64)>,

@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 打开窗口：name = settings / library[:模板名] / onboarding
-    /// 驱动同步界面：op = signin / create / join / confirm:<码> / approve:<码> / sync / reverify
+    /// 驱动同步界面：op = signin / create / join / confirm / cancel / approve:<码> / sync / reverify
     @objc private func debugSync(_ note: Notification) {
         let op = (note.userInfo?["op"] as? String) ?? ""
         MainActor.assumeIsolated { Self.runDebugSync(op) }
@@ -227,7 +227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "signin": s.signIn()
         case "create": s.createVault()
         case "join": s.startJoin()
-        case "confirm": s.confirmJoin(arg)
+        case "confirm": s.confirmJoin()
+        case "cancel": s.cancelJoin()
         case "approve": if let r = s.joinRequests.first(where: { $0.status == .readyForCode }) { s.approve(r.joinId, code: arg) }
         case "sync": s.syncNow()
         case "reverify": s.reverify()
@@ -237,7 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SpikeLog.event("sync_status", [
                 "signed_in": st?.signedIn ?? false, "has_vault": st?.hasVault ?? false, "enrolled": st?.enrolled ?? false,
                 "remote_vault": s.remoteVault.map { "\($0)" } ?? "nil", "join_stage": s.join.map { "\($0.stage)" } ?? "nil",
-                "sas": s.join?.sas ?? "", "confirm_codes": s.confirmCodes.values.joined(separator: ","),
+                "sas": s.join?.sas ?? "", "approved": s.approvedJoins.count, "choices": s.joinRequests.flatMap(\.choices).joined(separator: ","),
                 "requests": s.joinRequests.map { "\($0.status)" }.joined(separator: ","), "devices": s.devices.count,
                 "working": s.working ?? "", "error": s.error ?? "", "last_sync": st?.lastSync ?? 0,
                 "pulled": s.lastReport?.pulled ?? 0, "alerts": st?.alerts.count ?? 0,

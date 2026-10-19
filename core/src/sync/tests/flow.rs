@@ -1,5 +1,5 @@
-//! 完整流程：A 创建 → B 加入（校验码错误/正确）→ 双向同步 → 冲突保留双方 → 删除墓碑 → 撤销 B 并轮换 →
-//! B 不能再读新数据 → 恢复短语在新设备 C 上恢复。
+//! 完整流程：A 创建 → B 加入（选错/选对校验码）→ 双向同步 → 同一模板两边都改时以最后修改为准 → 删除墓碑 →
+//! 撤销 B 并轮换 → B 不能再读新数据 → 恢复短语在新设备 C 上恢复。
 
 use super::*;
 use crate::sync::SyncError;
@@ -42,54 +42,51 @@ fn two_devices_full_lifecycle() {
     let reqs = a.client.list_join_requests().unwrap();
     assert_eq!(reqs[0].status, crate::sync::JoinRequestStatus::WaitingForNewDevice);
     let p = b.client.poll_join().unwrap();
-    assert_eq!(p.stage, JoinStage::EnterCodeOnOtherDevice);
+    assert_eq!(p.stage, JoinStage::CompareCode);
     let sas = p.sas.clone().unwrap();
     assert_eq!(sas.len(), 9);
-    assert_eq!(a.client.list_join_requests().unwrap()[0].status, crate::sync::JoinRequestStatus::ReadyForCode);
-    // 输错一次：计数，不完成加入
-    assert_eq!(a.client.approve_join(p.join_id.clone(), "AAAA-AAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
-    assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::EnterCodeOnOtherDevice);
-    // 输入正确（小写、无连字符也接受）：A 显示确认码
-    let code = a.client.approve_join(p.join_id, sas.to_lowercase().replace('-', "")).unwrap();
-    assert_eq!(code.len(), 9);
-    assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    assert!(!b.client.status().enrolled, "确认码输入之前不加入");
-    // B 上输错一次确认码：计数，不加入
-    assert_eq!(b.client.confirm_join("AAAA-AAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
+    let req = a.client.list_join_requests().unwrap().remove(0);
+    assert_eq!(req.status, crate::sync::JoinRequestStatus::ReadyForCode);
+    assert_eq!(req.choices.len(), 3);
+    assert!(req.choices.contains(&sas));
+    assert_eq!(a.client.list_join_requests().unwrap()[0].choices, req.choices, "每次显示相同的候选码");
+    // B 上确认一致：等待 A 选择
+    assert_eq!(b.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
     assert!(!b.client.status().enrolled);
-    b.client.confirm_join(code.to_lowercase()).unwrap();
+    // A 上选对（小写、无连字符也接受）：B 下一次轮询时加入
+    a.client.approve_join(p.join_id, sas.to_lowercase().replace('-', "")).unwrap();
     assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::Completed);
     assert!(b.client.status().enrolled);
     assert_eq!(b.client.devices().unwrap().len(), 2);
 
-    // B 首次同步：合并本地模板；同名不同内容 → 远端版本写入原文件，本地版本另存为冲突副本
+    // B 首次同步：合并本地模板；同名不同内容 → 以修改时间较晚的为准（同时修改时取远端），另一版备份
     let r = b.client.sync_now().unwrap();
-    assert_eq!(r.conflicts, 1);
+    assert_eq!(r.replaced, 1);
+    assert_eq!(r.replaced_files, vec!["alpha.md".to_string()]);
     assert_eq!(b.read("alpha.md").unwrap(), "---\nname: alpha\n---\nA1");
     assert_eq!(b.read("beta.md").unwrap(), "---\nname: beta\n---\nB1");
-    let conflict = &r.conflict_files[0];
-    assert!(conflict.starts_with("alpha.conflict-") && conflict.ends_with(".md"));
-    assert_eq!(b.read(conflict).unwrap(), "---\nname: alpha\n---\nB-local");
+    assert_eq!(b.history(), vec!["---\nname: alpha\n---\nB-local".to_string()]);
     assert!(b.client.status().alerts.is_empty(), "{:?}", b.client.status().alerts);
 
-    // A 收到 B 的模板；冲突副本不同步
+    // A 收到 B 的模板；模板目录里没有多出任何文件
     a.client.sync_now().unwrap();
     assert_eq!(a.read("gamma.md").unwrap(), "---\nname: gamma\n---\nG1");
-    assert!(a.files().iter().all(|f| !f.contains(".conflict-")));
+    assert_eq!(a.files(), vec!["alpha.md", "beta.md", "gamma.md"]);
+    assert_eq!(b.files(), vec!["alpha.md", "beta.md", "gamma.md"]);
 
-    // 双方并发修改同一模板：先推送者胜出，后推送者的版本另存为冲突副本
+    // 双方同时修改同一模板：修改时间相同，以先推送者为准，后推送者的版本备份
     a.write("beta.md", "beta by A");
     b.write("beta.md", "beta by B");
     a.client.sync_now().unwrap();
     let r = b.client.sync_now().unwrap();
-    assert_eq!(r.conflicts, 1);
+    assert_eq!(r.replaced, 1);
     assert_eq!(b.read("beta.md").unwrap(), "beta by A");
-    assert_eq!(b.read(&r.conflict_files[0]).unwrap(), "beta by B");
+    assert!(b.history().contains(&"beta by B".to_string()));
     // 内容相同的并发修改直接采用
     a.write("gamma.md", "same");
     b.write("gamma.md", "same");
     a.client.sync_now().unwrap();
-    assert_eq!(b.client.sync_now().unwrap().conflicts, 0);
+    assert_eq!(b.client.sync_now().unwrap().replaced, 0);
 
     // 删除：墓碑同步到另一台设备
     a.remove("gamma.md");
@@ -157,52 +154,105 @@ fn two_devices_full_lifecycle() {
     assert!(a.client.status().alerts.is_empty(), "{:?}", a.client.status().alerts);
 }
 
+/// 在 A 上选错候选码：本次加入取消，新设备看到过期；重新发起后可以立即加入（没有冷却）。
 #[test]
-fn sas_failures_cool_down() {
+fn wrong_pick_cancels_join_without_cooldown() {
     let server = server();
     let (a, _) = first_device(&server);
     let n = Dev::signed_in(&server);
     let p = n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
-    n.client.poll_join().unwrap();
-    assert_eq!(a.client.approve_join(p.join_id.clone(), "AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
-    assert_eq!(a.client.approve_join(p.join_id.clone(), "AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 1 }));
-    assert_eq!(a.client.approve_join(p.join_id.clone(), "AAAAAAAA".into()), Err(SyncError::Cooldown { seconds: 600 }));
-    // 请求被取消，新设备看到过期
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Expired);
-    // 冷却期间不能批准新请求
-    let p = n.client.start_join().unwrap();
-    a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
-    assert!(matches!(a.client.approve_join(p.join_id.clone(), sas.clone()), Err(SyncError::Cooldown { .. })));
-    a.advance(601);
-    let code = a.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    n.client.confirm_join(code).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    let choices = a.client.list_join_requests().unwrap()[0].choices.clone();
+    let wrong = choices.iter().find(|c| **c != sas).unwrap().clone();
+    assert!(matches!(a.client.approve_join(p.join_id.clone(), wrong), Err(SyncError::CodeMismatch { .. })));
+    assert_eq!(a.core().roster().unwrap().len(), 2, "没有追加 add_device");
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Expired);
+    assert!(a.client.approve_join(p.join_id, sas).is_err(), "已取消的请求不能再批准");
+    join(&a, &n);
 }
 
+/// 用户在新设备上点"不一致"：取消本次加入，已登录设备上的请求随之消失。
 #[test]
-fn confirm_code_failures_cool_down_on_new_device() {
+fn mismatch_on_new_device_cancels() {
     let server = server();
     let (a, _) = first_device(&server);
     let n = Dev::signed_in(&server);
     let p = n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
-    let code = a.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 2 }));
-    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::SasMismatch { remaining: 1 }));
-    assert_eq!(n.client.confirm_join("AAAAAAAA".into()), Err(SyncError::Cooldown { seconds: 600 }));
-    assert!(n.has_alert("sas_cooldown"));
-    // 本次加入已取消：正确的确认码也不再有效，冷却期间不能重新发起
-    assert!(matches!(n.client.confirm_join(code), Err(SyncError::Cooldown { .. })));
-    assert!(matches!(n.client.start_join(), Err(SyncError::Cooldown { .. })));
+    n.client.cancel_join();
+    assert!(a.client.list_join_requests().unwrap().is_empty());
+    assert!(a.client.approve_join(p.join_id, sas).is_err());
     assert!(!n.client.status().enrolled);
-    // 本机在确认之前没有向服务端写入任何记录（只有 A 创建保险库时写入的状态记录）
-    let w = server.world.lock().unwrap();
-    assert_eq!(w.vault.as_ref().unwrap().records.len(), 1);
+}
+
+/// A 已选对（追加了 add_device），但新设备没有完成确认就取消：花名册中留下本机的条目。
+/// 重新发起加入时不再被拒绝：A 不重复追加，只重新发送钥匙环。
+#[test]
+fn unfinished_join_can_be_retried() {
+    let server = server();
+    let (a, _) = first_device(&server);
+    a.client.sync_now().unwrap();
+    let n = Dev::signed_in(&server);
+    n.write("mine.md", "local");
+    let p = n.client.start_join().unwrap();
+    a.client.list_join_requests().unwrap();
+    let sas = n.client.poll_join().unwrap().sas.unwrap();
+    a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(a.core().roster().unwrap().len(), 3);
+    n.client.cancel_join();
+    assert!(!n.client.status().enrolled);
+    join(&a, &n);
+    assert_eq!(a.core().roster().unwrap().len(), 3, "没有重复追加");
+    n.client.sync_now().unwrap();
+    a.client.sync_now().unwrap();
+    assert_eq!(a.read("mine.md").unwrap(), "local");
+    assert!(n.client.status().alerts.is_empty(), "{:?}", n.client.status().alerts);
+    assert!(a.client.status().alerts.is_empty(), "{:?}", a.client.status().alerts);
+}
+
+/// 被移出保险库的设备不能用同一套设备密钥再次加入：两边都给出明确的处理方法。
+#[test]
+fn removed_device_cannot_rejoin_with_same_keys() {
+    let server = server();
+    let (a, phrase) = first_device(&server);
+    let n = Dev::signed_in(&server);
+    join(&a, &n);
+    a.client.revoke_device(n.id(), Some(phrase)).unwrap();
+    // 本机状态里还有保险库：重置后用新的设备密钥才能加入
+    n.core().state.reset_vault();
+    n.core().roster = None;
+    n.client.start_join().unwrap();
+    a.client.list_join_requests().unwrap();
+    let err = n.client.poll_join().unwrap_err();
+    assert!(err.to_string().contains("重置"), "{err}");
+    assert!(!n.client.status().enrolled);
+    n.client.reset_device().unwrap();
+    let url = n.client.begin_sign_in(REDIRECT.into()).unwrap();
+    let (code, state) = server.world.lock().unwrap().authorize(&url);
+    n.client.finish_sign_in(code, state).unwrap();
+    join(&a, &n);
+}
+
+/// 新设备先确认一致、已登录设备后选择：结果到达后自动完成；两种顺序都可以。
+#[test]
+fn confirm_before_or_after_approval() {
+    let server = server();
+    let (a, _) = first_device(&server);
+    let n = Dev::signed_in(&server);
+    let p = n.client.start_join().unwrap();
+    a.client.list_join_requests().unwrap();
+    let sas = n.client.poll_join().unwrap().sas.unwrap();
+    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
+    assert_eq!(n.client.poll_join().unwrap().sas, Some(sas.clone()), "等待时继续显示校验码");
+    a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    assert!(n.client.status().enrolled);
+    // 另一种顺序（先选择后确认）见 tests::join
+    let m = Dev::signed_in(&server);
+    join(&a, &m);
 }
 
 #[test]
@@ -219,19 +269,20 @@ fn join_survives_restart_on_both_sides() {
     // E 回复之后重启：仍可批准（n_E 与锁定的 commit 保存在安全存储中）
     a.restart();
     let shown = n.client.poll_join().unwrap();
-    assert_eq!(shown.stage, JoinStage::EnterCodeOnOtherDevice);
+    assert_eq!(shown.stage, JoinStage::CompareCode);
     n.restart();
     let again = n.client.poll_join().unwrap();
-    assert_eq!(again.stage, JoinStage::EnterCodeOnOtherDevice);
+    assert_eq!(again.stage, JoinStage::CompareCode);
     assert_eq!(again.sas, shown.sas, "重启后显示同一个校验码");
-    assert_eq!(a.client.list_join_requests().unwrap()[0].status, crate::sync::JoinRequestStatus::ReadyForCode);
+    let choices = a.client.list_join_requests().unwrap()[0].choices.clone();
     a.restart();
-    let code = a.client.approve_join(p.join_id, shown.sas.unwrap()).unwrap();
+    assert_eq!(a.client.list_join_requests().unwrap()[0].choices, choices, "重启后候选码不变");
+    a.client.approve_join(p.join_id, shown.sas.unwrap()).unwrap();
     assert!(a.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_E).is_none(), "批准完成后删除 E 的加入状态");
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
     n.restart();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeHere);
-    n.client.confirm_join(code).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
+    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::Completed);
     assert!(n.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_N).is_none(), "加入完成后删除 N 的加入状态");
     n.restart();
     assert!(n.client.status().enrolled);
@@ -339,4 +390,100 @@ fn stalled_rotation_is_taken_over_after_24h() {
     b.client.sync_now().unwrap();
     a.client.sync_now().unwrap();
     assert_eq!(a.read("z.md").unwrap(), "z");
+}
+
+/// 两台设备 A、B 已同步 t.md；两边的时钟相同。
+fn synced_pair() -> (Arc<fake::FakeServer>, Dev, Dev) {
+    let server = server();
+    let (a, _) = first_device(&server);
+    let b = Dev::signed_in(&server);
+    join(&a, &b);
+    a.write("t.md", "base");
+    a.client.sync_now().unwrap();
+    b.client.sync_now().unwrap();
+    assert_eq!(b.read("t.md").unwrap(), "base");
+    (server, a, b)
+}
+
+/// 同一模板两边都改：以修改时间较晚的为准，与谁先同步无关；被覆盖的版本进入历史目录。
+#[test]
+fn later_edit_wins_regardless_of_sync_order() {
+    let (_server, a, b) = synced_pair();
+    // A 较早修改并先同步；B 较晚修改、后同步：B 的版本保留并推送
+    a.advance(10);
+    a.write("t.md", "older by A");
+    a.client.sync_now().unwrap();
+    b.advance(100);
+    b.write("t.md", "newer by B");
+    let r = b.client.sync_now().unwrap();
+    assert_eq!(r.replaced, 1);
+    assert_eq!(b.read("t.md").unwrap(), "newer by B");
+    assert_eq!(b.history(), vec!["older by A".to_string()]);
+    let r = a.client.sync_now().unwrap();
+    assert_eq!(r.replaced, 0, "A 上的版本已经同步过，直接覆盖");
+    assert_eq!(a.read("t.md").unwrap(), "newer by B");
+
+    // 离线设备带着较早的修改回来：远端较新的版本胜出，离线修改进入历史目录
+    a.advance(200);
+    b.write("t.md", "offline edit by B");
+    a.write("t.md", "latest by A");
+    a.client.sync_now().unwrap();
+    b.client.sync_now().unwrap();
+    assert_eq!(b.read("t.md").unwrap(), "latest by A");
+    assert!(b.history().contains(&"offline edit by B".to_string()));
+    a.client.sync_now().unwrap();
+    assert_eq!(a.read("t.md").unwrap(), "latest by A");
+    assert!(a.client.status().alerts.is_empty(), "{:?}", a.client.status().alerts);
+    assert!(b.client.status().alerts.is_empty(), "{:?}", b.client.status().alerts);
+}
+
+/// 删除与修改也按先后：较晚的删除生效（被删的修改进入历史目录），较晚的修改让模板"复活"。
+#[test]
+fn delete_and_edit_follow_last_modified() {
+    let (_server, a, b) = synced_pair();
+    // B 较早修改并同步；A 较晚删除、后同步：删除生效
+    b.advance(10);
+    b.write("t.md", "edit by B");
+    b.client.sync_now().unwrap();
+    a.advance(100);
+    a.remove("t.md");
+    a.client.sync_now().unwrap();
+    assert!(a.read("t.md").is_none());
+    assert_eq!(a.history(), vec!["edit by B".to_string()]);
+    b.client.sync_now().unwrap();
+    assert!(b.read("t.md").is_none());
+
+    // 重新建立 u.md；A 较早删除并同步，B 较晚修改：修改生效，A 上恢复
+    a.write("u.md", "u1");
+    a.client.sync_now().unwrap();
+    b.client.sync_now().unwrap();
+    a.remove("u.md");
+    a.client.sync_now().unwrap();
+    b.advance(200);
+    b.write("u.md", "u2 by B");
+    b.client.sync_now().unwrap();
+    assert_eq!(b.read("u.md").unwrap(), "u2 by B");
+    a.client.sync_now().unwrap();
+    assert_eq!(a.read("u.md").unwrap(), "u2 by B");
+    assert!(a.client.status().alerts.is_empty(), "{:?}", a.client.status().alerts);
+    assert!(b.client.status().alerts.is_empty(), "{:?}", b.client.status().alerts);
+}
+
+/// 新设备加入时本机已有同名模板：本机的版本较新时保留并上传，云端旧版本进入历史目录。
+#[test]
+fn newer_local_template_survives_first_sync() {
+    let server = server();
+    let (a, _) = first_device(&server);
+    a.write("p.md", "cloud");
+    a.client.sync_now().unwrap();
+    let b = Dev::signed_in(&server);
+    b.advance(60);
+    b.write("p.md", "mine, newer");
+    join(&a, &b);
+    let r = b.client.sync_now().unwrap();
+    assert_eq!(r.replaced, 1);
+    assert_eq!(b.read("p.md").unwrap(), "mine, newer");
+    assert_eq!(b.history(), vec!["cloud".to_string()]);
+    a.client.sync_now().unwrap();
+    assert_eq!(a.read("p.md").unwrap(), "mine, newer");
 }

@@ -3,7 +3,7 @@
 //!
 //! cargo run --example sync_cli -- <server> <dir> <command> [args]
 //! 命令：signin | status | exists | create | join [codefile] | requests | approve <join_id> <code> | approve-auto <codefile>
-//!       | confirm <code> | sync | maybe <manual|timer|panel|local|launch|wake> | devices | account-devices
+//!       | confirm | sync | maybe <manual|timer|panel|local|launch|wake> | devices | account-devices
 //!       | release <grant_id> | usage | revoke <device_id> [phrase] | reverify | recover <phrase…>
 //! 环境变量 QANTRIP_DEVICE_NAME 可以指定上报的设备名称（默认 "sync_cli"）。
 
@@ -99,23 +99,17 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let p = client.poll_join()?;
                 match p.stage {
-                    JoinStage::EnterCodeOnOtherDevice if !shown => {
+                    JoinStage::CompareCode if !shown => {
                         let sas = p.sas.unwrap_or_default();
                         println!("SAS {sas}");
+                        shown = true;
+                        // 给出校验码文件时视为用户已核对一致（由 approve-auto 在另一台设备上选出同一个码）
                         if let Some(f) = rest.first() {
                             std::fs::write(f, &sas).unwrap();
+                            client.confirm_join()?;
+                        } else {
+                            println!("run `confirm` in another shell once the code matches");
                         }
-                        shown = true;
-                    }
-                    JoinStage::EnterCodeHere => {
-                        let Some(f) = rest.first() else { return Ok("enter confirm code with `confirm`".into()) };
-                        let path = format!("{f}.confirm");
-                        while !std::path::Path::new(&path).exists() {
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                        }
-                        let code = std::fs::read_to_string(&path).unwrap();
-                        let code = std::env::var("QANTRIP_WRONG_CONFIRM").unwrap_or(code);
-                        client.confirm_join(code.trim().to_string())?;
                     }
                     JoinStage::Completed => return client.sync_now().map(|r| format!("joined; {r:?}")),
                     JoinStage::Expired => return Ok("expired".into()),
@@ -131,10 +125,11 @@ fn main() {
             if let Some(r) = reqs.iter().find(|r| r.status == qantrip_core::sync::JoinRequestStatus::ReadyForCode)
                 && let Ok(code) = std::fs::read_to_string(&rest[0])
             {
-                let confirm = client.approve_join(r.join_id.clone(), code.trim().to_string())?;
-                // 确认码写到校验码文件旁边，供新设备读取
-                std::fs::write(format!("{}.confirm", rest[0]), &confirm).unwrap();
-                break Ok(format!("approved, confirm code {confirm}"));
+                // QANTRIP_WRONG_PICK=1：故意选一个干扰码
+                let code = code.trim().to_string();
+                let pick = if std::env::var("QANTRIP_WRONG_PICK").is_ok() { r.choices.iter().find(|c| **c != code).cloned().unwrap_or_default() } else { code };
+                client.approve_join(r.join_id.clone(), pick)?;
+                break Ok(format!("approved; choices were {:?}", r.choices));
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         },
@@ -158,7 +153,7 @@ fn main() {
         "account-devices" => client.account_devices().map(|d| format!("{d:#?}")),
         "release" => client.release_device(rest[0].clone()).map(|_| "released".into()),
         "usage" => client.account_usage().map(|u| format!("{u:?}")),
-        "confirm" => client.confirm_join(rest[0].clone()).map(|_| "confirmed".into()),
+        "confirm" => client.confirm_join().map(|p| format!("{p:?}")),
         "revoke" => client.revoke_device(rest[0].clone(), rest.get(1).cloned()).map(|r| format!("{r:?}")),
         "reverify" => client.reverify().map(|s| format!("{s:?}")),
         "recover" => client.recover(rest.join(" ")).map(|_| "recovered".into()),

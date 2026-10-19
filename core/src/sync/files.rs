@@ -1,4 +1,5 @@
-//! 模板目录（D11：一个模板一个 `*.md` 文件）的读写。冲突副本（`*.conflict-*.md`）不参与同步。
+//! 模板目录（D11：一个模板一个 `*.md` 文件）的读写，以及被覆盖版本的历史目录。
+//! 0.4 及更早版本生成的冲突副本（`*.conflict-*.md`）不参与同步。
 //!
 //! - 文件名比较按 [`name_key`]（NFC 规范化后转小写），与 APFS / NTFS 默认的大小写不敏感、规范化不敏感一致，
 //!   避免两条记录落到同一个文件上互相覆盖。
@@ -6,6 +7,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::time::{Duration, UNIX_EPOCH};
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,6 +15,8 @@ use super::codec;
 use super::crypto;
 
 const CONFLICT_MARK: &str = ".conflict-";
+/// 历史版本的保留时间
+pub const HISTORY_KEEP_SECS: i64 = 30 * 86_400;
 
 /// Unicode 一般类别 Cf（格式字符：双向控制、零宽字符等，Unicode 16）。文件名中出现它们可以伪装扩展名或名称。
 pub fn is_format_char(c: char) -> bool {
@@ -99,17 +103,45 @@ pub fn hash(data: &[u8]) -> String {
     codec::b64u(&crypto::sha256(&[data]))
 }
 
-/// 冲突副本名：`<名称>.conflict-<设备简称>-<时间>.md`（UTC，`YYYYMMDD-HHMMSS`）。已存在时追加序号。
-pub fn conflict_name(dir: &Path, name: &str, device_short: &str, unix: i64) -> String {
+/// 文件的修改时间（unix 秒）；读不到时返回 None。不跟随符号链接。
+pub fn modified(dir: &Path, name: &str) -> Option<i64> {
+    let t = std::fs::symlink_metadata(dir.join(name)).ok()?.modified().ok()?;
+    Some(match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    })
+}
+
+/// 把被覆盖的版本写入历史目录：`<名称>.<时间>.md`（UTC，`YYYYMMDD-HHMMSS`，已存在时追加序号），
+/// 文件的修改时间设为 `unix`（清理按它计算）。返回写入的文件名。
+pub fn backup(history: &Path, name: &str, data: &[u8], unix: i64) -> Result<String, String> {
+    std::fs::create_dir_all(history).map_err(|e| format!("无法创建历史版本目录：{e}"))?;
     let stem = name.strip_suffix(".md").unwrap_or(name);
-    let base = format!("{stem}{CONFLICT_MARK}{device_short}-{}", timestamp(unix));
+    let base = format!("{stem}.{}", timestamp(unix));
     let mut candidate = format!("{base}.md");
     let mut n = 2;
-    while dir.join(&candidate).exists() {
+    while history.join(&candidate).exists() {
         candidate = format!("{base}-{n}.md");
         n += 1;
     }
-    candidate
+    let path = history.join(&candidate);
+    std::fs::write(&path, data).map_err(|e| format!("无法备份 {name}：{e}"))?;
+    let at = UNIX_EPOCH + Duration::from_secs(unix.max(0) as u64);
+    let _ = std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(at));
+    Ok(candidate)
+}
+
+/// 删除历史目录中早于 `now - keep_secs` 的版本。
+pub fn prune_history(history: &Path, now: i64, keep_secs: i64) {
+    let Ok(entries) = std::fs::read_dir(history) else { return };
+    for e in entries.flatten() {
+        if e.file_type().is_ok_and(|t| t.is_file())
+            && let Some(name) = e.file_name().to_str()
+            && modified(history, name).is_some_and(|t| t < now - keep_secs)
+        {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 fn timestamp(unix: i64) -> String {
@@ -171,5 +203,21 @@ mod tests {
         assert!(!valid_file_name("zh.conflict-abc-20260101-000000.md"));
         assert_eq!(timestamp(0), "19700101-000000");
         assert_eq!(timestamp(1_792_281_600 + 3_723), "20261018-010203");
+    }
+
+    #[test]
+    fn history_backup_and_prune() {
+        let dir = std::env::temp_dir().join(format!("qantrip-history-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let t = 1_792_281_600;
+        assert_eq!(backup(&dir, "zh.md", b"v1", t).unwrap(), "zh.20261018-000000.md");
+        assert_eq!(backup(&dir, "zh.md", b"v2", t).unwrap(), "zh.20261018-000000-2.md");
+        assert_eq!(backup(&dir, "zh.md", b"v3", t + 10 * 86_400).unwrap(), "zh.20261028-000000.md");
+        assert_eq!(modified(&dir, "zh.20261018-000000.md"), Some(t));
+        prune_history(&dir, t + 31 * 86_400, HISTORY_KEEP_SECS);
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        left.sort();
+        assert_eq!(left, vec!["zh.20261028-000000.md".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

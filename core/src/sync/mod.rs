@@ -41,10 +41,8 @@ pub enum SyncError {
     NotEnrolled { message: String },
     /// 安全校验失败（签名、承诺、密文、花名册等）；同时会记录告警
     Security { message: String },
-    /// 校验码（E 上输入的 SAS，或 N 上输入的确认码）不符；`remaining` 为冷却前剩余的尝试次数
-    SasMismatch { remaining: u32 },
-    /// 校验码错误次数过多，冷却中
-    Cooldown { seconds: u64 },
+    /// 加入时在已登录设备上选择的校验码与新设备上显示的不一致（本次加入已取消）
+    CodeMismatch { message: String },
     /// 该操作需要恢复短语（§6.4）
     RecoveryRequired { message: String },
     /// 与其他设备的并发操作多次冲突
@@ -76,9 +74,8 @@ impl std::fmt::Display for SyncError {
             | SyncError::Conflict { message }
             | SyncError::InvalidInput { message }
             | SyncError::InvalidState { message }
-            | SyncError::Storage { message } => f.write_str(message),
-            SyncError::SasMismatch { remaining } => write!(f, "校验码不正确，还可以再试 {remaining} 次"),
-            SyncError::Cooldown { seconds } => write!(f, "校验码错误次数过多，请 {} 分钟后再试", seconds.div_ceil(60)),
+            | SyncError::Storage { message }
+            | SyncError::CodeMismatch { message } => f.write_str(message),
             SyncError::DeviceLimit { max_devices } => write!(f, "此账号最多同时在 {max_devices} 台设备上同步，请先移除不用的设备"),
         }
     }
@@ -250,9 +247,11 @@ pub struct SyncReport {
     pub pulled: u32,
     /// 推送成功的写入数
     pub pushed: u32,
-    /// 产生的冲突副本数
-    pub conflicts: u32,
-    pub conflict_files: Vec<String>,
+    /// 同一模板在两台设备上都有修改时，以修改时间较晚的为准（docs/sync-design.md 5.5）：
+    /// 被覆盖的那一版备份到历史版本目录（`history_dir`）。这是本次备份的版本数
+    pub replaced: u32,
+    /// 备份的版本对应的模板文件名
+    pub replaced_files: Vec<String>,
     /// 未通过校验而被丢弃的记录数
     pub rejected: u32,
     /// 本次新增的告警数
@@ -266,10 +265,10 @@ pub struct SyncReport {
 pub enum JoinStage {
     /// 等待已登录的设备响应
     WaitingForApprover,
-    /// 显示校验码，请用户在已登录的设备上输入（新设备上没有任何确认按钮）
-    EnterCodeOnOtherDevice,
-    /// 已登录的设备已批准：请用户在本机输入该设备显示的确认码（调用 `confirm_join`）
-    EnterCodeHere,
+    /// 显示校验码 `sas`：请用户在已登录的设备上选出同一个码，并在本机确认一致（`confirm_join`）或不一致（`cancel_join`）
+    CompareCode,
+    /// 用户已在本机确认一致：继续显示 `sas`，等待已登录的设备完成选择
+    WaitingForOtherDevice,
     Completed,
     Expired,
 }
@@ -285,10 +284,12 @@ pub struct JoinProgress {
 pub enum JoinRequestStatus {
     /// 已回复，等待新设备显示校验码
     WaitingForNewDevice,
-    /// 可以输入校验码
+    /// 可以选择校验码（见 `JoinRequest::choices`）
     ReadyForCode,
     /// 由另一台已登录的设备处理
     HandledElsewhere,
+    /// 新设备的 Qantrip 版本与本机不兼容（加入协议版本不同），请把两台设备升级到同一版本
+    Incompatible,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -296,6 +297,8 @@ pub struct JoinRequest {
     pub join_id: String,
     pub expires_at: i64,
     pub status: JoinRequestStatus,
+    /// `ReadyForCode` 时的三个候选校验码（其中一个与新设备上显示的相同），其余状态为空
+    pub choices: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -312,6 +315,8 @@ pub struct DeviceInfo {
 pub struct SyncClient {
     core: Mutex<Core>,
     cached: Mutex<SyncStatus>,
+    /// 历史版本目录（不随操作变化，不需要等待其他操作）
+    history: PathBuf,
 }
 
 fn policy_of(p: &state::StoredPolicy) -> SyncPolicy {
@@ -335,7 +340,9 @@ impl SyncClient {
     ) -> SyncClient {
         let api = Api::new(transport, secrets.clone(), device);
         let core = Core::new(api, secrets, server_url, data_dir, template_dir, clock);
+        let history = core.history_dir();
         let client = SyncClient {
+            history,
             core: Mutex::new(core),
             cached: Mutex::new(SyncStatus {
                 signed_in: false,
@@ -470,16 +477,16 @@ impl SyncClient {
         self.run(join::start_join)
     }
 
-    /// 新设备：轮询加入进度。阶段为 `EnterCodeOnOtherDevice` 时显示 `sas`；`EnterCodeHere` 时请用户输入
-    /// 已登录设备显示的确认码并调用 `confirm_join`。
+    /// 新设备：轮询加入进度。阶段为 `CompareCode` / `WaitingForOtherDevice` 时显示 `sas`；
+    /// 用户已确认且已登录设备完成选择后，阶段为 `Completed`。
     pub fn poll_join(&self) -> Result<JoinProgress, SyncError> {
         self.run(join::poll_join)
     }
 
-    /// 新设备：输入已登录设备批准后显示的确认码。成功后阶段为 `Completed`，随后调用 `sync_now`。
-    /// 不符时返回 `SasMismatch`，连续 3 次后返回 `Cooldown` 并取消本次加入。
-    pub fn confirm_join(&self, code: String) -> Result<(), SyncError> {
-        self.run(|c| join::confirm_join(c, &code))
+    /// 新设备：用户确认两台设备上的校验码一致。已登录设备已完成选择时立即加入（阶段 `Completed`，随后调用
+    /// `sync_now`），否则阶段为 `WaitingForOtherDevice`，继续 `poll_join`。不一致时调用 `cancel_join`。
+    pub fn confirm_join(&self) -> Result<JoinProgress, SyncError> {
+        self.run(join::confirm_join)
     }
 
     pub fn cancel_join(&self) {
@@ -494,9 +501,10 @@ impl SyncClient {
         self.run(join::list_join_requests)
     }
 
-    /// 已登录设备：输入新设备上显示的校验码以批准加入。返回确认码：在本机显示，由用户在新设备上输入。
-    pub fn approve_join(&self, join_id: String, sas: String) -> Result<String, SyncError> {
-        self.run(|c| join::approve_join(c, &join_id, &sas))
+    /// 已登录设备：用户从 `choices` 中选出新设备上显示的校验码以批准加入。选错时返回 `CodeMismatch`
+    /// 并取消本次加入。
+    pub fn approve_join(&self, join_id: String, code: String) -> Result<(), SyncError> {
+        self.run(|c| join::approve_join(c, &join_id, &code))
     }
 
     pub fn reject_join(&self, join_id: String) -> Result<(), SyncError> {
@@ -511,6 +519,12 @@ impl SyncClient {
     /// 立即同步（等同于 `maybe_sync(Manual)`）：版本检查、有变化时拉取并应用到模板目录、推送本地变化、更新本机状态记录。
     pub fn sync_now(&self) -> Result<SyncReport, SyncError> {
         self.run(|c| c.sync())
+    }
+
+    /// 历史版本目录：同步时被较新版本覆盖的模板备份在这里（不参与同步，保留 30 天）。目录可能还不存在。
+    /// 不等待进行中的操作，可以在界面线程调用。
+    pub fn history_dir(&self) -> String {
+        self.history.to_string_lossy().into_owned()
     }
 
     /// 按触发原因与服务端下发的策略决定是否同步；返回 None 表示没有发出任何请求。

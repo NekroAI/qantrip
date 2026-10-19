@@ -416,12 +416,16 @@ fn fake_approver_not_in_roster_is_rejected() {
     ]));
     vault_mut(&server, |v| v.joins[0].reply = Some(reply));
     let shown = n.client.poll_join().unwrap();
-    assert_eq!(shown.stage, JoinStage::EnterCodeOnOtherDevice);
-    // 真实设备 A 没有回复过这个请求，无法批准
-    assert_eq!(a.client.list_join_requests().unwrap()[0].status, JoinRequestStatus::HandledElsewhere);
+    assert_eq!(shown.stage, JoinStage::CompareCode);
+    // 真实设备 A 没有回复过这个请求，不显示候选码，也无法批准
+    let reqs = a.client.list_join_requests().unwrap();
+    assert_eq!(reqs[0].status, JoinRequestStatus::HandledElsewhere);
+    assert!(reqs[0].choices.is_empty());
     assert!(a.client.approve_join(p2.join_id.clone(), shown.sas.unwrap()).is_err());
-    // 服务端也无法伪造结果：没有 A 的私钥，签不出 add_device，也无法发出认证信封
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::EnterCodeOnOtherDevice);
+    // 用户即使没有核对就在 N 上点了"一致"，服务端也无法伪造结果：没有 A 的私钥，签不出结果与 add_device，
+    // 也无法发出认证信封
+    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
     assert!(!n.client.status().enrolled);
 }
 
@@ -444,8 +448,12 @@ fn replaced_approver_nonce_makes_sas_mismatch() {
     }));
     let shown = n.client.poll_join().unwrap().sas.unwrap();
     server.world.lock().unwrap().hook = None;
-    // 用户在 A 上输入 N 显示的校验码：与 A 计算的不一致
-    assert!(matches!(a.client.approve_join(p.join_id, shown), Err(SyncError::SasMismatch { .. })));
+    // A 的三个候选码中没有 N 显示的那个；用户硬选也会被拒绝并取消本次加入
+    let choices = a.client.list_join_requests().unwrap()[0].choices.clone();
+    assert_eq!(choices.len(), 3);
+    assert!(!choices.contains(&shown));
+    assert!(matches!(a.client.approve_join(p.join_id, shown), Err(SyncError::CodeMismatch { .. })));
+    assert!(a.client.list_join_requests().unwrap().is_empty());
     assert!(!n.client.status().enrolled);
 }
 
@@ -479,7 +487,7 @@ fn replaced_commit_and_reveal_are_rejected() {
     let vault = a.core().vault().unwrap();
     let attacker = DeviceKeys::from_seeds([8; 32], [8; 32], [8; 32]);
     let commit = crypto::join_commit(&vault, &attacker.public().concat(), &[2; 32]);
-    let commit_msg = codec::encode(&codec::map(vec![("v", codec::uint(1)), ("commit", codec::bytes(&commit))]));
+    let commit_msg = codec::encode(&codec::map(vec![("v", codec::uint(2)), ("commit", codec::bytes(&commit))]));
     let reveal = codec::encode(&codec::map(vec![("pk", codec::bytes(&attacker.public().concat())), ("nonce", codec::bytes(&[2; 32]))]));
     vault_mut(&server, |v| {
         v.joins[0].commit = commit_msg;
@@ -498,14 +506,16 @@ fn forged_join_result_is_rejected() {
     n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     n.client.poll_join().unwrap();
-    // 服务端伪造结果：没有新花名册条目、信封来自攻击者
-    let result = codec::encode(&codec::map(vec![
+    n.client.confirm_join().unwrap();
+    // 服务端伪造结果：没有新花名册条目、信封来自攻击者、没有 A 的签名
+    let body = codec::encode(&codec::map(vec![
         ("roster", ciborium::Value::Array(vec![])),
         ("envelope", codec::bytes(&[1, 2, 3])),
         ("epoch", codec::uint(1)),
         ("roster_index", codec::uint(1)),
         ("anchor", ciborium::Value::Null),
     ]));
+    let result = codec::encode(&codec::map(vec![("body", codec::bytes(&body)), ("sig", codec::bytes(&[0; 64]))]));
     vault_mut(&server, |v| v.joins[0].result = Some(result));
     assert!(matches!(n.client.poll_join(), Err(SyncError::Security { .. })));
     assert!(!n.client.status().enrolled);

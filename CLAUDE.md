@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**已开源（`NekroAI/qantrip`），macOS 与 Windows 为正式版，Linux 为预览版。** 技术路线为 Rust 核心 + 各平台原生外壳（D6）：macOS（Swift + UniFFI，`apps/macos/`）、Windows（C# + WinUI 3，D32，`apps/windows/`，见 `docs/windows-spike.md`）、Linux（Rust + GTK4 / libadwaita，D37，`apps/linux/`，已在 GNOME / KDE（Wayland）与 X11 上实测）。打包与发布流程见 D22。云服务（`apps/cloud/`，D23 / D24）：官网与同步服务端已上线 `qantrip.nekro.ai`（staging：`qantrip-staging.nekro.ai`），安全设计见 `docs/sync-design.md` v0.4。端到端加密同步（`core/src/sync/`）三个平台均已接入；官网与应用中英双语（D29）；面板指令模式见 D31。
+**已开源（`NekroAI/qantrip`），macOS 与 Windows 为正式版，Linux 为预览版。** 技术路线为 Rust 核心 + 各平台原生外壳（D6）：macOS（Swift + UniFFI，`apps/macos/`）、Windows（C# + WinUI 3，D32，`apps/windows/`，见 `docs/windows-spike.md`）、Linux（Rust + GTK4 / libadwaita，D37，`apps/linux/`，已在 GNOME / KDE（Wayland）与 X11 上实测）。打包与发布流程见 D22。云服务（`apps/cloud/`，D23 / D24）：官网与同步服务端已上线 `qantrip.nekro.ai`（staging：`qantrip-staging.nekro.ai`），安全设计见 `docs/sync-design.md` v0.5。端到端加密同步（`core/src/sync/`）三个平台均已接入；官网与应用中英双语（D29）；面板指令模式见 D31。
 
 - 同步联调：`cargo run --example sync_cli -- <server> <dir> <命令>` 在命令行扮演一台设备（见文件头注释）
 
@@ -19,13 +19,13 @@
 
 | 文件 | 内容 |
 |---|---|
-| `docs/PRD.md` | 产品需求文档 v0.3。各章节的修订标记说明了改动来源 |
+| `docs/PRD.md` | 产品需求文档 v0.4。各章节的修订标记说明了改动来源 |
 | `docs/input-grammar.md` | 面板 / CLI 共用的输入语法规范草案 |
 | `docs/decisions.md` | 已做决定及理由、待决事项、未验证假设、可复用的现有 Cloudflare 代码位置 |
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
 | `docs/windows-spike.md` | Windows（WinUI 3）可行性报告：热键、面板、插入、输入法与绑定方式 |
 | `docs/install.md` | macOS、Windows 与 Linux 安装说明（同时用作 Release 说明） |
-| `docs/sync-design.md` | 同步与端到端加密安全设计 v0.4（含成本模型、两轮审查记录） |
+| `docs/sync-design.md` | 同步与端到端加密安全设计 v0.5（含成本模型、两轮审查记录与 v0.5 加入流程的安全取舍） |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。
 

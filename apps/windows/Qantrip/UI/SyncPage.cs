@@ -69,12 +69,12 @@ internal sealed class SyncPage
         var s = sync.Status;
         var b = new StringBuilder();
         b.Append($"{s?.SignedIn}|{s?.Account}|{s?.HasVault}|{s?.Enrolled}|{s?.LastSync}|{s?.WritesBlocked}|{s?.Alerts.Count}|{s?.DeviceId}|");
-        b.Append($"{sync.RemoteVault}|{sync.Join?.Stage}|{sync.Join?.Sas}|{sync.Working}|{sync.Error}|{sync.Phrase != null}|{sync.LastReport?.Conflicts}|{recoverMode}|");
-        foreach (var r in sync.JoinRequests) b.Append($"{r.JoinId}:{r.Status},");
+        b.Append($"{sync.RemoteVault}|{sync.Join?.Stage}|{sync.Join?.Sas}|{sync.Working}|{sync.Error}|{sync.Phrase != null}|{sync.LastReport?.Replaced}|{recoverMode}|");
+        foreach (var r in sync.JoinRequests) b.Append($"{r.JoinId}:{r.Status}:{string.Join("/", r.Choices)},");
         b.Append('|');
         foreach (var d in sync.Devices) b.Append($"{d.DeviceId}:{d.IsSelf},");
         b.Append('|');
-        foreach (var c in sync.ConfirmCodes) b.Append($"{c.Key}:{c.Value},");
+        foreach (var id in sync.ApprovedJoins) b.Append($"{id},");
         b.Append($"|{s?.Usage?.Bytes}/{s?.Usage?.QuotaBytes}|{s?.NextPushAt}|{s?.DeviceLimit}|{sync.AccountDevices?.MaxDevices}|");
         foreach (var d in sync.AccountDevices?.Devices ?? new()) b.Append($"{d.GrantId}:{d.Name}:{d.Platform}:{d.AppVersion}:{d.LastSeenAt}:{d.IsSelf}:{d.Limited}:{d.InVault},");
         b.Append('|').Append(Settings.SyncServer).Append('|').Append(Loc.En);
@@ -112,7 +112,7 @@ internal sealed class SyncPage
 
     private TextBox Input(string id, string placeholder, bool mono = false, double width = double.NaN, bool multiline = false)
     {
-        // 文字一律左对齐（校验码、确认码输入框也是）
+        // 文字一律左对齐（恢复短语、服务端地址输入框也是）
         var t = new TextBox { PlaceholderText = placeholder, IsSpellCheckEnabled = false, Width = width, Text = texts.GetValueOrDefault(id, ""), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         if (mono) t.FontFamily = Theme.Mono;
         if (multiline) { t.AcceptsReturn = true; t.TextWrapping = TextWrapping.Wrap; t.Height = 96; }
@@ -276,7 +276,7 @@ internal sealed class SyncPage
         {
             page.Children.Add(Box(
                 Text(Loc.T("把这台设备加入保险库", "Add this device to your vault"), bold: true),
-                Text(Loc.T("在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。", "On a device that already syncs, open Qantrip Settings › Sync and enter the code shown here."), secondary: true, size: 13),
+                Text(Loc.T("开始后，在一台已经同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这里显示的那个。", "Then, on a device that already syncs, open Qantrip Settings › Sync and pick the code shown here."), secondary: true, size: 13),
                 Row(Btn("join", Loc.T("开始加入", "Start"), sync.StartJoin, accent: true, enabled: !Busy),
                     Btn("userecovery", Loc.T("改用恢复短语", "Use recovery phrase"), () => { recoverMode = true; Render(true); }))));
         }
@@ -295,26 +295,26 @@ internal sealed class SyncPage
                 items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("等待已同步的设备响应…", "Waiting for a device that already syncs…"))));
                 items.Add(Text(Loc.T("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that device."), secondary: true, size: 13));
                 break;
-            case "enter_code_on_other_device":
-                items.Add(Text(Loc.T("在另一台设备上输入这个校验码", "Enter this code on your other device"), bold: true));
+            case "compare_code":
+                items.Add(Text(Loc.T("核对校验码", "Check the code"), bold: true));
                 items.Add(Big(join.Sas ?? "", "sas"));
-                items.Add(Text(Loc.T("这台设备上不需要任何确认。", "Nothing to confirm on this device."), secondary: true, size: 13));
+                items.Add(Text(Loc.T("在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。", "On your other device, pick this code from the three shown. If both devices show the same code, click Match."), secondary: true, size: 13));
+                items.Add(Row(Btn("confirmjoin", Loc.T("一致", "Match"), sync.ConfirmJoin, accent: true, enabled: !Busy),
+                    Btn("mismatch", Loc.T("不一致", "Doesn't match"), sync.CancelJoin)));
                 break;
-            case "enter_code_here":
-                var code = Input("confirm", Loc.T("确认码", "Code"), mono: true, width: 220);
-                code.FontSize = 18;
-                items.Add(Text(Loc.T("输入另一台设备上显示的确认码", "Enter the code shown on your other device"), bold: true));
-                items.Add(Row(code, Btn("confirmjoin", Loc.T("加入", "Join"), () => { if (code.Text.Trim().Length >= 4) sync.ConfirmJoin(code.Text); }, accent: true, enabled: !Busy)));
-                items.Add(Text(Loc.T("两边互相输入校验码，确保这台设备加入的是你自己的保险库。", "Entering a code on each side makes sure this device joins your own vault."), secondary: true, size: 12));
+            case "waiting_for_other_device":
+                items.Add(Big(join.Sas ?? "", "sas"));
+                items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))));
                 break;
             case "completed":
                 items.Add(Text(Loc.T("已加入", "Joined"), bold: true));
                 break;
             case "expired":
-                items.Add(Text(Loc.T("请求已过期", "The request expired"), bold: true));
+                items.Add(Text(Loc.T("请求已过期或已取消", "The request expired or was cancelled"), bold: true));
                 break;
         }
-        items.Add(Row(Btn("canceljoin", join.Stage == "expired" ? Loc.T("关闭", "Close") : Loc.T("取消", "Cancel"), sync.CancelJoin)));
+        if (join.Stage != "compare_code")
+            items.Add(Row(Btn("canceljoin", join.Stage == "expired" ? Loc.T("关闭", "Close") : Loc.T("取消", "Cancel"), sync.CancelJoin)));
         page.Children.Add(Box(items.ToArray()));
     }
 
@@ -343,7 +343,9 @@ internal sealed class SyncPage
         var info = new StackPanel { Spacing = 6 };
         info.Children.Add(Row(Text(Loc.T("账号", "Account"), secondary: true), Text(status.Account ?? "", bold: true)));
         info.Children.Add(Row(Text(Loc.T("上次同步", "Last synced"), secondary: true), relative));
-        var card = new List<UIElement> { Spread(info, Row(Btn("syncnow", Loc.T("立即同步", "Sync now"), sync.SyncNow, accent: true, enabled: !Busy), Btn("signout", Loc.T("退出登录", "Sign out"), sync.SignOut, enabled: !Busy))) };
+        var history = Btn("history", Loc.T("历史版本", "History"), sync.OpenHistory);
+        ToolTipService.SetToolTip(history, Loc.T("同一模板在两台设备上都改过时，保留最后修改的版本；被覆盖的版本保存在这里 30 天。", "When a template is changed on two devices, the latest edit wins. The overwritten version is kept here for 30 days."));
+        var card = new List<UIElement> { Spread(info, Row(Btn("syncnow", Loc.T("立即同步", "Sync now"), sync.SyncNow, accent: true, enabled: !Busy), history, Btn("signout", Loc.T("退出登录", "Sign out"), sync.SignOut, enabled: !Busy))) };
         if (status.Usage is { } usage) card.Add(UsageRow(usage));
         if (status.NextPushAt is long at)
         {
@@ -352,10 +354,10 @@ internal sealed class SyncPage
             AutomationProperties.SetAutomationId(t, "sync_nextpush");
             card.Add(t);
         }
-        if (sync.LastReport is { Conflicts: > 0 } report)
+        if (sync.LastReport is { Replaced: > 0 } report)
         {
-            var t = Text(Loc.T($"有 {report.Conflicts} 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", $"{report.Conflicts} template(s) changed on two devices at once. Both versions were kept; merge them in the template library."), size: 12);
-            t.Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkOrange);
+            var t = Text(Loc.T($"有 {report.Replaced} 个模板在两台设备上都改过，已保留最后修改的版本，另一版存入历史版本。", $"{report.Replaced} template(s) were changed on two devices. The latest edit was kept; the other version is in History."), secondary: true, size: 12);
+            AutomationProperties.SetAutomationId(t, "sync_replaced");
             card.Add(t);
         }
         page.Children.Add(Box(card.ToArray()));
@@ -368,33 +370,47 @@ internal sealed class SyncPage
             page.Children.Add(Box(items.ToArray()));
         }
 
-        foreach (var (id, confirm) in sync.ConfirmCodes.OrderBy(kv => kv.Key))
+        foreach (var id in sync.ApprovedJoins.OrderBy(x => x))
         {
-            page.Children.Add(SettingsView.Section(Loc.T("最后一步", "Last step")));
+            var approved = Text(Loc.T("已批准", "Approved"), bold: true);
+            AutomationProperties.SetAutomationId(approved, "sync_approved");
             page.Children.Add(Box(
-                Text(Loc.T("在新设备上输入这个确认码", "Enter this code on the new device"), bold: true),
-                Big(confirm, "confirmcode"),
-                Row(Btn("done_" + id, Loc.T("完成", "Done"), () => sync.DismissConfirmCode(id)))));
+                approved,
+                Text(Loc.T("在新设备上点「一致」即可完成。", "Click Match on the new device to finish."), secondary: true, size: 13),
+                Row(Btn("done_" + id, Loc.T("完成", "Done"), () => sync.DismissApproved(id)))));
         }
 
-        var requests = sync.JoinRequests.Where(r => r.Status != "handled_elsewhere" && !sync.ConfirmCodes.ContainsKey(r.JoinId)).ToList();
+        var requests = sync.JoinRequests.Where(r => r.Status != "handled_elsewhere" && !sync.ApprovedJoins.Contains(r.JoinId)).ToList();
         if (requests.Count > 0)
         {
             page.Children.Add(SettingsView.Section(Loc.T("新设备请求加入", "A new device wants to join")));
             foreach (var r in requests)
             {
+                var id = r.JoinId;
                 if (r.Status == "waiting_for_new_device")
                 {
                     page.Children.Add(Box(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("等待新设备显示校验码…", "Waiting for the new device to show its code…")))));
                     continue;
                 }
-                var code = Input("sas_" + r.JoinId, Loc.T("校验码", "Code"), mono: true, width: 200);
-                var id = r.JoinId;
+                if (r.Status == "incompatible")
+                {
+                    page.Children.Add(Box(
+                        Text(Loc.T("新设备上的 Qantrip 版本与这台不同，无法加入。请把两台设备都更新到最新版本。", "The new device runs a different version of Qantrip and can't join. Update both devices to the latest version."), size: 13),
+                        Row(Btn("reject", Loc.T("拒绝", "Reject"), () => sync.Reject(id)))));
+                    continue;
+                }
+                var choices = r.Choices.Select((c, i) =>
+                {
+                    var b = Btn($"choice{i}", "", () => sync.Approve(id, c), enabled: !Busy);
+                    b.Content = new TextBlock { Text = c, FontFamily = Theme.Mono, FontSize = 18, FontWeight = FontWeights.SemiBold, CharacterSpacing = 100 };
+                    b.Padding = new Thickness(14, 8, 14, 8);
+                    AutomationProperties.SetName(b, c);
+                    return (UIElement)b;
+                }).ToArray();
                 page.Children.Add(Box(
-                    Text(Loc.T("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new device. If this isn't you, reject it."), size: 13),
-                    Row(code,
-                        Btn("approve", Loc.T("批准", "Approve"), () => { if (code.Text.Trim().Length >= 4) sync.Approve(id, code.Text); }, accent: true, enabled: !Busy),
-                        Btn("reject", Loc.T("拒绝", "Reject"), () => sync.Reject(id)))));
+                    Text(Loc.T("新设备上显示的是哪一个码？如果不是你本人在操作，请拒绝。", "Which code does the new device show? If this isn't you, reject it."), size: 13),
+                    Row(choices),
+                    Row(Btn("reject", Loc.T("都不是，拒绝", "None of these — reject"), () => sync.Reject(id)))));
             }
         }
 

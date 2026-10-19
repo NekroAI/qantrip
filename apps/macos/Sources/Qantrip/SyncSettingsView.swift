@@ -135,7 +135,7 @@ private struct NoVault: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(L("把这台设备加入保险库", "Add this device to your vault")).font(.headline)
-                    Text(L("在一台已经同步的设备上打开 Qantrip 设置 › 同步，输入这里显示的校验码。", "On a device that already syncs, open Qantrip Settings › Sync and enter the code shown here."))
+                    Text(L("开始后，在一台已经同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这里显示的那个。", "Then, on a device that already syncs, open Qantrip Settings › Sync and pick the code shown here."))
                         .foregroundStyle(.secondary)
                     HStack {
                         Button(L("开始加入", "Start")) { sync.startJoin() }
@@ -155,9 +155,15 @@ private struct NoVault: View {
 private struct JoinWaiting: View {
     let join: JoinProgress
     private var sync = SyncService.shared
-    @State private var code = ""
 
     init(join: JoinProgress) { self.join = join }
+
+    private var code: some View {
+        Text(join.sas ?? "")
+            .font(.system(size: 34, weight: .semibold, design: .monospaced))
+            .tracking(4)
+            .textSelection(.enabled)
+    }
 
     var body: some View {
         Section {
@@ -170,36 +176,31 @@ private struct JoinWaiting: View {
                     }
                     Text(L("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that device."))
                         .foregroundStyle(.secondary)
-                case .enterCodeOnOtherDevice:
-                    Text(L("在另一台设备上输入这个校验码", "Enter this code on your other device")).font(.headline)
-                    Text(join.sas ?? "")
-                        .font(.system(size: 34, weight: .semibold, design: .monospaced))
-                        .tracking(4)
-                        .textSelection(.enabled)
-                    Text(L("这台设备上不需要任何确认。", "Nothing to confirm on this device."))
+                case .compareCode:
+                    Text(L("核对校验码", "Check the code")).font(.headline)
+                    code
+                    Text(L("在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。", "On your other device, pick this code from the three shown. If both devices show the same code, click Match."))
                         .foregroundStyle(.secondary)
-                case .enterCodeHere:
-                    Text(L("输入另一台设备上显示的确认码", "Enter the code shown on your other device")).font(.headline)
                     HStack {
-                        TextField("", text: $code, prompt: Text(L("确认码", "Code")))
-                            .labelsHidden()
-                            .multilineTextAlignment(.leading)
-                            .font(.title3.monospaced())
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 220)
-                            .onSubmit { sync.confirmJoin(code) }
-                        Button(L("加入", "Join")) { sync.confirmJoin(code) }
+                        Button(L("一致", "Match")) { sync.confirmJoin() }
                             .buttonStyle(.borderedProminent)
-                            .disabled(code.count < 4 || sync.working != nil)
+                            .disabled(sync.working != nil)
+                        Button(L("不一致", "Doesn't match")) { sync.cancelJoin() }
                     }
-                    Text(L("两边互相输入校验码，确保这台设备加入的是你自己的保险库。", "Entering a code on each side makes sure this device joins your own vault."))
-                        .font(.caption).foregroundStyle(.secondary)
+                case .waitingForOtherDevice:
+                    code
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(L("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))
+                    }
                 case .completed:
                     Label(L("已加入", "Joined"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 case .expired:
-                    Label(L("请求已过期", "The request expired"), systemImage: "clock.badge.exclamationmark")
+                    Label(L("请求已过期或已取消", "The request expired or was cancelled"), systemImage: "clock.badge.exclamationmark")
                 }
-                Button(join.stage == .expired ? L("关闭", "Close") : L("取消", "Cancel")) { sync.cancelJoin() }
+                if join.stage != .compareCode {
+                    Button(join.stage == .expired ? L("关闭", "Close") : L("取消", "Cancel")) { sync.cancelJoin() }
+                }
             }
             .padding(.vertical, 4)
         }
@@ -208,7 +209,6 @@ private struct JoinWaiting: View {
 
 private struct Enrolled: View {
     private var sync = SyncService.shared
-    @State private var codes: [String: String] = [:]
     @State private var confirmRevoke: DeviceInfo?
     @State private var phraseFor: DeviceInfo?
     @State private var phrase = ""
@@ -243,12 +243,14 @@ private struct Enrolled: View {
                 Text(L("本地修改将在 \(Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .omitted, time: .shortened)) 自动上传；点「立即同步」可马上上传。", "Local changes upload automatically at \(Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .omitted, time: .shortened)). Click Sync Now to upload right away."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if let report = sync.lastReport, report.conflicts > 0 {
-                Text(L("有 \(report.conflicts) 个模板在两台设备上同时修改，已保存为冲突副本，请在模板库中合并。", "\(report.conflicts) template(s) changed on two devices at once. Both versions were kept; merge them in the template library."))
-                    .font(.caption).foregroundStyle(.orange)
+            if let report = sync.lastReport, report.replaced > 0 {
+                Text(L("有 \(report.replaced) 个模板在两台设备上都改过，已保留最后修改的版本，另一版存入历史版本。", "\(report.replaced) template(s) were changed on two devices. The latest edit was kept; the other version is in History."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Button(L("立即同步", "Sync now")) { sync.syncNow() }.disabled(sync.working != nil)
+                Button(L("历史版本", "History")) { sync.openHistory() }
+                    .help(L("同一模板在两台设备上都改过时，保留最后修改的版本；被覆盖的版本保存在这里 30 天。", "When a template is changed on two devices, the latest edit wins. The overwritten version is kept here for 30 days."))
                 Spacer()
                 Button(L("退出登录", "Sign out")) { sync.signOut() }
             }
@@ -264,46 +266,49 @@ private struct Enrolled: View {
             }
         }
 
-        ForEach(sync.confirmCodes.sorted(by: { $0.key < $1.key }), id: \.key) { id, confirm in
-            Section(L("最后一步", "Last step")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(L("在新设备上输入这个确认码", "Enter this code on the new device"))
-                    Text(confirm)
-                        .font(.system(size: 30, weight: .semibold, design: .monospaced))
-                        .tracking(4)
-                        .textSelection(.enabled)
-                    Button(L("完成", "Done")) { sync.dismissConfirmCode(id) }
+        ForEach(sync.approvedJoins.sorted(), id: \.self) { id in
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(L("已批准", "Approved"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(L("在新设备上点「一致」即可完成。", "Click Match on the new device to finish."))
+                        .foregroundStyle(.secondary)
+                    Button(L("完成", "Done")) { sync.dismissApproved(id) }
                 }
                 .padding(.vertical, 4)
             }
         }
 
-        let requests = sync.joinRequests.filter { $0.status != .handledElsewhere && sync.confirmCodes[$0.joinId] == nil }
+        let requests = sync.joinRequests.filter { $0.status != .handledElsewhere && !sync.approvedJoins.contains($0.joinId) }
         if !requests.isEmpty {
             Section(L("新设备请求加入", "A new device wants to join")) {
                 ForEach(requests, id: \.joinId) { r in
-                    VStack(alignment: .leading, spacing: 8) {
-                        if r.status == .waitingForNewDevice {
+                    VStack(alignment: .leading, spacing: 10) {
+                        switch r.status {
+                        case .waitingForNewDevice:
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
                                 Text(L("等待新设备显示校验码…", "Waiting for the new device to show its code…"))
                             }
-                        } else {
-                            Text(L("输入新设备上显示的校验码。如果不是你本人在操作，请拒绝。", "Enter the code shown on the new device. If this isn't you, reject it."))
+                        case .incompatible:
+                            Text(L("新设备上的 Qantrip 版本与这台不同，无法加入。请把两台设备都更新到最新版本。", "The new device runs a different version of Qantrip and can't join. Update both devices to the latest version."))
                                 .font(.callout)
-                            HStack {
-                                TextField("", text: Binding(get: { codes[r.joinId] ?? "" }, set: { codes[r.joinId] = $0 }), prompt: Text(L("校验码", "Code")))
-                                    .labelsHidden()
-                                    .multilineTextAlignment(.leading)
-                                    .font(.body.monospaced())
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: 200)
-                                    .onSubmit { sync.approve(r.joinId, code: codes[r.joinId] ?? "") }
-                                Button(L("批准", "Approve")) { sync.approve(r.joinId, code: codes[r.joinId] ?? "") }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled((codes[r.joinId] ?? "").count < 4 || sync.working != nil)
-                                Button(L("拒绝", "Reject"), role: .destructive) { sync.reject(r.joinId) }
+                            Button(L("拒绝", "Reject"), role: .destructive) { sync.reject(r.joinId) }
+                        default:
+                            Text(L("新设备上显示的是哪一个码？如果不是你本人在操作，请拒绝。", "Which code does the new device show? If this isn't you, reject it."))
+                                .font(.callout)
+                            HStack(spacing: 10) {
+                                ForEach(r.choices, id: \.self) { c in
+                                    Button { sync.approve(r.joinId, code: c) } label: {
+                                        Text(c)
+                                            .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                                            .tracking(2)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 4)
+                                    }
+                                    .disabled(sync.working != nil)
+                                }
                             }
+                            Button(L("都不是，拒绝", "None of these — reject"), role: .destructive) { sync.reject(r.joinId) }
                         }
                     }
                     .padding(.vertical, 2)

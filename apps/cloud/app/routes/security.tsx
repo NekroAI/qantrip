@@ -21,7 +21,7 @@ const T = {
     viewServer: 'On the server',
     cards: [
       { h: 'Keys never leave your devices', p: 'Encryption happens on your Mac. The server never sees a key.' },
-      { h: 'New devices need your approval', p: 'Type the code shown on the new device into one you already use. Only then does it get the key.' },
+      { h: 'New devices need your approval', p: 'On a device you already use, pick the code shown on the new one. Only then does it get the key.' },
       { h: 'A recovery phrase, just for you', p: '24 words, shown once. Lost every device? They bring your data back. Nobody else can.' },
     ],
     more: 'Want the details?',
@@ -53,7 +53,7 @@ const T = {
     viewServer: '服务器上',
     cards: [
       { h: '密钥不离开你的设备', p: '加密在你的 Mac 上完成，服务器从来接触不到密钥。' },
-      { h: '新设备要你亲自批准', p: '在已有设备上输入新设备显示的校验码，新设备才能拿到密钥。' },
+      { h: '新设备要你亲自批准', p: '在已有设备上点选新设备显示的校验码，新设备才能拿到密钥。' },
       { h: '只属于你的恢复短语', p: '24 个单词，只显示一次。设备全丢了也能用它找回数据，别人做不到。' },
     ],
     more: '想了解细节？',

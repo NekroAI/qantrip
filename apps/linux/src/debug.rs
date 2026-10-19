@@ -7,7 +7,7 @@
 //! - `insert <文本>`：按面板相同的流程插入到当前前台应用
 //! - `window settings[:页面] | library[:模板名] | onboarding`
 //! - `editor new|save|mode:source|mode:form|desc:<文本>|try:<文本>`（模板库中当前编辑的模板）
-//! - `sync signin|create|join|confirm:<码>|approve:<码>|sync|reverify|refresh|status`
+//! - `sync signin|create|join|confirm|cancel|approve:<码>|sync|reverify|refresh|status`
 //! - `paste authorize|forget`：请求 / 撤销 RemoteDesktop 授权
 //! - `hotkey retry|configure`
 //! - `shot panel|library|onboarding <PNG 路径>`：把窗口渲染为图片
@@ -142,7 +142,8 @@ fn debug_sync(app: &Rc<App>, op: &str) {
         "signin" => s.sign_in(),
         "create" => s.create_vault(),
         "join" => s.start_join(),
-        "confirm" => s.confirm_join(arg),
+        "confirm" => s.confirm_join(),
+        "cancel" => s.cancel_join(),
         "approve" => {
             let id = s.join_requests.borrow().iter().find(|r| r.status == qantrip_core::sync::JoinRequestStatus::ReadyForCode).map(|r| r.join_id.clone());
             if let Some(id) = id {

@@ -191,6 +191,8 @@ pub struct Core {
     pub pending_local: bool,
     /// 本进程发出的推送请求数（判断一轮同步是否真的上传过）
     pub push_requests: u64,
+    /// 本轮同步中有本机较新的版本保留了下来，需要再推送一次（§5.5）
+    pub repush: bool,
 }
 
 /// 服务端下发的策略只接受合理范围内的值（服务端不可信：过小的间隔会让客户端频繁请求）。
@@ -230,6 +232,7 @@ impl Core {
             join_e,
             pending_local: false,
             push_requests: 0,
+            repush: false,
         };
         core.pending_local = core.has_local_changes();
         core
@@ -237,6 +240,36 @@ impl Core {
 
     pub fn now(&self) -> i64 {
         (self.clock)()
+    }
+
+    /// 被覆盖的模板版本的备份目录（不参与同步，保留 30 天）。
+    pub fn history_dir(&self) -> PathBuf {
+        self.data_dir.join("sync-history")
+    }
+
+    /// 本机模板文件的修改时间（不晚于当前时间；读不到时为当前时间），作为"最后修改"比较的依据（§5.5）。
+    fn local_edit_time(&self, name: &str) -> i64 {
+        let now = self.now();
+        files::modified(&self.template_dir, name).map_or(now, |t| t.min(now))
+    }
+
+    /// 记下本机删除模板文件的时间（发现删除时）：删除也按"最后修改"与其他设备的修改比较。返回是否有变化。
+    fn note_local_deletions(&mut self) -> bool {
+        let now = self.now();
+        let dir = self.template_dir.clone();
+        let mut changed = false;
+        for m in self.state.records.values_mut().filter(|m| m.kind == Kind::Template && !m.deleted) {
+            let Some(f) = &m.file else { continue };
+            let missing = files::read(&dir, f).is_none();
+            if missing && m.deleted_at.is_none() {
+                m.deleted_at = Some(now);
+                changed = true;
+            } else if !missing && m.deleted_at.is_some() {
+                m.deleted_at = None;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn save(&self) -> Result<(), SyncError> {
@@ -566,6 +599,8 @@ impl Core {
             Some(None) => (None, None),
             None => (prev.and_then(|m| m.file.clone()), prev.and_then(|m| m.file_hash.clone())),
         };
+        // 同一个文件上尚未上传的删除（本机保留了较新的删除时）沿用原来的删除时间
+        let deleted_at = prev.filter(|m| m.file == file).and_then(|m| m.deleted_at);
         self.state.records.insert(
             rid.to_string(),
             RecordMeta {
@@ -580,6 +615,7 @@ impl Core {
                 file_hash,
                 dirty: false,
                 accepted_len,
+                deleted_at,
             },
         );
     }
@@ -607,43 +643,40 @@ impl Core {
         Ok(())
     }
 
-    fn device_short(&self) -> String {
-        self.me().map(|m| short(&m).to_lowercase()).unwrap_or_default()
-    }
-
-    /// 把本地文件另存为冲突副本（§5.5）。
-    fn save_conflict(&mut self, name: &str, data: &[u8], report: &mut SyncReport) -> Result<(), SyncError> {
-        let copy = files::conflict_name(&self.template_dir, name, &self.device_short(), self.now());
-        files::write(&self.template_dir, &copy, data).map_err(|message| SyncError::Storage { message })?;
-        report.conflicts += 1;
-        report.conflict_files.push(copy);
+    /// 把被覆盖的版本备份到历史版本目录（§5.5）。
+    fn backup(&mut self, name: &str, data: &[u8], report: &mut SyncReport) -> Result<(), SyncError> {
+        files::backup(&self.history_dir(), name, data, self.now()).map_err(|message| SyncError::Storage { message })?;
+        report.replaced += 1;
+        report.replaced_files.push(name.to_string());
         Ok(())
     }
 
-    /// 把远端模板版本落到模板目录。本地有未同步的修改时，远端版本写入原文件，本地版本另存为冲突副本。
-    /// 返回新的文件映射。
+    /// 把远端模板版本落到模板目录（§5.5）。本机有尚未上传的修改（含删除）时，以修改时间较晚的版本为准：
+    /// 远端较新或同时 → 写入远端版本，本机版本备份到历史版本目录；本机较新 → 保留本机版本、备份远端版本，
+    /// 并在本轮同步中把本机版本推送到远端版本之上。返回新的文件映射。
     fn apply_template(&mut self, rid: &str, pt: &Plaintext, report: &mut SyncReport) -> Result<Option<(String, String)>, SyncError> {
         let dir = self.template_dir.clone();
         let storage = |message: String| SyncError::Storage { message };
         let meta = self.state.records.get(rid).cloned();
         let old_file = meta.as_ref().and_then(|m| m.file.clone());
         let old_hash = meta.as_ref().and_then(|m| m.file_hash.clone());
-        // 旧文件：内容未变则可以直接删除/覆盖，否则先保存冲突副本
-        let release_old = |this: &mut Core, report: &mut SyncReport| -> Result<(), SyncError> {
-            if let Some(f) = &old_file
-                && let Some(bytes) = files::read(&dir, f)
-            {
-                if Some(files::hash(&bytes)) != old_hash {
-                    this.save_conflict(f, &bytes, report)?;
-                }
-                files::remove(&dir, f).map_err(storage)?;
-            }
-            Ok(())
-        };
+        let remote_time = i64::try_from(pt.time).unwrap_or(i64::MAX);
+        // 已映射文件上本机尚未上传的修改：返回修改后的内容
+        let local_edit = |f: &str| files::read(&dir, f).filter(|b| Some(files::hash(b)) != old_hash);
 
         let Body::Template { file_name, source } = &pt.body else {
             // 墓碑
-            release_old(self, report)?;
+            if let Some(f) = &old_file {
+                if let Some(bytes) = local_edit(f) {
+                    if self.local_edit_time(f) > remote_time {
+                        // 本机的修改晚于远端的删除：保留，推送回去
+                        self.repush = true;
+                        return Ok(Some((f.clone(), old_hash.unwrap_or_default())));
+                    }
+                    self.backup(f, &bytes, report)?;
+                }
+                files::remove(&dir, f).map_err(storage)?;
+            }
             return Ok(None);
         };
         if !files::valid_file_name(file_name) {
@@ -654,19 +687,42 @@ impl Core {
         let key = files::name_key(file_name);
         let taken = self.state.records.iter().any(|(id, m)| id != rid && !m.deleted && m.file.as_deref().is_some_and(|f| files::name_key(f) == key));
         let target = if taken { format!("{}-{}.md", file_name.trim_end_matches(".md"), short(rid)) } else { file_name.clone() };
-        if old_file.as_deref() != Some(target.as_str()) {
-            release_old(self, report)?;
+        let tracked = old_file.as_deref() == Some(target.as_str());
+        if !tracked && let Some(f) = &old_file {
+            // 远端换了文件名：旧文件上本机的修改备份后删除
+            if let Some(bytes) = local_edit(f) {
+                self.backup(f, &bytes, report)?;
+            }
+            files::remove(&dir, f).map_err(storage)?;
         }
-        if let Some(bytes) = files::read(&dir, &target)
-            && bytes != source.as_bytes()
-        {
-            let unchanged = old_file.as_deref() == Some(target.as_str()) && Some(files::hash(&bytes)) == old_hash;
-            if !unchanged {
-                self.save_conflict(&target, &bytes, report)?;
+        let remote_hash = files::hash(source.as_bytes());
+        match files::read(&dir, &target) {
+            Some(bytes) if bytes == source.as_bytes() => {}
+            Some(bytes) => {
+                let unchanged = tracked && Some(files::hash(&bytes)) == old_hash;
+                if !unchanged {
+                    // 本机有未上传的修改，或本机原有的同名模板（首次同步）
+                    if self.local_edit_time(&target) > remote_time {
+                        self.backup(&target, source.as_bytes(), report)?;
+                        self.repush = true;
+                        return Ok(Some((target, remote_hash)));
+                    }
+                    self.backup(&target, &bytes, report)?;
+                }
+                files::write(&dir, &target, source.as_bytes()).map_err(storage)?;
+            }
+            None => {
+                // 本机删除了这个模板（尚未上传）且删除晚于远端的修改：保持删除，远端版本备份
+                let deleted_at = meta.as_ref().filter(|m| tracked && !m.deleted).and_then(|m| m.deleted_at);
+                if deleted_at.is_some_and(|t| t > remote_time) {
+                    self.backup(&target, source.as_bytes(), report)?;
+                    self.repush = true;
+                    return Ok(Some((target, remote_hash)));
+                }
+                files::write(&dir, &target, source.as_bytes()).map_err(storage)?;
             }
         }
-        files::write(&dir, &target, source.as_bytes()).map_err(storage)?;
-        Ok(Some((target, files::hash(source.as_bytes()))))
+        Ok(Some((target, remote_hash)))
     }
 
     // MARK: 同步（§5）
@@ -702,6 +758,9 @@ impl Core {
             SyncTrigger::Launch | SyncTrigger::Wake => true,
             SyncTrigger::LocalChange | SyncTrigger::Manual => false,
         };
+        if self.note_local_deletions() {
+            self.save()?;
+        }
         self.pending_local = self.has_local_changes();
         // 超出设备数量限制时保险库请求都会被拒绝，不为本地变化单独发请求
         let push = self.pending_local
@@ -729,6 +788,9 @@ impl Core {
         self.new_alerts = 0;
         let mut report = SyncReport::default();
         let before = self.push_requests;
+        self.note_local_deletions();
+        self.repush = false;
+        files::prune_history(&self.history_dir(), self.now(), files::HISTORY_KEEP_SECS);
         let result = self.sync_inner(&mut report, push);
         if result.is_ok() {
             self.state.last_sync = Some(self.now());
@@ -802,6 +864,13 @@ impl Core {
         if push {
             std::fs::create_dir_all(&self.template_dir).map_err(|e| SyncError::Storage { message: format!("无法创建模板目录：{e}") })?;
             self.push_local(report)?;
+            // 冲突时保留了本机较新的版本：在远端版本之上再推送（再次冲突时下一轮同步继续）
+            for _ in 0..2 {
+                if !std::mem::take(&mut self.repush) {
+                    break;
+                }
+                self.push_local(report)?;
+            }
             self.write_own_state(report)?;
         }
         Ok(())
@@ -1058,8 +1127,14 @@ impl Core {
         self.save()
     }
 
-    /// 构造一条写入：counter 在本地已知最大值上加 1。
+    /// 构造一条写入：counter 在本地已知最大值上加 1，修改时间为当前时间。
     pub fn build_write(&self, rid: &str, kind: Kind, deleted: bool, body: Body, base: Option<&RecordMeta>, key: &(u32, [u8; 32])) -> Result<Pending, SyncError> {
+        self.build_write_at(rid, kind, deleted, body, base, key, self.now())
+    }
+
+    /// 构造一条写入，`time` 为这一版本的修改时间（模板为文件的修改时间，§5.5）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_write_at(&self, rid: &str, kind: Kind, deleted: bool, body: Body, base: Option<&RecordMeta>, key: &(u32, [u8; 32]), time: i64) -> Result<Pending, SyncError> {
         let vault = self.vault()?;
         let (index, head) = self.roster()?.head().ok_or_else(|| security("花名册为空"))?;
         let counter = match base {
@@ -1074,7 +1149,7 @@ impl Core {
             writer: keys.device_id(),
             roster_index: index,
             roster_head: head,
-            time: self.now().max(0) as u64,
+            time: time.max(0) as u64,
             body,
             sig: [0; 64],
         };
@@ -1121,7 +1196,8 @@ impl Core {
             };
             match files::read(&dir, f) {
                 None if !meta.deleted => {
-                    let mut p = self.build_write(rid, Kind::Template, true, Body::Empty, Some(meta), &key)?;
+                    let deleted_at = meta.deleted_at.unwrap_or_else(|| self.now());
+                    let mut p = self.build_write_at(rid, Kind::Template, true, Body::Empty, Some(meta), &key, deleted_at)?;
                     p.file = None;
                     pending.push(p);
                 }
@@ -1134,7 +1210,7 @@ impl Core {
                             continue;
                         };
                         let body = Body::Template { file_name: f.clone(), source };
-                        let mut p = self.build_write(rid, Kind::Template, false, body, Some(meta), &key)?;
+                        let mut p = self.build_write_at(rid, Kind::Template, false, body, Some(meta), &key, self.local_edit_time(f))?;
                         p.file = Some((f.clone(), h));
                         pending.push(p);
                     }
@@ -1152,7 +1228,8 @@ impl Core {
                 continue;
             };
             let rid = crypto::random_record_id();
-            let mut p = self.build_write(&rid, Kind::Template, false, Body::Template { file_name: name.clone(), source }, None, &key)?;
+            let body = Body::Template { file_name: name.clone(), source };
+            let mut p = self.build_write_at(&rid, Kind::Template, false, body, None, &key, self.local_edit_time(&name))?;
             p.file = Some((name, h));
             pending.push(p);
         }
