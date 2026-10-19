@@ -4,11 +4,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-19
+
 ### Changed
 - Adding a device: picking the code on the device that already syncs is enough — the new device finishes on its own, with no Match button.
 - Command mode explains the next step: after `/new ` (and `/dup`, `/alias`, `/rm`, `/edit`) the list says what to type, and the preview shows the command's usage and description instead of going blank.
 - Switching templates in the panel no longer slides the title across the template list; it fades in from the right.
-
 - Linux: the default shortcut is now **Ctrl+Shift+Q** (Ctrl+Q quits many Linux apps). A shortcut you already saved, including Ctrl+Q, is kept.
 - Linux: global shortcuts are reported as registered only once they really work; Settings and the welcome guide show whether the system is waiting for your consent, was cancelled or failed, with Retry. On niri, Sway and Hyprland they give a binding to copy into your compositor configuration. Thanks to @yang208115.
 - Linux: on niri and other compositors besides GNOME and KDE, the panel is a regular fixed-size window placed by the compositor.
