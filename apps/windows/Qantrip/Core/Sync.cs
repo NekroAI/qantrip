@@ -105,7 +105,7 @@ public sealed class SyncReport
 public sealed class JoinProgress
 {
     public string JoinId { get; set; } = "";
-    /// waiting_for_approver / compare_code / waiting_for_other_device / completed / expired
+    /// waiting_for_approver / show_code / completed / expired
     public string Stage { get; set; } = "";
     public string? Sas { get; set; }
 }
@@ -217,8 +217,6 @@ public sealed class SyncClient : IDisposable
     public string CreateVault(string language) => Call("create_vault", new { language })!.GetValue<string>();
     public JoinProgress StartJoin() => Get<JoinProgress>("start_join");
     public JoinProgress PollJoin() => Get<JoinProgress>("poll_join");
-    /// 用户确认两台设备上的校验码一致；另一台设备已选好时立即加入（stage 为 completed）
-    public JoinProgress ConfirmJoin() => Get<JoinProgress>("confirm_join");
     public void CancelJoin() => Call("cancel_join");
     public List<JoinRequest> ListJoinRequests() => Get<List<JoinRequest>>("list_join_requests");
     /// 从三个候选码中选出新设备上显示的那个以批准加入；选错时抛出 code_mismatch 并取消这次请求

@@ -21,7 +21,7 @@ internal sealed class SyncService
     public List<JoinRequest> JoinRequests { get; private set; } = new();
     public List<DeviceInfo> Devices { get; private set; } = new();
     public JoinProgress? Join { get; private set; }
-    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    /// 本机刚批准的加入请求：提示新设备会自动完成
     public HashSet<string> ApprovedJoins { get; } = new();
     /// 进行中的操作（显示为进度）
     public string? Working { get; private set; }
@@ -414,8 +414,6 @@ internal sealed class SyncService
         }
     }
 
-    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
-    public void ConfirmJoin() => Run(Loc.T("正在确认…", "Confirming…"), c => c.ConfirmJoin(), JoinProgressed);
 
     public void CancelJoin()
     {
@@ -506,8 +504,7 @@ internal sealed class SyncService
         {
             case "novault": RemoteVault = false; break;
             case "join": RemoteVault = true; break;
-            case "join-sas": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "compare_code", Sas = "K7QM-2XRA" }; break;
-            case "join-code": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "waiting_for_other_device", Sas = "K7QM-2XRA" }; break;
+            case "join-sas": RemoteVault = true; Join = new JoinProgress { JoinId = "j1", Stage = "show_code", Sas = "K7QM-2XRA" }; break;
             case "phrase":
                 RemoteVault = false;
                 Phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual";

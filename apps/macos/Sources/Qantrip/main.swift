@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 打开窗口：name = settings / library[:模板名] / onboarding
-    /// 驱动同步界面：op = signin / create / join / confirm / cancel / approve:<码> / sync / reverify
+    /// 驱动同步界面：op = signin / create / join / cancel / approve:<码> / sync / reverify
     @objc private func debugSync(_ note: Notification) {
         let op = (note.userInfo?["op"] as? String) ?? ""
         MainActor.assumeIsolated { Self.runDebugSync(op) }
@@ -227,7 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "signin": s.signIn()
         case "create": s.createVault()
         case "join": s.startJoin()
-        case "confirm": s.confirmJoin()
         case "cancel": s.cancelJoin()
         case "approve": if let r = s.joinRequests.first(where: { $0.status == .readyForCode }) { s.approve(r.joinId, code: arg) }
         case "sync": s.syncNow()

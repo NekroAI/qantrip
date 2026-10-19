@@ -289,32 +289,19 @@ impl SyncPage {
                     r.add_prefix(&gtk::Spinner::builder().spinning(true).build());
                     g.add(&r);
                 }
-                JoinStage::CompareCode => {
-                    g.set_title(&l("核对校验码", "Check the code"));
-                    g.set_description(Some(&l(
-                        "在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。",
-                        "On your other device, pick this code from the three shown. If both devices show the same code, click Match.",
-                    )));
-                    g.add(&big_code(join.sas.as_deref().unwrap_or_default()));
-                    let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                    let ok = gtk::Button::with_label(&l("一致", "Match"));
-                    ok.add_css_class("suggested-action");
-                    ok.set_sensitive(!self.busy());
-                    let ss = s.clone();
-                    ok.connect_clicked(move |_| ss.confirm_join());
-                    let no = gtk::Button::with_label(&l("不一致", "Doesn't match"));
-                    let ss = s.clone();
-                    no.connect_clicked(move |_| ss.cancel_join());
-                    bx.append(&ok);
-                    bx.append(&no);
-                    g.add(&bx);
-                    return;
-                }
-                JoinStage::WaitingForOtherDevice => {
+                JoinStage::ShowCode => {
+                    g.set_title(&l("在另一台设备上点选这个码", "Pick this code on your other device"));
                     g.add(&big_code(join.sas.as_deref().unwrap_or_default()));
                     let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
                     bx.append(&gtk::Spinner::builder().spinning(true).build());
-                    bx.append(&gtk::Label::new(Some(&l("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))));
+                    let note = gtk::Label::new(Some(&l(
+                        "在已同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这一个，这台设备随后自动加入。",
+                        "On a device that already syncs, open Qantrip Settings › Sync and pick this code from the three shown. This device then joins on its own.",
+                    )));
+                    note.set_wrap(true);
+                    note.set_xalign(0.0);
+                    note.add_css_class("dim-label");
+                    bx.append(&note);
                     g.add(&bx);
                 }
                 JoinStage::Completed => {
@@ -528,7 +515,7 @@ impl SyncPage {
         for id in s.approved_joins.borrow().clone() {
             let g = self.group(Some(l("已批准", "Approved")), None);
             let bx = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            let note = gtk::Label::new(Some(&l("在新设备上点「一致」即可完成。", "Click Match on the new device to finish.")));
+            let note = gtk::Label::new(Some(&l("新设备会自动完成加入。", "The new device finishes joining on its own.")));
             note.set_hexpand(true);
             note.set_xalign(0.0);
             let b = gtk::Button::with_label(&l("完成", "Done"));

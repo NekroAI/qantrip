@@ -416,16 +416,14 @@ fn fake_approver_not_in_roster_is_rejected() {
     ]));
     vault_mut(&server, |v| v.joins[0].reply = Some(reply));
     let shown = n.client.poll_join().unwrap();
-    assert_eq!(shown.stage, JoinStage::CompareCode);
+    assert_eq!(shown.stage, JoinStage::ShowCode);
     // 真实设备 A 没有回复过这个请求，不显示候选码，也无法批准
     let reqs = a.client.list_join_requests().unwrap();
     assert_eq!(reqs[0].status, JoinRequestStatus::HandledElsewhere);
     assert!(reqs[0].choices.is_empty());
     assert!(a.client.approve_join(p2.join_id.clone(), shown.sas.unwrap()).is_err());
-    // 用户即使没有核对就在 N 上点了"一致"，服务端也无法伪造结果：没有 A 的私钥，签不出结果与 add_device，
-    // 也无法发出认证信封
-    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
+    // 服务端无法以真实保险库的名义伪造结果：没有 A 的私钥，签不出结果与 add_device，也无法发出认证信封
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::ShowCode);
     assert!(!n.client.status().enrolled);
 }
 
@@ -506,7 +504,6 @@ fn forged_join_result_is_rejected() {
     n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     n.client.poll_join().unwrap();
-    n.client.confirm_join().unwrap();
     // 服务端伪造结果：没有新花名册条目、信封来自攻击者、没有 A 的签名
     let body = codec::encode(&codec::map(vec![
         ("roster", ciborium::Value::Array(vec![])),

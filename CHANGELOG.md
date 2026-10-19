@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+- Adding a device: picking the code on the device that already syncs is enough — the new device finishes on its own, with no Match button.
+- Command mode explains the next step: after `/new ` (and `/dup`, `/alias`, `/rm`, `/edit`) the list says what to type, and the preview shows the command's usage and description instead of going blank.
+- Switching templates in the panel no longer slides the title across the template list; it fades in from the right.
+
+### Fixed
+- macOS: the placeholder in the input line sits exactly where typed text appears, and it hides while an input method is composing.
+
 ## [0.5.0] — 2026-10-19
 
 ### Changed

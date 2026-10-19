@@ -213,7 +213,7 @@ pub struct SyncService {
     pub join_requests: RefCell<Vec<JoinRequest>>,
     pub devices: RefCell<Vec<DeviceInfo>>,
     pub join: RefCell<Option<JoinProgress>>,
-    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    /// 本机刚批准的加入请求：提示新设备会自动完成
     pub approved_joins: RefCell<BTreeSet<String>>,
     pub working: RefCell<Option<String>>,
     pub error: RefCell<Option<String>>,
@@ -720,10 +720,6 @@ impl SyncService {
         }
     }
 
-    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
-    pub fn confirm_join(self: &Rc<Self>) {
-        self.run(Some(l("正在确认…", "Confirming…")), |c| c.confirm_join(), |s, progress| s.join_progressed(progress));
-    }
 
     pub fn cancel_join(self: &Rc<Self>) {
         self.stop_join_timer();

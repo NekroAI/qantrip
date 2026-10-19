@@ -176,31 +176,20 @@ private struct JoinWaiting: View {
                     }
                     Text(L("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that device."))
                         .foregroundStyle(.secondary)
-                case .compareCode:
-                    Text(L("核对校验码", "Check the code")).font(.headline)
-                    code
-                    Text(L("在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。", "On your other device, pick this code from the three shown. If both devices show the same code, click Match."))
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        Button(L("一致", "Match")) { sync.confirmJoin() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(sync.working != nil)
-                        Button(L("不一致", "Doesn't match")) { sync.cancelJoin() }
-                    }
-                case .waitingForOtherDevice:
+                case .showCode:
+                    Text(L("在另一台设备上点选这个码", "Pick this code on your other device")).font(.headline)
                     code
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(L("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))
+                        Text(L("在已同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这一个，这台设备随后自动加入。", "On a device that already syncs, open Qantrip Settings › Sync and pick this code from the three shown. This device then joins on its own."))
+                            .foregroundStyle(.secondary)
                     }
                 case .completed:
                     Label(L("已加入", "Joined"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 case .expired:
                     Label(L("请求已过期或已取消", "The request expired or was cancelled"), systemImage: "clock.badge.exclamationmark")
                 }
-                if join.stage != .compareCode {
-                    Button(join.stage == .expired ? L("关闭", "Close") : L("取消", "Cancel")) { sync.cancelJoin() }
-                }
+                Button(join.stage == .expired ? L("关闭", "Close") : L("取消", "Cancel")) { sync.cancelJoin() }
             }
             .padding(.vertical, 4)
         }
@@ -270,7 +259,7 @@ private struct Enrolled: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(L("已批准", "Approved"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text(L("在新设备上点「一致」即可完成。", "Click Match on the new device to finish."))
+                    Text(L("新设备会自动完成加入。", "The new device finishes joining on its own."))
                         .foregroundStyle(.secondary)
                     Button(L("完成", "Done")) { sync.dismissApproved(id) }
                 }

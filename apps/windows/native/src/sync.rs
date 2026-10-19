@@ -91,8 +91,7 @@ fn report_json(r: &SyncReport) -> Value {
 fn stage_name(s: JoinStage) -> &'static str {
     match s {
         JoinStage::WaitingForApprover => "waiting_for_approver",
-        JoinStage::CompareCode => "compare_code",
-        JoinStage::WaitingForOtherDevice => "waiting_for_other_device",
+        JoinStage::ShowCode => "show_code",
         JoinStage::Completed => "completed",
         JoinStage::Expired => "expired",
     }
@@ -165,7 +164,6 @@ pub fn dispatch(c: &SyncClient, op: &str, args: &Value) -> Result<Value, SyncErr
         }
         "start_join" => progress_json(&c.start_join()?),
         "poll_join" => progress_json(&c.poll_join()?),
-        "confirm_join" => progress_json(&c.confirm_join()?),
         "cancel_join" => {
             c.cancel_join();
             Value::Null

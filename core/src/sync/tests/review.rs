@@ -81,15 +81,15 @@ fn unsupported_commit_version_is_not_answered() {
     assert!(vault_mut(&server, |v| v.joins[0].reply.is_none()));
 }
 
-// MARK: C2 —— N 必须经用户确认才采用花名册与钥匙环
+// MARK: C2 —— 伪造保险库（v0.5.1 起为已接受的风险，D40）
 
-/// 服务端（或盗用令牌者）以自己的设备 G 为 genesis 伪造保险库，并立即发出由 G 签名、自洽的 result：
-/// N 停在"核对校验码"，用户没有点"一致"之前不加入、不上传任何数据。真实设备 A 上没有这个请求的候选码
-/// （A 没有回复过它），用户在 A 上找不到 N 显示的码，于是不会点"一致"。
+/// 服务端（或盗用令牌者）以自己的设备 G 为 genesis 伪造保险库，并立即发出由 G 签名、自洽的 result。
 ///
-/// 已知局限（v0.5，docs/sync-design.md 6.2）：用户不核对就在 N 上点"一致"时，N 会加入伪造的保险库。
+/// **已接受的风险**（D40，docs/sync-design.md 附录 C）：v0.5.1 起新设备上不再需要用户确认，N 会加入伪造的
+/// 保险库。这个测试记录这一行为与仍然成立的部分：真实设备 A 上不会出现这个请求的候选码；在 result 到达之前，
+/// N 不向服务端写入任何数据。
 #[test]
-fn new_device_does_not_adopt_fabricated_vault() {
+fn fabricated_vault_is_an_accepted_risk() {
     let server = server();
     let (a, _) = first_device(&server);
     let n = Dev::signed_in(&server);
@@ -107,7 +107,7 @@ fn new_device_does_not_adopt_fabricated_vault() {
     ]));
     vault_mut(&server, |v| v.joins[0].reply = Some(reply));
     let shown = n.client.poll_join().unwrap();
-    assert_eq!(shown.stage, JoinStage::CompareCode);
+    assert_eq!(shown.stage, JoinStage::ShowCode);
     let reveal = vault_mut(&server, |v| v.joins[0].reveal.clone().unwrap());
     let mut r = codec::Fields::exact(codec::decode(&reveal).unwrap(), &["pk", "nonce"]).unwrap();
     let pk_n = crypto::PublicKeys::from_concat(&r.bytes("pk").unwrap()).unwrap();
@@ -132,21 +132,14 @@ fn new_device_does_not_adopt_fabricated_vault() {
         v.joins[0].result = Some(result);
         v.roster = vec![genesis.encode(), add.encode()];
     });
-    // 结果通过了校验（G 是 reply 中的批准设备），但用户还没有确认
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
-    assert!(!n.client.status().enrolled && !n.client.status().has_vault);
-    // 真实设备 A 上没有可选的候选码，用户发现不一致，在 N 上取消
+    // 真实设备 A 上没有这个请求的候选码：用户在 A 上找不到 N 显示的码
     let reqs = a.client.list_join_requests().unwrap();
     assert!(reqs.iter().all(|r| !r.choices.contains(shown.sas.as_ref().unwrap())));
-    n.client.cancel_join();
-    assert!(!n.client.status().enrolled && !n.client.status().has_vault);
-    assert!(n.client.sync_now().is_err());
-    // 没有任何用伪造 VK 加密的数据被上传
-    let recs = vault_mut(&server, |v| v.records.clone());
-    assert_eq!(recs.len(), records_before);
-    for (id, rec) in recs {
-        assert!(crypto::open_record(&vk_fake, &vault, &id, rec.epoch, &rec.ct).is_err());
-    }
+    // result 到达之前，N 没有写入任何数据
+    assert_eq!(vault_mut(&server, |v| v.records.len()), records_before);
+    // 已接受的风险：result 通过校验（G 是 reply 中的批准设备），N 加入伪造的保险库
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    assert!(n.client.status().enrolled);
 }
 
 /// 用户在真实 E 上批准后，服务端修改转给 N 的 result（这里删掉 M1 的锚点，其余部分仍然自洽）：
@@ -160,7 +153,6 @@ fn result_substituted_after_approval_is_rejected() {
     let p = n.client.start_join().unwrap();
     a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
-    n.client.confirm_join().unwrap();
     a.client.approve_join(p.join_id, sas).unwrap();
     vault_mut(&server, |v| {
         let raw = v.joins[0].result.clone().unwrap();
@@ -182,9 +174,9 @@ fn result_substituted_after_approval_is_rejected() {
     assert!(!n.client.status().enrolled);
 }
 
-/// 用户确认一致，但服务端此时给出的花名册不以批准设备发来的花名册为前缀：拒绝采用。
+/// 已登录设备批准后，服务端此时给出的花名册不以批准设备发来的花名册为前缀：拒绝采用。
 #[test]
-fn confirm_requires_server_roster_to_extend_reply() {
+fn join_requires_server_roster_to_extend_reply() {
     let server = server();
     let (a, _) = first_device(&server);
     let n = Dev::signed_in(&server);
@@ -192,14 +184,13 @@ fn confirm_requires_server_roster_to_extend_reply() {
     a.client.list_join_requests().unwrap();
     let sas = n.client.poll_join().unwrap().sas.unwrap();
     a.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
     let real = vault_mut(&server, |v| v.roster.clone());
     vault_mut(&server, |v| v.roster.truncate(1));
-    assert!(matches!(n.client.confirm_join(), Err(SyncError::Security { .. })));
+    assert!(matches!(n.client.poll_join(), Err(SyncError::Security { .. })));
     assert!(n.has_alert("join_failed"));
     assert!(!n.client.status().enrolled);
     vault_mut(&server, |v| v.roster = real);
-    assert!(n.client.confirm_join().is_err(), "失败后本次加入已取消");
+    assert!(n.client.poll_join().is_err(), "失败后本次加入已取消");
 }
 
 // MARK: L1 —— seq = 0 不得下溢

@@ -265,10 +265,9 @@ pub struct SyncReport {
 pub enum JoinStage {
     /// 等待已登录的设备响应
     WaitingForApprover,
-    /// 显示校验码 `sas`：请用户在已登录的设备上选出同一个码，并在本机确认一致（`confirm_join`）或不一致（`cancel_join`）
-    CompareCode,
-    /// 用户已在本机确认一致：继续显示 `sas`，等待已登录的设备完成选择
-    WaitingForOtherDevice,
+    /// 显示校验码 `sas`：请用户在已登录的设备上选出同一个码；选对后下一次 `poll_join` 即完成加入。
+    /// 用户放弃时调用 `cancel_join`
+    ShowCode,
     Completed,
     Expired,
 }
@@ -477,16 +476,10 @@ impl SyncClient {
         self.run(join::start_join)
     }
 
-    /// 新设备：轮询加入进度。阶段为 `CompareCode` / `WaitingForOtherDevice` 时显示 `sas`；
-    /// 用户已确认且已登录设备完成选择后，阶段为 `Completed`。
+    /// 新设备：轮询加入进度。阶段为 `ShowCode` 时显示 `sas`；已登录设备上选对码后，阶段为 `Completed`，
+    /// 随后调用 `sync_now`。
     pub fn poll_join(&self) -> Result<JoinProgress, SyncError> {
         self.run(join::poll_join)
-    }
-
-    /// 新设备：用户确认两台设备上的校验码一致。已登录设备已完成选择时立即加入（阶段 `Completed`，随后调用
-    /// `sync_now`），否则阶段为 `WaitingForOtherDevice`，继续 `poll_join`。不一致时调用 `cancel_join`。
-    pub fn confirm_join(&self) -> Result<JoinProgress, SyncError> {
-        self.run(join::confirm_join)
     }
 
     pub fn cancel_join(&self) {

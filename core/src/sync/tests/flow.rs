@@ -42,7 +42,7 @@ fn two_devices_full_lifecycle() {
     let reqs = a.client.list_join_requests().unwrap();
     assert_eq!(reqs[0].status, crate::sync::JoinRequestStatus::WaitingForNewDevice);
     let p = b.client.poll_join().unwrap();
-    assert_eq!(p.stage, JoinStage::CompareCode);
+    assert_eq!(p.stage, JoinStage::ShowCode);
     let sas = p.sas.clone().unwrap();
     assert_eq!(sas.len(), 9);
     let req = a.client.list_join_requests().unwrap().remove(0);
@@ -50,8 +50,8 @@ fn two_devices_full_lifecycle() {
     assert_eq!(req.choices.len(), 3);
     assert!(req.choices.contains(&sas));
     assert_eq!(a.client.list_join_requests().unwrap()[0].choices, req.choices, "每次显示相同的候选码");
-    // B 上确认一致：等待 A 选择
-    assert_eq!(b.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
+    // A 选择之前 B 一直显示校验码，不加入
+    assert_eq!(b.client.poll_join().unwrap().stage, JoinStage::ShowCode);
     assert!(!b.client.status().enrolled);
     // A 上选对（小写、无连字符也接受）：B 下一次轮询时加入
     a.client.approve_join(p.join_id, sas.to_lowercase().replace('-', "")).unwrap();
@@ -235,26 +235,6 @@ fn removed_device_cannot_rejoin_with_same_keys() {
     join(&a, &n);
 }
 
-/// 新设备先确认一致、已登录设备后选择：结果到达后自动完成；两种顺序都可以。
-#[test]
-fn confirm_before_or_after_approval() {
-    let server = server();
-    let (a, _) = first_device(&server);
-    let n = Dev::signed_in(&server);
-    let p = n.client.start_join().unwrap();
-    a.client.list_join_requests().unwrap();
-    let sas = n.client.poll_join().unwrap().sas.unwrap();
-    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::WaitingForOtherDevice);
-    assert_eq!(n.client.poll_join().unwrap().sas, Some(sas.clone()), "等待时继续显示校验码");
-    a.client.approve_join(p.join_id, sas).unwrap();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
-    assert!(n.client.status().enrolled);
-    // 另一种顺序（先选择后确认）见 tests::join
-    let m = Dev::signed_in(&server);
-    join(&a, &m);
-}
-
 #[test]
 fn join_survives_restart_on_both_sides() {
     let server = server();
@@ -269,20 +249,18 @@ fn join_survives_restart_on_both_sides() {
     // E 回复之后重启：仍可批准（n_E 与锁定的 commit 保存在安全存储中）
     a.restart();
     let shown = n.client.poll_join().unwrap();
-    assert_eq!(shown.stage, JoinStage::CompareCode);
+    assert_eq!(shown.stage, JoinStage::ShowCode);
     n.restart();
     let again = n.client.poll_join().unwrap();
-    assert_eq!(again.stage, JoinStage::CompareCode);
+    assert_eq!(again.stage, JoinStage::ShowCode);
     assert_eq!(again.sas, shown.sas, "重启后显示同一个校验码");
     let choices = a.client.list_join_requests().unwrap()[0].choices.clone();
     a.restart();
     assert_eq!(a.client.list_join_requests().unwrap()[0].choices, choices, "重启后候选码不变");
     a.client.approve_join(p.join_id, shown.sas.unwrap()).unwrap();
     assert!(a.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_E).is_none(), "批准完成后删除 E 的加入状态");
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
     n.restart();
-    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::CompareCode);
-    assert_eq!(n.client.confirm_join().unwrap().stage, JoinStage::Completed);
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
     assert!(n.store.0.lock().unwrap().get(crate::sync::join::SECRET_JOIN_N).is_none(), "加入完成后删除 N 的加入状态");
     n.restart();
     assert!(n.client.status().enrolled);
@@ -486,4 +464,29 @@ fn newer_local_template_survives_first_sync() {
     assert_eq!(b.history(), vec!["cloud".to_string()]);
     a.client.sync_now().unwrap();
     assert_eq!(a.read("p.md").unwrap(), "mine, newer");
+}
+
+/// 0.5.0 保存的进行中加入状态（含 "confirmed"）升级后照常继续。
+#[test]
+fn join_state_from_050_survives_upgrade() {
+    use crate::sync::codec;
+    let server = server();
+    let (a, _) = first_device(&server);
+    let mut n = Dev::signed_in(&server);
+    let p = n.client.start_join().unwrap();
+    a.client.list_join_requests().unwrap();
+    let sas = n.client.poll_join().unwrap().sas.unwrap();
+    // 改写为 0.5.0 的格式：多一个 "confirmed"
+    {
+        let mut store = n.store.0.lock().unwrap();
+        let raw = store.get(crate::sync::join::SECRET_JOIN_N).unwrap().clone();
+        let ciborium::Value::Map(mut items) = codec::decode(&raw).unwrap() else { panic!() };
+        items.push((codec::text("confirmed"), ciborium::Value::Bool(true)));
+        store.insert(crate::sync::join::SECRET_JOIN_N.to_string(), codec::encode(&ciborium::Value::Map(items)));
+    }
+    n.restart();
+    assert_eq!(n.client.poll_join().unwrap().sas, Some(sas.clone()));
+    a.client.approve_join(p.join_id, sas).unwrap();
+    assert_eq!(n.client.poll_join().unwrap().stage, JoinStage::Completed);
+    assert!(n.client.status().enrolled);
 }

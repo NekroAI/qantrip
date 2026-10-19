@@ -165,7 +165,7 @@ final class SyncService {
     private(set) var joinRequests: [JoinRequest] = []
     private(set) var devices: [DeviceInfo] = []
     private(set) var join: JoinProgress?
-    /// 本机刚批准的加入请求：提示用户到新设备上确认一致
+    /// 本机刚批准的加入请求：提示新设备会自动完成
     private(set) var approvedJoins: Set<String> = []
     private(set) var working: String?
     var error: String?
@@ -477,11 +477,6 @@ final class SyncService {
             joinTimer?.invalidate()
         default: break
         }
-    }
-
-    /// 新设备：用户确认两台设备上的校验码一致。另一台设备已选好时立即加入，否则继续等待。
-    func confirmJoin() {
-        run(L("正在确认…", "Confirming…"), { try $0.confirmJoin() }) { self.joinProgressed($0) }
     }
 
     func cancelJoin() {

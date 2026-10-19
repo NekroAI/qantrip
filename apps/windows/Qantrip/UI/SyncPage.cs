@@ -295,16 +295,11 @@ internal sealed class SyncPage
                 items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("等待已同步的设备响应…", "Waiting for a device that already syncs…"))));
                 items.Add(Text(Loc.T("在那台设备上打开 Qantrip 设置 › 同步。", "Open Qantrip Settings › Sync on that device."), secondary: true, size: 13));
                 break;
-            case "compare_code":
-                items.Add(Text(Loc.T("核对校验码", "Check the code"), bold: true));
+            case "show_code":
+                items.Add(Text(Loc.T("在另一台设备上点选这个码", "Pick this code on your other device"), bold: true));
                 items.Add(Big(join.Sas ?? "", "sas"));
-                items.Add(Text(Loc.T("在另一台设备上，从三个码中点选这个码。两台设备上的码一致时，点「一致」。", "On your other device, pick this code from the three shown. If both devices show the same code, click Match."), secondary: true, size: 13));
-                items.Add(Row(Btn("confirmjoin", Loc.T("一致", "Match"), sync.ConfirmJoin, accent: true, enabled: !Busy),
-                    Btn("mismatch", Loc.T("不一致", "Doesn't match"), sync.CancelJoin)));
-                break;
-            case "waiting_for_other_device":
-                items.Add(Big(join.Sas ?? "", "sas"));
-                items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 }, Text(Loc.T("等待另一台设备上点选这个码…", "Waiting for you to pick this code on the other device…"))));
+                items.Add(Row(new ProgressRing { IsActive = true, Width = 18, Height = 18 },
+                    Text(Loc.T("在已同步的设备上打开 Qantrip 设置 › 同步，从三个码中点选这一个，这台设备随后自动加入。", "On a device that already syncs, open Qantrip Settings › Sync and pick this code from the three shown. This device then joins on its own."), secondary: true, size: 13)));
                 break;
             case "completed":
                 items.Add(Text(Loc.T("已加入", "Joined"), bold: true));
@@ -313,8 +308,7 @@ internal sealed class SyncPage
                 items.Add(Text(Loc.T("请求已过期或已取消", "The request expired or was cancelled"), bold: true));
                 break;
         }
-        if (join.Stage != "compare_code")
-            items.Add(Row(Btn("canceljoin", join.Stage == "expired" ? Loc.T("关闭", "Close") : Loc.T("取消", "Cancel"), sync.CancelJoin)));
+        items.Add(Row(Btn("canceljoin", join.Stage == "expired" ? Loc.T("关闭", "Close") : Loc.T("取消", "Cancel"), sync.CancelJoin)));
         page.Children.Add(Box(items.ToArray()));
     }
 
@@ -376,7 +370,7 @@ internal sealed class SyncPage
             AutomationProperties.SetAutomationId(approved, "sync_approved");
             page.Children.Add(Box(
                 approved,
-                Text(Loc.T("在新设备上点「一致」即可完成。", "Click Match on the new device to finish."), secondary: true, size: 13),
+                Text(Loc.T("新设备会自动完成加入。", "The new device finishes joining on its own."), secondary: true, size: 13),
                 Row(Btn("done_" + id, Loc.T("完成", "Done"), () => sync.DismissApproved(id)))));
         }
 

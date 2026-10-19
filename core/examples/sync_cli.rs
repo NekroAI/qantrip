@@ -3,7 +3,7 @@
 //!
 //! cargo run --example sync_cli -- <server> <dir> <command> [args]
 //! 命令：signin | status | exists | create | join [codefile] | requests | approve <join_id> <code> | approve-auto <codefile>
-//!       | confirm | sync | maybe <manual|timer|panel|local|launch|wake> | devices | account-devices
+//!       | sync | maybe <manual|timer|panel|local|launch|wake> | devices | account-devices
 //!       | release <grant_id> | usage | revoke <device_id> [phrase] | reverify | recover <phrase…>
 //! 环境变量 QANTRIP_DEVICE_NAME 可以指定上报的设备名称（默认 "sync_cli"）。
 
@@ -99,16 +99,13 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let p = client.poll_join()?;
                 match p.stage {
-                    JoinStage::CompareCode if !shown => {
+                    JoinStage::ShowCode if !shown => {
                         let sas = p.sas.unwrap_or_default();
                         println!("SAS {sas}");
                         shown = true;
-                        // 给出校验码文件时视为用户已核对一致（由 approve-auto 在另一台设备上选出同一个码）
+                        // 校验码写入文件，供另一台设备上的 approve-auto 选出同一个码
                         if let Some(f) = rest.first() {
                             std::fs::write(f, &sas).unwrap();
-                            client.confirm_join()?;
-                        } else {
-                            println!("run `confirm` in another shell once the code matches");
                         }
                     }
                     JoinStage::Completed => return client.sync_now().map(|r| format!("joined; {r:?}")),
@@ -153,7 +150,6 @@ fn main() {
         "account-devices" => client.account_devices().map(|d| format!("{d:#?}")),
         "release" => client.release_device(rest[0].clone()).map(|_| "released".into()),
         "usage" => client.account_usage().map(|u| format!("{u:?}")),
-        "confirm" => client.confirm_join().map(|p| format!("{p:?}")),
         "revoke" => client.revoke_device(rest[0].clone(), rest.get(1).cloned()).map(|r| format!("{r:?}")),
         "reverify" => client.reverify().map(|s| format!("{s:?}")),
         "recover" => client.recover(rest.join(" ")).map(|_| "recovered".into()),

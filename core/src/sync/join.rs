@@ -9,8 +9,9 @@
 //!   `sig` 为 E 的花名册密钥对 [`crypto::join_result_message`] 的签名
 //!
 //! 确认方式（v0.5）：两台设备显示同一个 SAS。E 上同时显示 SAS 与两个随机码，用户选出与 N 上相同的那个
-//! （选错即取消本次加入）；N 上用户点"一致"。E 选对之后才追加 add_device 并发出 result；N 在用户点"一致"
-//! 且收到通过校验的 result 之后才采用花名册与钥匙环，在此之前不向服务端写入任何数据（C2）。
+//! （选错即取消本次加入）。E 选对之后才追加 add_device 并发出 result；N 收到通过校验的 result 后采用花名册
+//! 与钥匙环，在此之前不向服务端写入任何数据。v0.5.1 起 N 上不再需要用户确认（D40，C2 记为已接受的风险，
+//! 见 docs/sync-design.md 附录 C）。
 //!
 //! 双方的进行中状态保存在平台安全存储中（`join_new_device` / `join_approver`），应用重启后可以继续；
 //! 完成、过期、拒绝或失败时删除。
@@ -184,8 +185,6 @@ pub struct JoinN {
     reveal: Option<Vec<u8>>,
     /// 收到并通过校验的 result
     result: Option<Vec<u8>>,
-    /// 用户已在本机确认两台设备上显示的校验码一致
-    confirmed: bool,
     /// 已加入（只在内存中）
     done: bool,
 }
@@ -201,12 +200,15 @@ impl JoinN {
             ("reply", opt_value(&self.reply)),
             ("reveal", opt_value(&self.reveal)),
             ("result", opt_value(&self.result)),
-            ("confirmed", Value::Bool(self.confirmed)),
         ])))
     }
 
     fn decode(b: &[u8]) -> Result<JoinN, String> {
-        let mut f = Fields::exact(codec::decode(b)?, &["join_id", "vault", "nonce", "started", "commit", "reply", "reveal", "result", "confirmed"])?;
+        const KEYS: [&str; 8] = ["join_id", "vault", "nonce", "started", "commit", "reply", "reveal", "result"];
+        // 0.5.0 还保存了用户是否已确认（"confirmed"，0.5.1 起不再需要）：升级时进行中的加入照常继续
+        const KEYS_050: [&str; 9] = ["join_id", "vault", "nonce", "started", "commit", "reply", "reveal", "result", "confirmed"];
+        let v = codec::decode(b)?;
+        let mut f = Fields::exact(v.clone(), &KEYS).or_else(|_| Fields::exact(v, &KEYS_050))?;
         Ok(JoinN {
             join_id: f.text("join_id")?,
             vault: f.text("vault")?,
@@ -216,13 +218,8 @@ impl JoinN {
             reply: opt_bytes(f.value("reply"))?,
             reveal: opt_bytes(f.value("reveal"))?,
             result: opt_bytes(f.value("result"))?,
-            confirmed: f.bool("confirmed")?,
             done: false,
         })
-    }
-
-    fn stage(&self) -> JoinStage {
-        if self.confirmed { JoinStage::WaitingForOtherDevice } else { JoinStage::CompareCode }
     }
 }
 
@@ -269,7 +266,6 @@ pub fn start_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
         reply: None,
         reveal: None,
         result: None,
-        confirmed: false,
         done: false,
     };
     set_join_n(core, Some(j))?;
@@ -379,7 +375,7 @@ fn fail_reply(core: &mut Core, e: &str) -> SyncError {
     fail_join(core, if e == MSG_REMOVED { MSG_REMOVED } else { "批准设备的回复未通过校验" })
 }
 
-/// 新设备：轮询加入进度。收到 reply 后发出 reveal 并显示 SAS；用户已确认且收到通过校验的 result 时完成加入。
+/// 新设备：轮询加入进度。收到 reply 后发出 reveal 并显示 SAS；收到通过校验的 result 时完成加入。
 pub fn poll_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
     let keys = core.keys()?;
     let me = keys.device_id();
@@ -413,7 +409,7 @@ pub fn poll_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
         if !core.api.put_join_step(&vault, &join_id, "reveal", &reveal)? {
             return Err(fail_join(core, "加入流程的状态异常"));
         }
-        return Ok(progress(&join_id, j.stage(), Some(sas)));
+        return Ok(progress(&join_id, JoinStage::ShowCode, Some(sas)));
     };
     let (roster, pk_e, sas) = match locked(&j, &reply, &me, &pk_n) {
         Ok(v) => v,
@@ -442,31 +438,15 @@ pub fn poll_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
             set_join_n(core, Some(j.clone()))?;
         }
     }
-    if j.confirmed && j.result.is_some() {
+    // 已登录设备上选对了码：result 通过校验即完成加入（v0.5.1 起新设备上不再需要确认，见 D40）
+    if j.result.is_some() {
         finish_join(core, j)?;
         return Ok(progress(&join_id, JoinStage::Completed, None));
     }
-    Ok(progress(&join_id, j.stage(), Some(sas)))
+    Ok(progress(&join_id, JoinStage::ShowCode, Some(sas)))
 }
 
-/// 新设备：用户确认两台设备上显示的校验码一致。已收到批准设备的结果时立即完成加入，否则等待（之后由
-/// `poll_join` 完成）。不一致时应调用 `cancel_join`。
-pub fn confirm_join(core: &mut Core) -> Result<JoinProgress, SyncError> {
-    let Some(mut j) = core.join_n.clone() else { return Err(invalid("没有进行中的加入请求")) };
-    if j.done {
-        return Ok(progress(&j.join_id, JoinStage::Completed, None));
-    }
-    if j.reply.is_none() {
-        return Err(invalid("还没有显示校验码"));
-    }
-    if !j.confirmed {
-        j.confirmed = true;
-        set_join_n(core, Some(j))?;
-    }
-    poll_join(core)
-}
-
-/// 采用 result 中的花名册与钥匙环。调用前用户已确认、result 已通过校验；这里重新校验一遍。
+/// 采用 result 中的花名册与钥匙环。调用前 result 已通过校验；这里重新校验一遍。
 fn finish_join(core: &mut Core, j: JoinN) -> Result<(), SyncError> {
     let keys = core.keys()?;
     let me = keys.device_id();

@@ -48,7 +48,7 @@ CloseWin $w
 "secrets file after failed sign-in: " + (Test-Path "$syncDir\secrets.bin")
 
 # 2) 模拟状态截图
-foreach ($state in @("novault", "join", "join-sas", "join-code", "enrolled", "blocked", "phrase")) {
+foreach ($state in @("novault", "join", "join-sas", "enrolled", "blocked", "phrase")) {
   [Environment]::SetEnvironmentVariable("QANTRIP_DEBUG_SYNC_MOCK", $state)
   [Environment]::SetEnvironmentVariable("QANTRIP_DEBUG_SYNC_ADVANCED", $(if ($state -eq "enrolled") { "1" } else { $null }))
   EnsureApp -Restart -Env @{ QANTRIP_DEBUG_HOOKS = "1"; QANTRIP_DATA_DIR = $data }
