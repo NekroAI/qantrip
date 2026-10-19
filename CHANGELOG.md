@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-19
+
+### Changed
+- Adding a device to sync no longer means typing codes back and forth. Both devices show the same code: on the device that already syncs, pick it from three choices; on the new device, click Match. Picking the wrong code cancels the request — start again on the new device, with no waiting period.
+- When the same template is changed on two devices, the latest edit wins and both devices end up with it. The other version is kept for 30 days in History (Settings › Sync) instead of appearing as a `.conflict-` copy in your templates. Deletions follow the same rule. Existing `.conflict-` files are left as they are.
+- Devices on 0.5.0 can't be paired with 0.4.x. Update both devices before adding one; the device that already syncs says so if the versions differ.
+
+### Fixed
+- A device whose earlier attempt to join was left unfinished can now join again; before, it was stuck until it was removed and reset.
+
 ## [0.4.1] — 2026-10-19
 
 ### Changed
