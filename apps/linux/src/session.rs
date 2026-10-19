@@ -6,6 +6,7 @@ use gtk::prelude::*;
 pub enum Protocol {
     Wayland,
     X11,
+    Unknown,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -30,13 +31,7 @@ impl Session {
         let protocol = match gdk::Display::default() {
             Some(d) if d.is::<gdk4_wayland::WaylandDisplay>() => Protocol::Wayland,
             Some(d) if d.is::<gdk4_x11::X11Display>() => Protocol::X11,
-            _ => {
-                if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                    Protocol::Wayland
-                } else {
-                    Protocol::X11
-                }
-            }
+            _ => Protocol::Unknown,
         };
         let name = std::env::var("XDG_CURRENT_DESKTOP").or_else(|_| std::env::var("XDG_SESSION_DESKTOP")).unwrap_or_default();
         let lower = name.to_lowercase();
@@ -60,6 +55,10 @@ impl Session {
         self.protocol == Protocol::X11
     }
 
+    pub fn is_niri(&self) -> bool {
+        self.is_wayland() && self.desktop_name.split(':').any(|name| name.eq_ignore_ascii_case("niri"))
+    }
+
     /// 界面上显示的会话名称，如 "GNOME · Wayland"
     pub fn label(&self) -> String {
         let d = match self.desktop {
@@ -67,8 +66,34 @@ impl Session {
             Desktop::Kde => "KDE Plasma".to_string(),
             _ => self.desktop_name.clone(),
         };
-        format!("{d} · {}", if self.is_wayland() { "Wayland" } else { "X11" })
+        format!(
+            "{d} · {}",
+            match self.protocol {
+                Protocol::Wayland => "Wayland",
+                Protocol::X11 => "X11",
+                Protocol::Unknown => "Unknown",
+            }
+        )
     }
 }
 
 use gtk::gdk;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn niri_requires_a_wayland_session_and_exact_desktop_entry() {
+        for (protocol, name, expected) in [
+            (Protocol::Wayland, "niri", true),
+            (Protocol::Wayland, "custom:NIRI", true),
+            (Protocol::Wayland, "not-niri", false),
+            (Protocol::Wayland, "Hyprland", false),
+            (Protocol::X11, "niri", false),
+        ] {
+            let session = Session { protocol, desktop: Desktop::Wlroots, desktop_name: name.into() };
+            assert_eq!(session.is_niri(), expected, "{protocol:?}: {name}");
+        }
+    }
+}

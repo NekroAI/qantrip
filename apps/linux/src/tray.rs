@@ -239,7 +239,7 @@ impl Tray {
                 match action {
                     Action::OpenPanel => {
                         if !app.panel().is_visible() {
-                            app.panel().show(&Press { source: "tray", timestamp: 0, token: None });
+                            app.panel().show(&Press::invoke(crate::hotkey::Source::Tray));
                         }
                     }
                     Action::Library => app.show_library(None),

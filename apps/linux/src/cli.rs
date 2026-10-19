@@ -30,7 +30,8 @@ pub fn help() -> String {
          render <输入…>      按面板语法渲染 Prompt 并输出，如 qantrip render r security\n  \
          complete <输入…>    输出补全候选（每行：替换后的输入 TAB 说明）\n  \
          quit                退出正在运行的 Qantrip\n  \
-         version             显示版本\n",
+         version             显示版本\n\n\
+         toggle 每次调用执行一次动作，不提供物理释放事件。合成器绑定请关闭长按重复。\n",
         "Usage: qantrip [command]\n\n\
          Without a command, starts Qantrip (or opens the template library and settings if it is running).\n\n\
          Commands:\n  \
@@ -41,7 +42,8 @@ pub fn help() -> String {
          render <input…>     Render a prompt using the panel syntax, e.g. qantrip render r security\n  \
          complete <input…>   Print completions (one per line: completed input TAB description)\n  \
          quit                Quit the running Qantrip\n  \
-         version             Show the version\n"
+         version             Show the version\n\n\
+         toggle invokes one action per call, without a physical release event. Disable key repeat in compositor bindings.\n"
     )
 }
 
