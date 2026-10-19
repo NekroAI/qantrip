@@ -54,7 +54,7 @@ Qantrip 尚未经过 Apple 公证，首次打开会被系统拦截：到 **系�
 
 **Windows：** 下载并运行 [安装程序](https://qantrip.nekro.ai/dl/windows-x64)（不需要管理员权限；也提供便携版 [zip](https://qantrip.nekro.ai/dl/windows-zip-x64)），按 <kbd>Ctrl+Q</kbd> 唤起。程序暂未签名，SmartScreen 可能需要点 **更多信息 → 仍要运行**。需要 Windows 10 2004 或更新版本（x64）。
 
-**Linux（预览版）：** 下载 AppImage——[x64](https://qantrip.nekro.ai/dl/linux-x64) 或 [ARM64](https://qantrip.nekro.ai/dl/linux-arm64)——设为可执行后运行；也可以安装 [.deb](https://qantrip.nekro.ai/dl/linux-deb-x64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-x64)（ARM64：[.deb](https://qantrip.nekro.ai/dl/linux-deb-arm64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-arm64)）。按 <kbd>Ctrl+Q</kbd> 唤起；GNOME、KDE（Wayland）会请你确认快捷键，引导中可以授权一次自动粘贴。需要 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 或更新版本），详见 [docs/install.md](docs/install.md)。
+**Linux（预览版）：** 下载 AppImage——[x64](https://qantrip.nekro.ai/dl/linux-x64) 或 [ARM64](https://qantrip.nekro.ai/dl/linux-arm64)——设为可执行后运行；也可以安装 [.deb](https://qantrip.nekro.ai/dl/linux-deb-x64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-x64)（ARM64：[.deb](https://qantrip.nekro.ai/dl/linux-deb-arm64) / [.rpm](https://qantrip.nekro.ai/dl/linux-rpm-arm64)）。按 <kbd>Ctrl+Shift+Q</kbd> 唤起；GNOME、KDE（Wayland）会请你确认快捷键（其他合成器可在设置中复制绑定配置，见 [Linux 快捷键](docs/linux-shortcuts.md)），引导中可以授权一次自动粘贴。需要 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 或更新版本），详见 [docs/install.md](docs/install.md)。
 
 ## 编写模板
 

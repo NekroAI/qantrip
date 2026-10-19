@@ -55,6 +55,12 @@ impl Session {
         self.protocol == Protocol::X11
     }
 
+    /// Wayland 下面板用透明最大化窗口承载、卡片放在屏幕上方：GNOME 与 KDE 实测可用（D37）。
+    /// 其他合成器（niri、Sway、Hyprland 等平铺或自定规则的合成器）用固定尺寸窗口（D41）。
+    pub fn panel_backdrop(&self) -> bool {
+        self.is_wayland() && matches!(self.desktop, Desktop::Gnome | Desktop::Kde)
+    }
+
     pub fn is_niri(&self) -> bool {
         self.is_wayland() && self.desktop_name.split(':').any(|name| name.eq_ignore_ascii_case("niri"))
     }

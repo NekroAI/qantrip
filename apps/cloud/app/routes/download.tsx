@@ -26,8 +26,8 @@ const T = {
     stepsWin: ['Run the installer. It isn\'t code-signed yet: if SmartScreen warns you, click More info → Run anyway.', 'Follow the steps; no admin rights needed.', 'Press Ctrl+Q anywhere.'],
     stepsLinux: [
       'AppImage: make it executable (chmod +x, or Properties → Allow executing) and open it. Or install the .deb / .rpm with your package manager.',
-      'On GNOME or KDE (Wayland), confirm the shortcut when the system asks. The welcome guide lets you allow auto-paste once; without it, prompts are copied for you to paste.',
-      'Press Ctrl+Q anywhere.',
+      'On GNOME or KDE (Wayland), confirm the shortcut when the system asks. Other compositors (niri, Sway, Hyprland): Settings gives a binding to copy. The welcome guide lets you allow auto-paste once; without it, prompts are copied for you to paste.',
+      'Press Ctrl+Shift+Q anywhere.',
     ],
     chip: 'Not sure which chip? Apple menu → About This Mac.',
     history: 'Release notes and older versions',
@@ -49,8 +49,8 @@ const T = {
     stepsWin: ['运行安装程序。程序暂未签名：如果 SmartScreen 拦截，点「更多信息 → 仍要运行」。', '按提示完成安装，不需要管理员权限。', '在任何地方按 Ctrl+Q。'],
     stepsLinux: [
       'AppImage：设为可执行（chmod +x，或在文件属性中允许执行）后打开；也可以用软件包管理器安装 deb / rpm。',
-      'GNOME、KDE（Wayland）首次启动时系统会询问是否允许注册快捷键，确认即可。引导中可以授权一次自动粘贴；不授权时 Prompt 会复制到剪贴板。',
-      '在任何地方按 Ctrl+Q。',
+      'GNOME、KDE（Wayland）首次启动时系统会询问是否允许注册快捷键，确认即可；niri、Sway、Hyprland 等合成器可以在设置中复制绑定配置。引导中可以授权一次自动粘贴；不授权时 Prompt 会复制到剪贴板。',
+      '在任何地方按 Ctrl+Shift+Q。',
     ],
     chip: '不确定是哪种芯片：苹果菜单 → 关于本机。',
     history: '更新记录与历史版本',

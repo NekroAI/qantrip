@@ -90,6 +90,9 @@ struct Grabs {
     binding: Option<Binding>,
     generation: u64,
     held: Option<u8>,
+    /// `held` 来自抓取建立时的键盘状态：这次按下发生在抓取之前，它的释放事件不会发给本程序
+    /// （被动抓取只在按下时激活）。事件线程改为轮询键盘状态，直到这个键松开。
+    held_unseen: bool,
 }
 
 /// Add first, remove last. A failed partial registration only removes newly added
@@ -218,7 +221,20 @@ impl X11 {
         let _ = tx.send_blocking(XEvent::Active(self.active_window()));
         let mut queued = None;
         while !self.stopping.load(Ordering::Acquire) {
-            let event = match queued.take().map(Ok).unwrap_or_else(|| self.conn.wait_for_event()) {
+            let next = match queued.take() {
+                Some(event) => Ok(event),
+                None if self.grabs.lock().unwrap().held_unseen => match self.conn.poll_for_event() {
+                    Ok(Some(event)) => Ok(event),
+                    Ok(None) => {
+                        self.check_unseen_release();
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        continue;
+                    }
+                    Err(e) => Err(e),
+                },
+                None => self.conn.wait_for_event(),
+            };
+            let event = match next {
                 Ok(event) => event,
                 Err(_) => {
                     let mut state = self.grabs.lock().unwrap();
@@ -235,6 +251,10 @@ impl X11 {
                     let mut state = self.grabs.lock().unwrap();
                     let mods = u16::from(key.state) & 0xff; // Button masks are not keyboard modifiers.
                     let matches = state.binding.as_ref().is_some_and(|b| b.combinations.contains(&Grab { code: key.detail, mods }));
+                    if matches && state.held_unseen && state.held == Some(key.detail) {
+                        // 抓取前就按着的键在自动重复：抓取已激活，之后的释放会发给本程序
+                        state.held_unseen = false;
+                    }
                     if matches && state.held.is_none() {
                         state.held = Some(key.detail);
                         if tx.send_blocking(XEvent::HotKey { generation: state.generation, phase: Phase::Pressed, timestamp: key.time }).is_err() {
@@ -256,6 +276,7 @@ impl X11 {
                     let mut state = self.grabs.lock().unwrap();
                     if state.held == Some(key.detail) {
                         state.held = None; // Release must work even if a modifier was released first.
+                        state.held_unseen = false;
                         if tx.send_blocking(XEvent::HotKey { generation: state.generation, phase: Phase::Released, timestamp: key.time }).is_err() {
                             return;
                         }
@@ -322,6 +343,12 @@ impl X11 {
             self.conn.query_keymap().ok().and_then(|c| c.reply().ok()).and_then(|map| {
                 state.binding.as_ref()?.combinations.iter().find(|g| map.keys[usize::from(g.code / 8)] & (1 << (g.code % 8)) != 0).map(|g| g.code)
             });
+        state.held_unseen = state.held.is_some();
+        if state.held_unseen {
+            // 唤醒阻塞在 wait_for_event 的事件线程，让它改为轮询这个键何时松开
+            let event = xproto::ClientMessageEvent::new(32, self.wake_window, AtomEnum::STRING, [0; 5]);
+            let _ = self.conn.send_event(false, self.wake_window, EventMask::NO_EVENT, event);
+        }
         self.advance_generation(state);
         if self.conn.flush().is_err() {
             self.clear_grabs(state);
@@ -343,8 +370,20 @@ impl X11 {
             }
         }
         state.held = None;
+        state.held_unseen = false;
         self.advance_generation(state);
         let _ = self.conn.flush();
+    }
+
+    /// 抓取前就按着的键松开后清除按住状态，下一次按下才能触发。
+    fn check_unseen_release(&self) {
+        let mut state = self.grabs.lock().unwrap();
+        let Some(code) = state.held.filter(|_| state.held_unseen) else { return };
+        let down = self.conn.query_keymap().ok().and_then(|c| c.reply().ok()).map(|map| map.keys[usize::from(code / 8)] & (1 << (code % 8)) != 0);
+        if down == Some(false) {
+            state.held = None;
+            state.held_unseen = false;
+        }
     }
 
     pub fn ungrab(&self) {

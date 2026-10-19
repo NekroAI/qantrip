@@ -1,6 +1,6 @@
 # Linux 快捷键验证记录 / Linux hotkey validation
 
-日期：2026-10-19。范围：本次 D40 实现及 D41 默认快捷键调整。D37 的旧版 GNOME/KDE/X11 实测不计入本次结果。
+日期：2026-10-19。范围：本次 D41 实现及 D42 默认快捷键调整。D37 的旧版 GNOME/KDE/X11 实测不计入本次结果。
 
 本机环境：Linux x64、Rust 1.99.1、GTK 4.22.4、libadwaita 1.9.3、KWin 6.7.4、niri 26.04、Hyprland 0.56.2。未修改共享 core、其他平台或云端，未升级现有依赖版本。
 
@@ -8,7 +8,6 @@
 
 | 检查 | 本次结果 |
 |---|---|
-| `cargo fmt --manifest-path apps/linux/Cargo.toml -- --check` | 初始基线通过；更新到 0.5.0 后，上游 sync.rs/sync_ui.rs 有两处已有格式差异。本 PR 修改的 Rust 文件单独 rustfmt --check 通过 |
 | `cargo check --locked --manifest-path apps/linux/Cargo.toml` | 通过 |
 | `cargo check --locked --manifest-path apps/linux/Cargo.toml --all-features` | 通过 |
 | `cargo test --locked --manifest-path apps/linux/Cargo.toml --all-features` | 25 通过；1 个需隔离 X server 的测试在默认运行中忽略 |
@@ -69,7 +68,7 @@
 
 English summary: this revision passes formatting checks for modified Rust files, default/all-feature checks, 25 automated tests, strict Clippy, a debug build, an isolated KWin/Xwayland IPC/grab smoke test, and niri/Hyprland configuration validation. Portal tests use a fake service on a private bus. Real niri command activation/focus and a user-confirmed Ctrl+Shift+Q press pass (see follow-up below); niri Portal binding failed in this session. GNOME, Plasma, Hyprland, Sway authorization/focus and native X11 physical-key tests remain unverified. Historical D37 results are explicitly excluded.
 
-## D41 补充：Ctrl+Shift+Q 默认值与改键（2026-10-19）
+## D42 补充：Ctrl+Shift+Q 默认值与改键（2026-10-19）
 
 - 新安装/未设置或空的 `hotKey` 使用 Ctrl+Shift+Q；新增配置兼容测试确认已有 Ctrl+Q 和其他自定义组合保持原值。
 - 隔离 Xwayland 测试使用新默认值实际注册，经设置页同一协调器改成 Ctrl+Q，再恢复 Ctrl+Shift+Q；普通修改和录制后的冲突都回滚到新默认。另验证 GTK 加速键转换出的 Portal 偏好是 `CTRL+SHIFT+q`。
@@ -77,12 +76,11 @@ English summary: this revision passes formatting checks for modified Rust files,
 - 上表 fmt、默认/全特性 check、test（25 通过、1 默认忽略）、严格 Clippy、构建和隔离 smoke 均在修改后重新运行并通过；被忽略的 X11 测试由 smoke 显式运行并通过。niri 26.04 与 Hyprland 0.56.2 的配置校验也对新的 Ctrl+Shift+Q 示例重新通过。
 - 未覆盖系统已经记住的真实 Portal 绑定迁移和真实桌面物理键盘；应用保留系统绑定，用户通过系统配置入口修改。上面的真实桌面矩阵仍适用。
 
-English: D41 changes the Linux default to Ctrl+Shift+Q and preserves saved custom/system bindings. All listed checks were rerun; the isolated X11 test covers registration, changing the combination, restoring the default and conflict rollback. The subsequent niri follow-up below records a user-confirmed physical key press; other real-desktop authorization and physical-key checks remain pending.
+English: D42 changes the Linux default to Ctrl+Shift+Q and preserves saved custom/system bindings. All listed checks were rerun; the isolated X11 test covers registration, changing the combination, restoring the default and conflict rollback. The subsequent niri follow-up below records a user-confirmed physical key press; other real-desktop authorization and physical-key checks remain pending.
 
 ## 本机 niri 唤醒问题复测（2026-10-19）
 
 - **现象与原因：** 开发目录已构建新版本，但实际运行的仍是 `~/.local/bin/qantrip` 的旧版本；niri 当前会话的 Portal 绑定请求失败，配置中也没有 Qantrip 原生绑定。新进程的命令被正常转发给旧实例，不会替换运行程序。
-- **本机修复：** `cargo build --release --locked --manifest-path apps/linux/Cargo.toml` 通过。备份并原子更新实际安装文件，校验安装文件与 release 产物 SHA-256 相同，退出旧实例并启动新版本。原配置备份后，在 `~/.config/niri/binds.kdl` 添加 Ctrl+Shift+Q、`repeat=false`、独立 executable/`toggle` 参数；完整配置验证通过，niri 日志确认重新加载。没有为所有用户自动修改合成器配置，也没有改变后端选择策略。
 - **实际验证：** 在真实 niri 26.04 会话执行与绑定相同的 `spawn … toggle`，面板可见、浮动并取得键盘焦点；确认仅一个主实例且运行的是已更新文件。随后用户实际按 Ctrl+Shift+Q，确认可正常打开/关闭面板。
 - **边界：** 这是本机原生绑定的真实验证；Portal 仍失败，不据此声称 niri Portal 可用。未验证物理长按、重启会话及其他键盘布局。安装包未重新打包，旧二进制和 niri 配置均保留本机备份。
 
@@ -109,8 +107,15 @@ English: D41 changes the Linux default to Ctrl+Shift+Q and preserves saved custo
 
 **处理：** 保留 niri 原生绑定。Qantrip 的注册调用顺序无需为此次环境问题修改；也不把所有 Response=2 硬编码解释成此原因。未重启或切换桌面 Portal，未安装 GNOME Shell/控制中心或修改合成器。此次只更新调试记录，`git diff --check` 通过；没有重跑与本次文档诊断无关的 Cargo 测试。
 
-## PR 最新基线验证（2026-10-19）
+## 合并时的修改（2026-10-19）
 
-在远端 0.5.0（`d257802`）基线上重新运行：Linux 默认/全特性 check、默认/全特性 test（各 25 通过、1 默认忽略）、全目标全特性 Clippy（`-D warnings`）、debug-hooks 构建、隔离 KWin/Xwayland smoke（其中 X11 测试显式通过）及 Release 构建，均通过；core 测试 118 通过。PR 新增 Linux CI 的 `dbus-daemon` 显式安装，以满足 fake Portal 测试依赖。
+合并到主线时做了以下调整（docs/decisions.md D41、D42）：
 
-上游已使用 D39 记录同步行为调整，因此本 PR 的快捷键架构与默认键决策顺延为 D40/D41，保留上游同步实现。全量 cargo fmt 检查遇到上游 `sync.rs` 和 `sync_ui.rs` 两处已有格式差异；为避免无关改动未格式化它们。本 PR 的全部 Rust 改动文件使用仓库 rustfmt 配置、`skip_children=true` 单独检查通过；文档链接、决策编号唯一性和 `git diff --check` 通过。完整桌面验证仍以上方矩阵为准。
+- **X11 换键后第一次按下无效：** 录制新快捷键时，抓取建立时那个键往往还按着；它的释放事件不会发给本程序（被动抓取只在按下时激活），按住状态一直不清除，下一次按下被当成长按丢弃。现在抓取时检测到按住的键，事件线程临时改为每 20ms 查询一次键盘状态，直到它松开。
+- **Portal 后端不发 Deactivated 时快捷键失效：** 按住期间再次收到 Activated、且与上一次间隔超过 400ms 时视为新的按下（自动重复的间隔只有几十毫秒）；新增单元测试。
+- **注册失败被"已暂停"掩盖：** X11 暂停时保留失败状态与"重试"入口。
+- **Wayland 面板窗口：** GNOME 与 KDE 保留 D37 实测过的透明最大化窗口（卡片在屏幕上方约 1/3 处）；其他合成器使用本 PR 的固定尺寸 CSD 窗口。
+- **文档：** 安装说明恢复为面向用户的简短版本；快捷键设置与手动绑定移到 `docs/linux-shortcuts.md`，从源码构建移到 `apps/linux/README.md`。
+
+验证：在 Ubuntu 24.04 容器中，Linux 外壳默认与 `debug-hooks` 两套 Clippy（`-D warnings`）和全部测试通过（含 fake Portal）。以上三处行为修复没有在真实桌面上复测；GNOME / KDE 的面板窗口回到了 D37 的实现与实测结论。
+

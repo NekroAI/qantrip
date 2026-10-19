@@ -42,13 +42,13 @@ interface Tpl {
 
 const SUMMARY = (o: string) => `# Nekro Qantrip
 
-> Nekro Qantrip is a free, open-source prompt launcher for macOS and Windows, with a Linux preview. Press a global hotkey (⌃Q on macOS, Ctrl+Q on Windows and Linux), type a short command such as \`r security --scope=staged -s\`, and a full, parameterized prompt is inserted at the cursor in any app: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, editors. Prompts are Markdown templates with typed options (MiniJinja). It works offline; optional sync is end-to-end encrypted.
+> Nekro Qantrip is a free, open-source prompt launcher for macOS and Windows, with a Linux preview. Press a global hotkey (⌃Q on macOS, Ctrl+Q on Windows, Ctrl+Shift+Q on Linux), type a short command such as \`r security --scope=staged -s\`, and a full, parameterized prompt is inserted at the cursor in any app: Claude Code, Codex CLI, Cursor, ChatGPT or Claude in the browser, Slack, editors. Prompts are Markdown templates with typed options (MiniJinja). It works offline; optional sync is end-to-end encrypted.
 
 - Website: ${o}/ (English), ${o}/zh (中文)
 - Source code: ${REPO} (app and core GPL-3.0-or-later, sync server AGPL-3.0-or-later)
 - Download (macOS 14+): ${o}/dl/macos-arm64 (Apple silicon), ${o}/dl/macos-x64 (Intel)
 - Download (Windows 10/11 x64): ${o}/dl/windows-x64 (installer, no admin rights) or ${o}/dl/windows-zip-x64 (portable); shortcut Ctrl+Q
-- Download (Linux x64 / ARM64, preview): ${o}/dl/linux-x64 or ${o}/dl/linux-arm64 (AppImage); also .deb and .rpm at ${o}/dl/linux-deb-<x64|arm64> and ${o}/dl/linux-rpm-<x64|arm64>; needs GTK 4.14+ and libadwaita 1.5+; shortcut Ctrl+Q
+- Download (Linux x64 / ARM64, preview): ${o}/dl/linux-x64 or ${o}/dl/linux-arm64 (AppImage); also .deb and .rpm at ${o}/dl/linux-deb-<x64|arm64> and ${o}/dl/linux-rpm-<x64|arm64>; needs GTK 4.14+ and libadwaita 1.5+; shortcut Ctrl+Shift+Q
 - Platforms: macOS, Windows, Linux (preview).
 - Made by NekroAI (https://github.com/NekroAI). Pronounced like "cantrip".
 

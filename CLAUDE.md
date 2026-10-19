@@ -12,7 +12,7 @@
 - 打包：`ARCH=arm64|x86_64 scripts/package-macos.sh`、`scripts/package-linux.sh`；正式发布：推送 `v*` 标签，由 GitHub Actions 签名并发布。发布文件命名见 D38
 - 云服务：`cd apps/cloud && pnpm test`（契约测试）、`pnpm deploy:staging` / `pnpm deploy:production`（从 Mac mini 部署，wrangler 已登录）
 - Windows 构建（在 Windows 上）：`apps\windows\build.ps1`，说明见 `apps/windows/README.md`；回归脚本在 `tests/windows/`
-- Linux 构建（在 Linux 上，需要 GTK 4.14+ / libadwaita 1.5+ 开发包）：`cargo run --manifest-path apps/linux/Cargo.toml`；打包：`scripts/package-linux.sh`；调试钩子：`cargo build --features debug-hooks` 后以 `QANTRIP_DEBUG_HOOKS=1` 运行，再执行 `qantrip debug …`（见 `apps/linux/src/debug.rs`）
+- Linux 构建（在 Linux 上，需要 GTK 4.14+ / libadwaita 1.5+ 开发包，说明见 `apps/linux/README.md`）：`cargo run --manifest-path apps/linux/Cargo.toml`；打包：`scripts/package-linux.sh`；调试钩子：`cargo build --features debug-hooks` 后以 `QANTRIP_DEBUG_HOOKS=1` 运行，再执行 `qantrip debug …`（见 `apps/linux/src/debug.rs`）
 - 测试：`cargo test --manifest-path core/Cargo.toml`；插入链路回归：以 `QANTRIP_DEBUG_HOOKS=1` 构建后运行 `tests/spike/run_insert_tests.py`
 
 ## 文档
@@ -25,6 +25,8 @@
 | `docs/spike-report.md` | 阶段 1 macOS 可行性报告与实现要点 |
 | `docs/windows-spike.md` | Windows（WinUI 3）可行性报告：热键、面板、插入、输入法与绑定方式 |
 | `docs/install.md` | macOS、Windows 与 Linux 安装说明（同时用作 Release 说明） |
+| `docs/linux-shortcuts.md` | Linux 快捷键：注册方式、修改与各桌面 / 合成器的手动绑定 |
+| `docs/linux-hotkeys-validation.md` | Linux 快捷键实现（D41）的验证记录与真实桌面矩阵 |
 | `docs/sync-design.md` | 同步与端到端加密安全设计 v0.5（含成本模型、两轮审查记录与 v0.5 加入流程的安全取舍） |
 
 开始任何设计或实现工作前，先读 `docs/decisions.md`，避免重新讨论已经定下的事项。

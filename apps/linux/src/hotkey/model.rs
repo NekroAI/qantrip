@@ -179,20 +179,33 @@ impl Lifecycle {
     }
 }
 
+/// Portal：按住期间再次收到"按下"、且与上一次"按下"间隔超过这个时间，视为一次新的按下
+/// （有的后端不发 Deactivated，或面板取得焦点时释放信号丢失；自动重复的间隔只有几十毫秒）
+const PORTAL_REPRESS: std::time::Duration = std::time::Duration::from_millis(400);
+
 #[derive(Default)]
 pub(super) struct EventGate {
     held: bool,
+    last_press: Option<std::time::Instant>,
 }
 
 impl EventGate {
     /// 更新物理状态后再应用暂停，避免暂停期间丢失释放导致永久抑制。
     pub fn accept(&mut self, event: &Press, suspended: bool) -> bool {
+        self.accept_at(event, suspended, std::time::Instant::now())
+    }
+
+    pub fn accept_at(&mut self, event: &Press, suspended: bool, now: std::time::Instant) -> bool {
         if event.id != ShortcutId::TogglePanel {
             return false;
         }
         match (event.source.physical(), event.phase) {
             (true, Phase::Pressed) => {
-                let repeated = std::mem::replace(&mut self.held, true);
+                let last = self.last_press.replace(now);
+                let mut repeated = std::mem::replace(&mut self.held, true);
+                if repeated && event.source == Source::Portal && last.is_some_and(|t| now.duration_since(t) >= PORTAL_REPRESS) {
+                    repeated = false;
+                }
                 !repeated && !suspended
             }
             (true, Phase::Released) => {
@@ -245,6 +258,18 @@ mod tests {
         assert!(!gate.accept(&event, true));
         event.phase = Phase::Pressed;
         assert!(gate.accept(&event, false));
+        // Portal 后端不发释放：间隔足够长的下一次按下照常触发，自动重复仍被过滤
+        let mut gate = EventGate::default();
+        let t0 = std::time::Instant::now();
+        let press = Press { phase: Phase::Pressed, ..Press::invoke(Source::Portal) };
+        assert!(gate.accept_at(&press, false, t0));
+        assert!(!gate.accept_at(&press, false, t0 + std::time::Duration::from_millis(30)));
+        assert!(gate.accept_at(&press, false, t0 + std::time::Duration::from_secs(2)));
+        // X11 自己处理按住与重复（x11.rs），这里仍按释放判断
+        let mut gate = EventGate::default();
+        let x11 = Press { phase: Phase::Pressed, ..Press::invoke(Source::X11) };
+        assert!(gate.accept_at(&x11, false, t0));
+        assert!(!gate.accept_at(&x11, false, t0 + std::time::Duration::from_secs(2)));
         let command = Press::invoke(Source::Command);
         assert!(gate.accept(&command, true));
         assert!(gate.accept(&command, true)); // 两次显式命令就是两次动作

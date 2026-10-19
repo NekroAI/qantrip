@@ -39,7 +39,7 @@ const T = {
     ] as [string, string, string][],
     keysH: 'Shortcuts',
     keys: [
-      [['⌃', 'Q'], 'Summon the panel (Ctrl+Q on Windows and Linux; configurable)'],
+      [['⌃', 'Q'], 'Summon the panel (Ctrl+Q on Windows, Ctrl+Shift+Q on Linux; configurable)'],
       [['⇥'], 'Accept the suggestion'],
       [['→'], 'Accept the grey inline hint'],
       [['↑', '↓'], 'Choose a suggestion'],
@@ -120,7 +120,7 @@ const T = {
     ] as [string, string, string][],
     keysH: '快捷键',
     keys: [
-      [['⌃', 'Q'], '唤出面板（Windows 与 Linux 上为 Ctrl+Q，可自定义）'],
+      [['⌃', 'Q'], '唤出面板（Windows 上为 Ctrl+Q，Linux 上为 Ctrl+Shift+Q，可自定义）'],
       [['⇥'], '接受候选'],
       [['→'], '接受灰字提示'],
       [['↑', '↓'], '选择候选'],

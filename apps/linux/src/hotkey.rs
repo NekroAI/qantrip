@@ -395,7 +395,10 @@ impl HotKey {
                 if self.paused.get() || self.suspended.get() {
                     self.next_x11_operation();
                     worker.ungrab();
-                    self.set_state(State::Paused { trigger: self.display() });
+                    // 注册失败时保留失败状态与"重试"入口，不显示成"已暂停"（恢复时会重新注册）
+                    if !matches!(self.state(), State::Failed { .. }) {
+                        self.set_state(State::Paused { trigger: self.display() });
+                    }
                 } else {
                     self.schedule_x11();
                 }

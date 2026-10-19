@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use crate::i18n;
 use crate::paths;
 
-/// Linux 默认唤起快捷键 Ctrl+Shift+Q（docs/decisions.md D41）；保留已保存的 hotKey。
+/// Linux 默认唤起快捷键 Ctrl+Shift+Q（docs/decisions.md D42）；保留已保存的 hotKey。
 pub const DEFAULT_HOTKEY: &str = "<Control><Shift>q";
 pub const DEFAULT_SYNC_SERVER: &str = "https://qantrip.nekro.ai";
 
