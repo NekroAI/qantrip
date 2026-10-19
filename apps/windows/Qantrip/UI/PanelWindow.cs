@@ -248,6 +248,9 @@ internal sealed class PanelWindow : Window
         listEmpty.HorizontalAlignment = HorizontalAlignment.Center;
         listEmpty.VerticalAlignment = VerticalAlignment.Center;
         listEmpty.FontSize = 12;
+        listEmpty.TextWrapping = TextWrapping.Wrap;
+        listEmpty.TextAlignment = TextAlignment.Center;
+        listEmpty.Margin = new Thickness(24, 0, 24, 0);
         body.Children.Add(listEmpty);
         var d2 = Divider(true); Grid.SetColumn(d2, 1); body.Children.Add(d2);
         card.Padding = new Thickness(16);
@@ -610,7 +613,10 @@ internal sealed class PanelWindow : Window
         rowElements.Clear();
         var a = Model.Analysis;
         listEmpty.Visibility = a.Candidates.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        listEmpty.Text = a.Phase == "extra" ? Loc.T("正在输入附加要求", "Entering extra instructions") : Loc.T("没有可补全的内容", "Nothing to complete");
+        // 指令模式下没有候选时，左栏显示这一步的提示（如"输入新模板的名称"）
+        listEmpty.Text = a.Phase == "extra" ? Loc.T("正在输入附加要求", "Entering extra instructions")
+            : Model.IsCommandMode && !string.IsNullOrEmpty(a.Hint) ? a.Hint
+            : Loc.T("没有可补全的内容", "Nothing to complete");
         string? section = null;
         FrameworkElement? selected = null;
         var kind = ListKind(a);
@@ -764,7 +770,7 @@ internal sealed class PanelWindow : Window
         var title = new TextBlock { Text = t.Name, FontFamily = Theme.Display, FontSize = 22, Foreground = Theme.B(theme.Accent) };
         head.Children.Add(title);
         // 模板切换：标题从左侧滑入
-        if (t.Name != previewTemplate) Anim.FadeSlideIn(head, new Vector3(-10, 0, 0), 180);
+        if (t.Name != previewTemplate) Anim.FadeSlideIn(head, new Vector3(10, 0, 0), 180);
         var desc = new TextBlock { Text = t.Description, FontSize = 13, Foreground = Theme.B(theme.Secondary), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(desc, 1);
         head.Children.Add(desc);

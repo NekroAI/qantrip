@@ -93,6 +93,13 @@ struct LauncherView: View {
         return out
     }
 
+    /// 左栏没有候选时的文字：指令模式下显示这一步的提示（如"输入新模板的名称"）
+    private var emptyListText: String {
+        if model.analysis.phase == .extra { return L("正在输入附加要求", "Entering extra instructions") }
+        if model.isCommandMode, !model.analysis.hint.isEmpty { return model.analysis.hint }
+        return L("没有可补全的内容", "Nothing to complete")
+    }
+
     private var candidateList: some View {
         Group {
             if model.candidates.isEmpty {
@@ -100,8 +107,10 @@ struct LauncherView: View {
                     Image(systemName: model.analysis.phase == .extra ? "text.cursor" : "sparkles")
                         .font(.system(size: 22)).foregroundStyle(.tertiary)
                         .symbolEffect(.pulse, isActive: motion && model.analysis.phase == .extra)
-                    Text(model.analysis.phase == .extra ? L("正在输入附加要求", "Entering extra instructions") : L("没有可补全的内容", "Nothing to complete"))
+                    Text(emptyListText)
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
@@ -158,7 +167,7 @@ struct LauncherView: View {
                     }
                 }
                 .id(t.name)
-                .transition(motion ? .asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity) : .identity)
+                .transition(motion ? .asymmetric(insertion: .offset(x: 10).combined(with: .opacity), removal: .opacity) : .identity)
                 if !model.analysis.params.isEmpty {
                     FlowLayout(spacing: 6) {
                         ForEach(model.analysis.params, id: \.name) { p in

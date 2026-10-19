@@ -109,7 +109,7 @@ window.qantrip-panel, window.qantrip-panel.background { background: transparent;
 
 .spell-name { font-family: Fraunces, serif; font-size: 22px; font-weight: 600; color: @qt_accent; }
 .spell-name.slide { animation: qt-slide 200ms ease-out; }
-@keyframes qt-slide { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+@keyframes qt-slide { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
 .spell-desc { font-size: 13px; color: alpha(currentColor, 0.65); }
 .spell-hint { font-size: 11px; color: alpha(currentColor, 0.6); }
 .commands-help { font-family: Monaspace Neon Var, Monaspace Neon, monospace; font-size: 12px; color: alpha(currentColor, 0.7); }

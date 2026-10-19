@@ -288,6 +288,8 @@ struct Ctx<'a> {
     input: &'a str,
     tokens: Vec<Token>,
     diags: Vec<Diagnostic>,
+    /// 已确定指令的用法与说明（右栏没有其他内容时显示）
+    help: String,
 }
 
 impl Ctx<'_> {
@@ -363,7 +365,7 @@ fn empty_analysis() -> Analysis {
 
 fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<&str>) -> Outcome {
     let loc = lib.locale;
-    let mut ctx = Ctx { input, tokens: vec![], diags: vec![] };
+    let mut ctx = Ctx { input, tokens: vec![], diags: vec![], help: String::new() };
     let mut a = empty_analysis();
     let ws = words(input);
     let ends_ws = input.ends_with(char::is_whitespace);
@@ -422,7 +424,15 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
     };
     ctx.token(TokenKind::Command, first.start, first.end);
     a.hint = cmd.usage(loc);
+    ctx.help = format!("{}\n    {}", cmd.usage(loc), cmd.summary(loc));
     a.locked = true;
+    // 还没输入参数时提示下一步（左栏为空时显示，右栏显示在用法之前）
+    let pick = tr!(loc, "输入或选择模板名", "Type or pick a template name");
+    let step = match cmd {
+        Cmd::New => tr!(loc, "输入新模板的名称（英文字母开头）；不写正文时使用剪贴板内容", "Type a name for the new template (starting with a letter); without text, the clipboard is used"),
+        Cmd::Edit | Cmd::Dup | Cmd::Alias | Cmd::Rm => pick,
+        _ => String::new(),
+    };
 
     let arg = |i: usize| ws.get(i);
     // 正在输入第 i 个参数（模板名）时给出模板候选
@@ -458,6 +468,7 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
     let plan = match cmd {
         Cmd::New => {
             let Some(name_w) = arg(1) else {
+                a.hint = step;
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::Positional, name_w.start, name_w.end);
@@ -531,7 +542,10 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         }
         Cmd::Edit => {
             suggest_templates(&mut a, 1, false);
-            let Some(w) = arg(1) else { return finish(ctx, a, None) };
+            let Some(w) = arg(1) else {
+                a.hint = step;
+                return finish(ctx, a, None);
+            };
             ctx.token(TokenKind::Positional, w.start, w.end);
             match find_template(lib, w.text) {
                 None => {
@@ -550,7 +564,10 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         }
         Cmd::Dup => {
             suggest_templates(&mut a, 1, false);
-            let Some(w) = arg(1) else { return finish(ctx, a, None) };
+            let Some(w) = arg(1) else {
+                a.hint = step;
+                return finish(ctx, a, None);
+            };
             ctx.token(TokenKind::Positional, w.start, w.end);
             let Some(src) = find_template(lib, w.text) else {
                 let n = w.text;
@@ -589,7 +606,10 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         }
         Cmd::Alias => {
             suggest_templates(&mut a, 1, true);
-            let Some(w) = arg(1) else { return finish(ctx, a, None) };
+            let Some(w) = arg(1) else {
+                a.hint = step;
+                return finish(ctx, a, None);
+            };
             ctx.token(TokenKind::Positional, w.start, w.end);
             let Some(t) = find_template(lib, w.text) else {
                 let n = w.text;
@@ -629,7 +649,10 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         }
         Cmd::Rm => {
             suggest_templates(&mut a, 1, false);
-            let Some(w) = arg(1) else { return finish(ctx, a, None) };
+            let Some(w) = arg(1) else {
+                a.hint = step;
+                return finish(ctx, a, None);
+            };
             ctx.token(TokenKind::Positional, w.start, w.end);
             match find_template(lib, w.text) {
                 None => {
@@ -810,9 +833,14 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
 }
 
 fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
-    // 还没有可预览的内容时，右栏显示当前指令的提示（如"选择要恢复的内置模板"）
-    if a.template.is_none() && a.preview.is_none() && !a.hint.is_empty() {
-        a.preview = Some(plain_preview(&a.hint));
+    // 还没有可预览的内容时，右栏显示当前这一步的提示（如"选择要恢复的内置模板"）与指令的用法、说明
+    if a.template.is_none() && a.preview.is_none() && !(a.hint.is_empty() && ctx.help.is_empty()) {
+        let text = match (a.hint.as_str(), ctx.help.as_str()) {
+            (h, "") => h.to_string(),
+            (h, help) if h.is_empty() || help.starts_with(h) => help.to_string(),
+            (h, help) => format!("{h}\n\n{help}"),
+        };
+        a.preview = Some(plain_preview(&text));
     }
     let errors = ctx.diags.iter().any(|d| d.severity == Severity::Error);
     a.tokens = ctx.tokens;
@@ -896,9 +924,28 @@ mod tests {
         d
     }
 
+    /// 测试并行运行：用计数器区分目录（macOS 的系统时钟只精确到微秒，按时间取名会撞车）
     fn rand_suffix() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// 指令确定、还没有参数时：左栏为空，提示下一步；右栏显示这一步、用法与说明
+    #[test]
+    fn command_without_args_explains_next_step() {
+        let lib = Library::load(None);
+        for input in ["/new", "/new "] {
+            let a = analyze(&lib, None, input, None);
+            assert!(a.hint.contains("名称"), "{input}: {}", a.hint);
+        }
+        let a = analyze(&lib, None, "/new ", None);
+        assert!(a.candidates.is_empty());
+        let p = a.preview.unwrap().text;
+        assert!(p.starts_with(&a.hint) && p.contains("/new 名称 [正文]") && p.contains("新建模板"), "{p}");
+        let a = analyze(&lib, None, "/dup review ", None);
+        assert!(a.template.is_some());
+        assert!(a.hint.contains("新名称"), "{}", a.hint);
     }
 
     #[test]

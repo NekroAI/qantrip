@@ -7,7 +7,7 @@ import SwiftUI
 ///
 /// 按键命令经 `doCommandBy` 分发；输入法组字期间系统不会把 Enter / 方向键交给我们。
 /// ⌘↩ 不是文本命令，在 `performKeyEquivalent` 中处理。
-final class CommandField: NSTextField, NSTextFieldDelegate {
+final class CommandField: NSTextField, NSTextFieldDelegate, NSLayoutManagerDelegate {
     weak var model: LauncherModel?
     private let ghost = GhostView()
     private var lastAnalysis: Analysis?
@@ -37,6 +37,13 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
         delegate = self
 
         ghost.isHidden = true
+        // 输入法开始组字时不一定有 controlTextDidChange：跟随字段编辑器的选区变化（组字会改变选区）隐藏占位文字
+        NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let editor = self.editor, note.object as AnyObject === editor else { return }
+                self.updateGhost()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -99,6 +106,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
     func applyHighlighting(_ a: Analysis) {
         lastAnalysis = a
         guard let editor, let storage = editor.textStorage, !editor.hasMarkedText() else { return }
+        fixLineMetrics(editor)
         let full = NSRange(location: 0, length: storage.length)
         let base: [NSAttributedString.Key: Any] = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor]
         storage.beginEditing()
@@ -148,27 +156,61 @@ final class CommandField: NSTextField, NSTextFieldDelegate {
             return
         }
         if ghost.superview !== editor { editor.addSubview(ghost) }
+        fixLineMetrics(editor)
+        if empty, (editor.typingAttributes[.font] as? NSFont) != Theme.commandFont {
+            editor.typingAttributes = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor]
+        }
         lm.ensureLayout(for: tc)
         let used = lm.usedRect(for: tc)
-        let line = lm.extraLineFragmentRect.isEmpty && lm.numberOfGlyphs > 0
-            ? lm.lineFragmentRect(forGlyphAt: max(lm.numberOfGlyphs - 1, 0), effectiveRange: nil)
-            : NSRect(x: 0, y: used.minY, width: 0, height: used.height)
         ghost.text = NSAttributedString(string: g, attributes: [
             .font: Theme.commandFont, .foregroundColor: NSColor.tertiaryLabelColor,
         ])
-        // 基线：行片段顶部 + 字形在行内的基线偏移（取最后一个字形；空输入时按字体度量估算）
         let font = Theme.commandFont
-        let baselineInLine = lm.numberOfGlyphs > 0
-            ? lm.location(forGlyphAt: lm.numberOfGlyphs - 1).y
-            : font.ascender
-        let baseline = line.minY + editor.textContainerOrigin.y + baselineInLine
+        // 基线与起点：有文字时取最后一个字形的实际位置；空输入时按输入文字将要使用的排版计算
+        // （用排版器给出的基线偏移和行首内边距，不能用字体的 ascender 估算，否则打字后文字会上下、左右挪动）
+        let baselineInView: CGFloat
+        let xInContainer: CGFloat
+        if lm.numberOfGlyphs > 0 {
+            let line = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil)
+            baselineInView = line.minY + lm.location(forGlyphAt: lm.numberOfGlyphs - 1).y
+            xInContainer = used.maxX
+        } else {
+            // 空行由 typingAttributes 决定字体；排版器对该字体给出的基线偏移即输入后第一个字的基线
+            let line = lm.extraLineFragmentRect
+            baselineInView = line.minY + lm.defaultBaselineOffset(for: font)
+            xInContainer = line.minX + tc.lineFragmentPadding
+        }
+        let baseline = baselineInView + editor.textContainerOrigin.y
+        let x = xInContainer + editor.textContainerOrigin.x
         let width = ceil(ghost.text.size().width) + 2
         let top = baseline - ceil(font.ascender) - 2
-        let x = (lm.numberOfGlyphs == 0 ? 0 : used.maxX) + editor.textContainerOrigin.x
         ghost.baseline = baseline - top
         ghost.frame = NSRect(x: x, y: top, width: width, height: ceil(font.ascender - font.descender) + 4)
         // 超出可见宽度时不显示（占位文字总是显示）
         ghost.isHidden = !empty && convert(NSPoint(x: ghost.frame.maxX, y: 0), from: editor).x > bounds.width
+    }
+}
+
+// MARK: 行高与基线
+
+extension CommandField {
+    /// 字段编辑器由窗口内的输入框共用：只在编辑本输入框时接管排版
+    fileprivate func fixLineMetrics(_ editor: NSTextView) {
+        if let lm = editor.layoutManager, lm.delegate !== self { lm.delegate = self }
+    }
+
+    /// 行高与基线固定为常规字重的值：可变字体的粗体实例报告的行高偏小（16pt 对 24pt），
+    /// 输入匹配到模板名变成粗体时文字会整体上移，与占位文字、空输入时的光标对不齐
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+                       lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+                       in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
+        guard textContainer.textView?.delegate === self else { return false }
+        let font = Theme.commandFont
+        let height = layoutManager.defaultLineHeight(for: font)
+        lineFragmentRect.pointee.size.height = height
+        lineFragmentUsedRect.pointee.size.height = height
+        baselineOffset.pointee = layoutManager.defaultBaselineOffset(for: font)
+        return true
     }
 }
 

@@ -656,10 +656,15 @@ impl Panel {
         }
 
         // 左栏
-        let keys: Vec<String> = a.candidates.iter().map(|c| format!("{}|{:?}|{}|{}", c.section, c.kind, c.key, c.active)).collect();
+        // 指令模式下没有候选时，左栏显示这一步的提示（如"输入新模板的名称"）
+        let empty_hint = if command_mode && !a.hint.is_empty() { Some(a.hint.clone()) } else { None };
+        let mut keys: Vec<String> = a.candidates.iter().map(|c| format!("{}|{:?}|{}|{}", c.section, c.kind, c.key, c.active)).collect();
+        if a.candidates.is_empty() {
+            keys.push(empty_hint.clone().unwrap_or_default());
+        }
         let kind_changed = *self.list_kind.borrow() != kind;
         if full || kind_changed || *self.row_keys.borrow() != keys {
-            self.rebuild_list(&a.candidates, a.phase, full, kind_changed);
+            self.rebuild_list(&a.candidates, a.phase, empty_hint.as_deref(), full, kind_changed);
             *self.row_keys.borrow_mut() = keys;
             *self.list_kind.borrow_mut() = kind;
         }
@@ -732,7 +737,7 @@ impl Panel {
         key_button("Esc", &l("关闭", "Close"), Box::new(|p| p.hide()));
     }
 
-    fn rebuild_list(self: &Rc<Self>, candidates: &[Candidate], phase: Phase, entering: bool, kind_changed: bool) {
+    fn rebuild_list(self: &Rc<Self>, candidates: &[Candidate], phase: Phase, empty_hint: Option<&str>, entering: bool, kind_changed: bool) {
         while let Some(c) = self.list_box.first_child() {
             self.list_box.remove(&c);
         }
@@ -747,10 +752,15 @@ impl Panel {
             b.append(&i);
             let t = gtk::Label::new(Some(&if extra {
                 l("正在输入附加要求", "Entering extra instructions")
+            } else if let Some(h) = empty_hint {
+                h.to_string()
             } else {
                 l("没有可补全的内容", "Nothing to complete")
             }));
             t.add_css_class("empty-hint");
+            t.set_wrap(true);
+            t.set_justify(gtk::Justification::Center);
+            t.set_max_width_chars(24);
             b.append(&t);
             b.set_margin_top(120);
             self.list_box.append(&b);
