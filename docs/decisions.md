@@ -68,7 +68,7 @@
 
 - **负责人意向：** 结合 Ctrl+Q 设计，与产品名形成联动。
 - **评审意见：** Windows / Linux 上 `Ctrl+Q` 在浏览器和多数 GTK/Qt 应用中是"退出"，热键注册失败时会直接关掉用户的应用。
-- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。（Windows 已由 D33、Linux 已由 D37 改为 `Ctrl+Q`。）
+- **当前方案（PRD 3.1）：** macOS 用 `⌃Q`，Windows / Linux 用 `Alt+Q`；不用 `Ctrl+Alt+Q`（等同 AltGr，部分布局用它输入 `@`）。用户可以改回 `Ctrl+Q`，此时提示风险。（Windows 已由 D33、Linux 经 D37 后由 D41 改为 `Ctrl+Shift+Q`。）
 - **待办：** 原型阶段做三平台冲突实测后定稿。**负责人尚未明确确认这一方案。**
 
 ### D6 技术路线：各平台原生外壳 + 共享 Rust 核心，不以 Tauri 为主框架（2026-10-17）
@@ -307,9 +307,9 @@
   2. **支持范围：** GNOME（Wayland）、KDE Plasma（Wayland）、X11 会话完整支持并实测；Sway / Hyprland 等 wlroots 桌面尽力支持（自动粘贴用 wtype），不作保证。
   3. **全局快捷键：** Wayland 用 xdg-desktop-portal GlobalShortcuts；X11 用 XGrabKey；都不可用时引导用户在系统设置中添加自定义快捷键，绑定到 `qantrip toggle`（单实例：GApplication 经 D-Bus 把命令转交给运行中的实例）。
   4. **Wayland 自动粘贴：** RemoteDesktop 门户请求授权，恢复令牌持久化（之后不再询问），模拟粘贴键；不授权或桌面不支持时只复制并提示按 Ctrl+V。X11 用 XTest。终端类应用（按 WM_CLASS / app_id 识别）用 Ctrl+Shift+V。保留不需要任何权限的“只复制”模式。
-  5. **默认唤起快捷键 Ctrl+Q**（取代 D5 中 Linux 用 Alt+Q 的方案），与 macOS / Windows 及宣传一致，可修改；排除的应用（D35）在 Linux 上实现：X11 按活动窗口的 WM_CLASS，Wayland 尽力而为，取不到时在界面中说明。
+  5. **默认唤起快捷键 Ctrl+Q**（取代 D5 中 Linux 用 Alt+Q 的方案；后由 D41 调整为 Ctrl+Shift+Q），与 macOS / Windows 及宣传一致，可修改；排除的应用（D35）在 Linux 上实现：X11 按活动窗口的 WM_CLASS，Wayland 尽力而为，取不到时在界面中说明。
 - **实现要点（实测后确定）：**
-  - **面板窗口：** Wayland 下应用不能指定窗口位置（GNOME 会把新窗口放在左上角），面板窗口最大化且透明，卡片放在屏幕上方约 1/3 处，点击卡片外部关闭；全屏窗口在 GNOME 中会被铺上黑色背景，因此用最大化；KWin 不会最大化不可调整大小的窗口，所以窗口设为可调整大小。X11 下为普通无边框窗口，用 `_NET_WM_STATE` 置顶、不进任务栏，放到鼠标所在屏幕。不使用 layer-shell（GNOME 不支持）。
+  - **面板窗口（2026-10-19 修订）：** Wayland 使用不可调整大小的普通窗口，以自定义空标题栏启用 GTK 客户端装饰（CSD），由 GTK 正确区分内容、阴影与窗口几何边界。移除透明最大化背景和应用内容中的手工阴影外边距；窗口主体不透明，避免底层文字透过。不按桌面名称选择窗口实现，不要求用户添加桌面专属规则。窗口最终位置、堆叠及强制平铺策略由合成器决定，不承诺相同位置或永久置顶。X11 保留无边框窗口、`_NET_WM_STATE` 置顶与鼠标所在屏幕定位。不依赖 layer-shell（GNOME 不支持）。
   - **激活：** 门户 Activated 信号与 GApplication 转发命令行时附带的激活令牌由 GTK 使用，GNOME 与 KDE 上面板都能取得焦点；从没有令牌的进程（如 SSH）执行 `qantrip toggle` 时 GNOME 不给焦点，从 GNOME 自定义快捷键执行则正常。
   - **GlobalShortcuts：** GNOME 50 与 KDE Plasma 6.6 均弹出一次确认对话框，之后由系统记住（重启应用不再询问）。门户返回的组合键说明格式不同（GNOME 为 `Press <Control>q`），界面统一显示为 `Ctrl+Q`。修改快捷键在系统设置中进行（门户 v2 时直接打开系统的配置界面；KDE 为 v2，GNOME 为 v1）。主机应用需要先经 `org.freedesktop.host.portal.Registry` 登记应用 ID（xdg-desktop-portal 1.19+），并且系统中要有同名 .desktop 文件；AppImage 首次运行时自行写入 `~/.local/share/applications`。
   - **RemoteDesktop：** GNOME 在会话存在期间顶栏一直显示远程控制指示，因此每次粘贴临时建立会话（约 60ms），发送按键后立即关闭；KDE 每建立一次会话都弹出“远程控制会话已开始”通知，因此保持一个会话直到退出。恢复令牌一次性使用、每次更新，按桌面分别保存（`~/.local/state/qantrip/`，0600）；令牌失效时系统重新询问，确认后粘贴照常完成。
@@ -323,6 +323,7 @@
   - **托盘：** StatusNotifierItem（ksni）。GNOME 的 AppIndicator 扩展不按自带主题路径加载图标，改为提供像素图；没有托盘宿主时应用照常运行，从应用菜单再次打开 Qantrip 即进入模板库与设置。
   - **打包：** AppImage、.deb、.rpm（`scripts/package-linux.sh`），x86_64 与 aarch64 在 GitHub Actions 的 ubuntu-24.04 / ubuntu-24.04-arm 上构建。AppImage 不内置 GTK / libadwaita：内置后系统的输入法模块与主题、门户集成都会失效。因此三种包都要求系统提供 GTK 4.14+ 与 libadwaita 1.5+（Ubuntu 24.04、Debian 13、Fedora 40 及更新）。更新提示的“下载”按安装方式（AppImage / deb / rpm）与架构直接下载对应文件。
 - **验证：** 在 Ubuntu 26.04 ARM64 虚拟机（GNOME 50、KDE Plasma 6.6，含 Plasma X11 会话，IBus 智能拼音与 Fcitx5 拼音）中实测；以 Ubuntu 24.04 的 GTK 4.14 / libadwaita 1.5 构建、测试并打包通过（与 CI 相同的最低版本）。同步全部流程在本地测试服务端上与命令行设备（`sync_cli`）互相验证；真实的 GitHub 登录需要浏览器授权，留给负责人。
+- **窗口回归（2026-10-19）：** 在 Arch Linux / niri 26.04 上移除应用专属窗口规则后实测，1920×1080、缩放 1：窗口几何区域为 842×502（840×500 内容 + 边框），自动浮动、获得焦点，透明外边距与整屏模糊消失。另在独立 D-Bus 与临时 XDG 目录的 KWin 虚拟会话验证 Wayland（内容区 840×500，GTK CSD）与 Xwayland（888×548，无边框）均不最大化、不可调整大小，Esc 关闭和重复 toggle 通过。KWin 虚拟会话关闭动画与无障碍服务后完成截图检查，Wayland / Xwayland 均获得焦点；真实桌面的门户快捷键与 GNOME 实机仍需回归，不沿用旧版透明最大化方案的测试结论。
 - **资源（release，虚拟机内无 GPU）：** 空闲常驻约 100MB（匿名内存约 50MB），多次唤起后约 165MB；处理唤起到面板显示 7–24ms（启动后首次约 90ms）；二进制 9MB，AppImage 6MB。
 - **调试钩子：** 与 macOS 的 QANTRIP_DEBUG_HOOKS 对应，只编译进 debug 构建且打开 `debug-hooks` 特性时、运行中的实例以 `QANTRIP_DEBUG_HOOKS=1` 启动才生效（`qantrip debug …`），release 构建不包含。
 
@@ -351,6 +352,30 @@
 - **评估（已向负责人说明）：** 这一步防的是 C2：服务端被攻破或 GitHub 登录被盗用时，攻击者可以伪造保险库，冒充已有设备回应新设备的加入请求；新设备没有任何事先的信任依据，只能靠用户在新设备上表态。去掉后，新设备会在用户无操作的情况下加入伪造的保险库，并把本机已有的模板交给攻击者。
 - **决定（负责人确认）：** 去掉新设备上的确认。新设备显示校验码，旧设备上从三个码中选对后，新设备收到签名的结果即自动完成加入。负责人的理由：服务端或账号被攻破本身概率极低；真发生时，用户也很可能不核对就点「一致」，这一步的实际保护有限。C2 记为已接受的风险（`docs/sync-design.md` 附录 C）。
 - **兼容：** 加入时交换的消息不变（协议版本仍为 2），与 0.5.0 可以互相配对。
+
+---
+
+### D40 Linux 快捷键后端、生命周期与手动降级（2026-10-19）
+
+- **背景：** D37 的原实现把 Portal 绑定成功直接视为可用，即使 Activated 订阅失败仍显示成功；没有完整管理旧会话、服务消失和系统改键。X11 固定假设 NumLock=Mod2，改键先删除旧抓取，且没有释放/自动重复语义。保留当前 niri 提示与面板窗口改动，在 Linux 外壳内增量修正。
+- **边界：** 继续 D6/D37 的独立 Rust 2024 + GTK4/libadwaita 外壳、直接依赖 core。`HotKey` 作为主线程协调器，内部用 `Backend::{X11, Portal, Manual}`；无新全局快捷键库、Tauri、Tokio、evdev 或特权需求。能力（未验证/接口版本/已验证）、状态（检测/等待授权/已注册/暂停/失败/手动/关闭）和类型化失败原因分开。事件使用快捷键 ID、来源与 `Pressed/Released/Invoke`；只有按下或一次命令动作能切换面板。
+- **选择：** 实际 GTK 显示连接 + x11rb 连接用于选择候选后端；原生 X11 优先 XGrabKey。GTK Wayland、检测到 XWAYLAND 扩展或 Wayland 会话提示时尝试 Portal，不把 DISPLAY/Xwayland 当作原生 Wayland 全局覆盖能力。没有实际显示连接时不再默认判为 X11。环境/桌面名称只作候选路由或配置指引；最终支持与否取决于注册结果。
+- **Portal：** 沿用 ashpd 0.13 async-io、`ai.nekro.qantrip` 和 `toggle-panel`。快捷键任务使用自己的 zbus 连接并在同一连接执行 host Registry 登记（缺失 Registry 不作为能力结论）；AppImage 的同名 .desktop 在请求前集成。显式读取 GlobalShortcuts 版本，完成 CreateSession、信号订阅和含目标 ID/非空触发说明的 BindShortcuts 结果后才报告可用。用同一个 GlobalShortcuts 信号流保持按下/释放顺序，过滤 session+ID，监听 ShortcutsChanged、Session.Closed、服务 owner 变化和连接结束。激活 token 只传给面板，不日志输出。ConfigureShortcuts 仅 v2+ 且绑定有效时启用。
+- **清理与降级：** 每轮注册有 generation，重复 start 幂等；等待授权时重复 retry 不再发请求。显式重绑先取消旧任务，等待关闭旧会话/连接，再开始下一轮。正常退出异步等待清理，协调器 Drop 也取消任务；私有连接断开可回收 CreateSession 响应尚未返回的请求。检测/关闭有期限，授权等待上限五分钟。失败立即撤销“可用”状态；取消/拒绝、临时失败、断线都不自动重新弹授权，设置与引导保留原因、手动入口和显式重试。Portal response=2 没有明确原因时归为临时/未说明失败，不能捏造为冲突或拒绝。
+- **X11：** 继续共用现有 x11rb 连接，事件线程不接触 GTK。注册/注销经专用串行控制队列执行，GTK 主线程异步等待；控制请求和 UI 修改都有序号，暂停/关闭使旧结果失效，事件世代与注册标记用原子读取，主线程不等待后台抓取锁。键码、Alt/Super 与锁定键修饰位从实际映射解析；覆盖各锁定状态，处理 core/XKB 映射通知。先注册新组合的差集，失败清理部分新增组合，成功再移除旧组合，保留重叠组合；录制失败恢复旧配置/绑定，成功后不再释放候选再重复抓取。优先 XKB detectable autorepeat，旧服务器过滤同键同时间戳的 release/press 对；修饰键先释放也能结束一次按键。恢复/重绑时查询已按下键，避免把长按当作新按下。带 generation 的队列事件不会在暂停、换键或关闭后误触发；停止快捷键不会停止前台窗口、定位或 XTest 共用连接，应用退出才唤醒并结束读取线程。
+- **D35 限制：** X11 录制/排除时解除抓取，按键交回前台应用；取消录制、切页或关闭设置后恢复。Portal 暂停只能过滤唤起，不能让合成器归还已保留的按键；手动配置的命令也无法由 Qantrip 注销。前台识别能力沿用现状，不扩大自动粘贴/窗口布局范围。
+- **CLI/IPC 评估：** 现有 GApplication 已覆盖未启动时启动主实例、并发名称争抢、命令转发及 GTK 激活上下文。保留同一 command-line 分发，不新增 UDS。增加缺少会话总线时拒绝 GUI 的检查，避免 GApplication 退化为非唯一实例。`toggle` 是 `Invoke`，没有物理释放，合成器配置必须禁用重复，不能同时绑定按下和释放；不做不确定结果的跨传输重发。缺少有效激活令牌时遵循合成器焦点策略，`show` 可用于只打开面板的幂等场景。
+- **兼容与依赖：** 当时保留默认 Ctrl+Q（后由 D41 调整）、`hotKey` 设置键、中英文界面、首次引导均保留。设置和引导展示失败与 Ctrl+Q 退出风险，提供含 AppImage 真实路径的 niri/Sway/Hyprland 指引，修正 .desktop 的 Exec 转义。x11rb 0.14 仅开启已有的 xkb 特性；测试显式依赖 ashpd 已使用的 zbus 5，Cargo.lock 不升级任何包。共享核心、其他平台和云服务未修改。
+- **本次验证：** 见 [Linux 快捷键验证记录](linux-hotkeys-validation.md)。fake Portal 使用无服务自动激活目录的私有 D-Bus，覆盖取消、重试/旧结果、事件过滤/重复、系统改键、v1/v2、会话/连接失效和资源清理；mock X grab 覆盖部分失败、差集回滚与锁定映射。隔离 KWin/Xwayland 的 CLI 与 X 协议验证单独记录。D37 原有 GNOME/KDE/X11 实测是历史记录，不能作为本次授权、真实键盘与焦点回归的结论。
+
+---
+
+### D41 Linux 默认快捷键改为 Ctrl+Shift+Q（2026-10-19）
+
+- **决定（负责人要求）：** Linux 默认唤起快捷键改为 **Ctrl+Shift+Q**，取代 D37/D40 的默认 Ctrl+Q；其他平台不变。沿用 `hotKey` 键和 GTK accelerator 格式 `<Control><Shift>q`，同时更新设置、首次引导、桌面元数据和手动绑定示例。
+- **修改方式：** X11 在「设置 › 通用 › 唤起快捷键」录制任意受支持的组合，可恢复新默认值；冲突时保留旧设置和绑定。Portal 继续由系统管理，v2 通过 ConfigureShortcuts 打开配置，v1 使用桌面设置；手动模式修改合成器/桌面绑定，保持禁用长按重复。
+- **兼容：** 缺少或空的 `hotKey` 使用新默认值；已保存的非空组合（包括 Ctrl+Q）不被覆盖。Portal 新绑定提交 `CTRL+SHIFT+q` 偏好，但不强制重置系统已保存的绑定，以实际返回的触发说明为准。升级后需要切换现有绑定的用户通过上述入口修改。
+- **验证：** 见 [Linux 快捷键验证记录](linux-hotkeys-validation.md) 的 D41 补充。未注册时按键仍由前台应用处理，界面保留明确提示。
 
 ---
 

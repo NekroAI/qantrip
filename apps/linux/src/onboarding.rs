@@ -18,7 +18,7 @@ pub struct Onboarding {
     stack: gtk::Stack,
     dots: Vec<gtk::Box>,
     step: Cell<usize>,
-    verified: Cell<bool>,
+    verified: Cell<Option<crate::hotkey::Source>>,
     back: gtk::Button,
     next: gtk::Button,
     skip: gtk::Button,
@@ -93,7 +93,7 @@ impl Onboarding {
             stack,
             dots,
             step: Cell::new(0),
-            verified: Cell::new(false),
+            verified: Cell::new(None),
             back,
             next,
             skip,
@@ -141,6 +141,13 @@ impl Onboarding {
                 o.fill_paste();
             }
         });
+        let weak = Rc::downgrade(&o);
+        app.hotkey.connect_state(move || {
+            if let Some(o) = weak.upgrade() {
+                o.verified.set(None);
+                o.fill_verify();
+            }
+        });
         o.go(0);
         o
     }
@@ -155,10 +162,9 @@ impl Onboarding {
     }
 
     /// 引导期间按下快捷键：确认可用
-    pub fn hotkey_pressed(&self) {
-        if !self.verified.replace(true) {
-            self.fill_verify();
-        }
+    pub fn hotkey_pressed(&self, source: crate::hotkey::Source) {
+        self.verified.set(Some(source));
+        self.fill_verify();
     }
 
     fn go(&self, step: usize) {
@@ -248,9 +254,19 @@ impl Onboarding {
 
     fn fill_verify(&self) {
         let hk = self.app.hotkey.display();
-        if self.verified.get() {
-            self.verify_label.set_label(&l("✓ 快捷键可以正常使用", "✓ The shortcut works"));
+        if let Some(source) = self.verified.get() {
+            self.verify_label.set_label(&if source.physical() {
+                l("✓ 快捷键可以正常使用", "✓ The shortcut works")
+            } else {
+                l("✓ 唤起命令可用；请确认配置的系统快捷键也能触发它。", "✓ The command works; check that your configured system shortcut triggers it too.")
+            });
             self.verify_label.add_css_class("success");
+        } else if !matches!(self.app.hotkey.state(), State::Active { .. }) {
+            self.verify_label.set_label(&l(
+                "快捷键尚未就绪。请先完成授权或手动绑定；否则按键仍由当前应用处理，可能触发退出等操作。",
+                "The shortcut is not ready. Authorize it or configure a manual binding first; otherwise the foreground app handles the keys and may quit or perform another action.",
+            ));
+            self.verify_label.remove_css_class("success");
         } else {
             self.verify_label.set_label(&t!("现在按一次 {hk} 试试", "Press {hk} now to try it"));
             self.verify_label.remove_css_class("success");
@@ -285,9 +301,10 @@ impl Onboarding {
                     line(l("可以在设置 › 通用中更换。", "You can change it in Settings › General."), "dim-label");
                 }
             }
-            (_, State::Pending) => {
-                line(l("正在向系统注册快捷键，请在系统弹出的对话框中确认…", "Registering the shortcut — confirm it in the system dialog…"), "dim-label")
-            }
+            (_, State::Pending) => line(l("正在检测快捷键服务…", "Checking the shortcut service…"), "dim-label"),
+            (_, State::AwaitingPermission) => line(l("请在系统对话框中确认快捷键…", "Confirm the shortcut in the system dialog…"), "dim-label"),
+            (_, State::Paused { .. }) => line(l("快捷键已暂停。", "The shortcut is paused."), "dim-label"),
+            (_, State::Closed) => {}
             (_, State::Failed { reason }) => {
                 line(t!("快捷键注册失败：{reason}", "Couldn't register the shortcut: {reason}"), "warning");
                 let r = gtk::Button::with_label(&l("重试", "Retry"));
@@ -302,10 +319,24 @@ impl Onboarding {
     }
 
     fn manual_hint(self: &Rc<Self>) {
-        let cmd = format!("{} toggle", if std::env::var_os("APPIMAGE").is_some() { crate::autostart::exec_path() } else { "qantrip".into() });
+        if let Some((config, hint)) = crate::hotkey::compositor_binding_hint(&self.app.session) {
+            let lbl = gtk::Label::new(Some(&hint));
+            lbl.set_wrap(true);
+            lbl.set_selectable(true);
+            self.hotkey_box.append(&lbl);
+            let copy = gtk::Button::with_label(&l("复制配置", "Copy configuration"));
+            copy.set_halign(gtk::Align::Center);
+            copy.connect_clicked(move |b| {
+                crate::insert::copy_plain(&config);
+                b.set_label(&l("已复制", "Copied"));
+            });
+            self.hotkey_box.append(&copy);
+            return;
+        }
+        let cmd = crate::hotkey::manual_command();
         let lbl = gtk::Label::new(Some(&t!(
-            "在系统设置 › 键盘 › 自定义快捷键中添加一个快捷键（建议 Ctrl+Q），命令填写：\n{cmd}",
-            "Add a custom shortcut (we suggest Ctrl+Q) in system settings › Keyboard that runs:\n{cmd}"
+            "在系统设置 › 键盘 › 自定义快捷键中添加一个快捷键（建议 Ctrl+Shift+Q），命令填写：\n{cmd}",
+            "Add a custom shortcut (we suggest Ctrl+Shift+Q) in system settings › Keyboard that runs:\n{cmd}"
         )));
         lbl.set_wrap(true);
         lbl.set_justify(gtk::Justification::Center);

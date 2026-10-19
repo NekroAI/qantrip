@@ -67,6 +67,14 @@ window.qantrip-panel, window.qantrip-panel.background { background: transparent;
   box-shadow: 0 18px 48px alpha(black, 0.32), 0 2px 8px alpha(black, 0.18);
   margin: 24px;
 }
+window.qantrip-panel.qantrip-native-frame {
+  background-color: @window_bg_color;
+  border-radius: 16px;
+  border: 1px solid alpha(@borders, 0.8);
+  box-shadow: 0 18px 48px alpha(black, 0.32), 0 2px 8px alpha(black, 0.18);
+}
+.qantrip-native-frame .qantrip-titlebar { min-height: 0; padding: 0; margin: 0; border: none; }
+.qantrip-native-frame .qantrip-card { background: transparent; margin: 0; border: none; box-shadow: none; }
 .qantrip-card .glow { background-image: linear-gradient(to bottom, alpha(@qt_accent, 0.13), transparent); border-radius: 16px 16px 0 0; transition: background-image 300ms ease-out; }
 .qantrip-card.locked .glow { background-image: linear-gradient(to bottom, alpha(@qt_accent, 0.24), transparent); }
 .qantrip-card.entering { animation: qt-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15); }

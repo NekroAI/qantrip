@@ -11,11 +11,10 @@ pub fn exec_path() -> String {
 }
 
 fn quote(s: &str) -> String {
-    if s.chars().any(|c| c.is_whitespace() || "\"'\\$`".contains(c)) {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$").replace('`', "\\`"))
-    } else {
-        s.to_string()
-    }
+    // Exec quoting and Desktop Entry string escaping are separate layers.
+    // Literal '%' must not become an Exec field code after an AppImage is moved.
+    let quoted = format!("\"{}\"", s.replace('%', "%%").replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$").replace('`', "\\`"));
+    quoted.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
 }
 
 fn autostart_entry() -> String {
@@ -62,7 +61,7 @@ pub fn integrate_appimage() {
     let Some(image) = std::env::var_os("APPIMAGE") else { return };
     let image = image.to_string_lossy().into_owned();
     let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName=Nekro Qantrip\nGenericName=Prompt Launcher\nComment=Press Ctrl+Q to insert prompts anywhere\nComment[zh_CN]=按 Ctrl+Q 在任何应用中插入 Prompt\nExec={} %U\nIcon={}\nTerminal=false\nCategories=Utility;\nKeywords=prompt;ai;launcher;\nStartupNotify=true\nStartupWMClass={}\nX-GNOME-UsesNotifications=true\nActions=Toggle;Settings;\n\n[Desktop Action Toggle]\nName=Open Panel\nName[zh_CN]=打开面板\nExec={} toggle\n\n[Desktop Action Settings]\nName=Settings\nName[zh_CN]=设置\nExec={} settings\n",
+        "[Desktop Entry]\nType=Application\nName=Nekro Qantrip\nGenericName=Prompt Launcher\nComment=Press Ctrl+Shift+Q to insert prompts anywhere\nComment[zh_CN]=按 Ctrl+Shift+Q 在任何应用中插入 Prompt\nExec={} %U\nIcon={}\nTerminal=false\nCategories=Utility;\nKeywords=prompt;ai;launcher;\nStartupNotify=true\nStartupWMClass={}\nX-GNOME-UsesNotifications=true\nActions=Toggle;Settings;\n\n[Desktop Action Toggle]\nName=Open Panel\nName[zh_CN]=打开面板\nExec={} toggle\n\n[Desktop Action Settings]\nName=Settings\nName[zh_CN]=设置\nExec={} settings\n",
         quote(&image),
         crate::APP_ID,
         crate::APP_ID,
@@ -83,5 +82,18 @@ pub fn integrate_appimage() {
             }
             let _ = std::fs::copy(&src, &dst);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn desktop_exec_roundtrips_spaces_and_metacharacters() {
+        let executable = "/tmp/My \"Qantrip\" $dir\\100%.AppImage";
+        let file = gtk::glib::KeyFile::new();
+        file.load_from_data(&format!("[Desktop Entry]\nExec={} toggle\n", super::quote(executable)), gtk::glib::KeyFileFlags::NONE).unwrap();
+        let exec = file.string("Desktop Entry", "Exec").unwrap().replace("%%", "%");
+        let argv = gtk::glib::shell_parse_argv(exec).unwrap();
+        assert_eq!(argv, [std::ffi::OsString::from(executable), std::ffi::OsString::from("toggle")]);
     }
 }

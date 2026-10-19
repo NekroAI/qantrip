@@ -88,7 +88,9 @@ pub struct SettingsView {
     update_box: gtk::Box,
     sync_page: RefCell<Option<Rc<SyncPage>>>,
     recording: Cell<bool>,
+    recording_controller: RefCell<Option<gtk::EventControllerKey>>,
     hotkey_message: RefCell<Option<(String, bool)>>,
+    hotkey_change: Cell<u64>,
 }
 
 impl SettingsView {
@@ -109,7 +111,9 @@ impl SettingsView {
             update_box: gtk::Box::new(gtk::Orientation::Vertical, 8),
             sync_page: RefCell::new(None),
             recording: Cell::new(false),
+            recording_controller: RefCell::new(None),
             hotkey_message: RefCell::new(None),
+            hotkey_change: Cell::new(0),
         });
         for p in PAGES {
             let w: gtk::Widget = match p {
@@ -135,10 +139,23 @@ impl SettingsView {
         });
         let weak = Rc::downgrade(&v);
         v.stack.connect_visible_child_name_notify(move |s| {
-            if let Some(v) = weak.upgrade()
-                && let Some(sp) = v.sync_page.borrow().as_ref()
+            if let Some(v) = weak.upgrade() {
+                if s.visible_child_name().as_deref() != Some("general") && v.recording.get() {
+                    v.finish_recording(None);
+                }
+                if let Some(sp) = v.sync_page.borrow().as_ref() {
+                    sp.set_visible(s.visible_child_name().as_deref() == Some("sync") && v.parent.is_visible());
+                }
+            }
+        });
+        // Closing or hiding Settings while recording must restore the old grab.
+        let weak = Rc::downgrade(&v);
+        v.parent.connect_visible_notify(move |window| {
+            if !window.is_visible()
+                && let Some(view) = weak.upgrade()
+                && view.recording.get()
             {
-                sp.set_visible(s.visible_child_name().as_deref() == Some("sync") && v.parent.is_visible());
+                view.finish_recording(None);
             }
         });
         v.refresh();
@@ -162,7 +179,10 @@ impl SettingsView {
     }
 
     /// 设置页可见（同步页据此轮询加入请求）
-    pub fn set_visible(&self, visible: bool) {
+    pub fn set_visible(self: &Rc<Self>, visible: bool) {
+        if !visible && self.recording.get() {
+            self.finish_recording(None);
+        }
         if let Some(sp) = self.sync_page.borrow().as_ref() {
             sp.set_visible(visible && self.stack.visible_child_name().as_deref() == Some("sync"));
         }
@@ -263,6 +283,7 @@ impl SettingsView {
             Mode::X11 => {
                 let row = adw::ActionRow::builder().title(l("唤起快捷键", "Panel shortcut")).build();
                 let btn = gtk::Button::with_label(&label);
+                btn.set_sensitive(!matches!(hk.state(), State::Pending));
                 btn.add_css_class("mono");
                 btn.set_valign(gtk::Align::Center);
                 let weak = Rc::downgrade(self);
@@ -271,8 +292,9 @@ impl SettingsView {
                         v.record(b);
                     }
                 });
-                if hk.accel() != settings::DEFAULT_HOTKEY {
+                if hotkey::parse_accel(&hk.accel()) != hotkey::parse_accel(settings::DEFAULT_HOTKEY) {
                     let def = gtk::Button::with_label(&l("恢复默认", "Restore default"));
+                    def.set_sensitive(!matches!(hk.state(), State::Pending));
                     def.add_css_class("flat");
                     def.set_valign(gtk::Align::Center);
                     let weak = Rc::downgrade(self);
@@ -285,11 +307,23 @@ impl SettingsView {
                 }
                 row.add_suffix(&btn);
                 let sub = match (self.hotkey_message.borrow().clone(), hk.state()) {
+                    (_, State::Pending) => l("正在注册快捷键…", "Registering the shortcut…"),
+                    (Some((m, _)), State::Failed { reason }) => {
+                        t!("{m}\n当前快捷键仍未注册：{reason}", "{m}\nThe current shortcut is still not registered: {reason}")
+                    }
                     (Some((m, _)), _) => m,
                     (None, State::Failed { reason }) => t!("当前快捷键注册失败：{reason}", "Couldn't register the current shortcut: {reason}"),
+                    (None, State::Paused { .. }) => l("已暂停，按键交给前台应用。", "Paused; keys are passed to the foreground app."),
                     _ => l("点击右侧按键可以修改，按 Esc 取消。", "Click the shortcut to change it; Esc cancels."),
                 };
                 row.set_subtitle(&sub);
+                if matches!(hk.state(), State::Failed { .. }) {
+                    let retry = gtk::Button::with_label(&l("重试", "Retry"));
+                    retry.set_valign(gtk::Align::Center);
+                    let h = hk.clone();
+                    retry.connect_clicked(move |_| h.retry());
+                    row.add_suffix(&retry);
+                }
                 slot.add(&row);
             }
             Mode::Portal => {
@@ -302,7 +336,11 @@ impl SettingsView {
                         ),
                         false,
                     ),
-                    State::Pending => (l("等待系统确认（请留意系统弹出的对话框）…", "Waiting for the system (watch for a system dialog)…"), false),
+                    State::Pending => (l("正在检测快捷键服务…", "Checking the shortcut service…"), false),
+                    State::AwaitingPermission => (l("等待系统授权（请留意系统对话框）…", "Waiting for authorization (watch for a system dialog)…"), false),
+                    State::Paused { .. } => {
+                        (l("已暂停唤起；系统仍可能拦截此组合键。", "Activation is paused; the system may still intercept this shortcut."), false)
+                    }
                     State::Failed { reason } => (
                         t!(
                             "{reason}。可以重试，或在系统设置中添加自定义快捷键，命令为 qantrip toggle。",
@@ -310,7 +348,7 @@ impl SettingsView {
                         ),
                         true,
                     ),
-                    State::Manual => (String::new(), false),
+                    State::Manual | State::Closed => (String::new(), false),
                 };
                 row.set_subtitle(&sub);
                 let k = gtk::Label::new(Some(&label));
@@ -322,7 +360,7 @@ impl SettingsView {
                     let h = hk.clone();
                     b.connect_clicked(move |_| h.retry());
                     row.add_suffix(&b);
-                } else {
+                } else if hk.state().registered() {
                     let b = gtk::Button::with_label(&l("在系统设置中修改…", "Change in System Settings…"));
                     b.set_valign(gtk::Align::Center);
                     let h = hk.clone();
@@ -342,8 +380,8 @@ impl SettingsView {
             }
         }
         let note = caption(&l(
-            "默认是 Ctrl+Q（与 macOS、Windows 一致）。注意：Ctrl+Q 在许多 Linux 应用中是“退出”，快捷键没有注册成功时按下它会关闭当前应用；可以换成其他组合。",
-            "The default is Ctrl+Q, as on macOS and Windows. Note that Ctrl+Q quits many Linux apps: if the shortcut isn't registered, pressing it closes the current app. You can choose another combination.",
+            "Linux 默认是 Ctrl+Shift+Q，可以修改为其他组合。请先确认注册成功；未注册时，按键仍由当前应用处理，可能触发退出等操作。",
+            "The Linux default is Ctrl+Shift+Q. You can choose another combination. Confirm successful registration first; otherwise the foreground app handles the keys and may quit or perform another action.",
         ));
         note.set_margin_top(6);
         slot.add(&note);
@@ -351,7 +389,19 @@ impl SettingsView {
 
     /// 系统自定义快捷键说明：绑定 `qantrip toggle`
     fn manual_row(self: &Rc<Self>, primary: bool) -> adw::ActionRow {
-        let cmd = format!("{} toggle", if std::env::var_os("APPIMAGE").is_some() { crate::autostart::exec_path() } else { "qantrip".into() });
+        if let Some((config, hint)) = crate::hotkey::compositor_binding_hint(&self.app.session) {
+            let row = adw::ActionRow::builder()
+                .title(l("在合成器配置中绑定快捷键", "Bind a shortcut in compositor configuration"))
+                .subtitle(hint)
+                .subtitle_selectable(true)
+                .build();
+            let copy = gtk::Button::with_label(&l("复制配置", "Copy configuration"));
+            copy.set_valign(gtk::Align::Center);
+            copy.connect_clicked(move |_| crate::insert::copy_plain(&config));
+            row.add_suffix(&copy);
+            return row;
+        }
+        let cmd = hotkey::manual_command();
         let row = adw::ActionRow::builder()
             .title(if primary {
                 l("在系统设置中绑定快捷键", "Bind a shortcut in system settings")
@@ -359,8 +409,8 @@ impl SettingsView {
                 l("也可以使用系统自定义快捷键", "Or use a system custom shortcut")
             })
             .subtitle(t!(
-                "这个桌面不支持应用直接注册全局快捷键时，在系统设置 › 键盘 › 自定义快捷键中添加一个快捷键（如 Ctrl+Q），命令填写：{cmd}",
-                "If your desktop doesn't let apps register global shortcuts, add a custom shortcut (e.g. Ctrl+Q) in system settings › Keyboard that runs: {cmd}"
+                "这个桌面不支持应用直接注册全局快捷键时，在系统设置 › 键盘 › 自定义快捷键中添加一个快捷键（如 Ctrl+Shift+Q），命令填写：{cmd}",
+                "If your desktop doesn't let apps register global shortcuts, add a custom shortcut (e.g. Ctrl+Shift+Q) in system settings › Keyboard that runs: {cmd}"
             ))
             .subtitle_selectable(true)
             .build();
@@ -392,12 +442,9 @@ impl SettingsView {
         let ctl = gtk::EventControllerKey::new();
         ctl.set_propagation_phase(gtk::PropagationPhase::Capture);
         let weak = Rc::downgrade(self);
-        let parent = self.parent.clone();
-        let ctl2 = ctl.clone();
         ctl.connect_key_pressed(move |_, key, _, mods| {
             let Some(v) = weak.upgrade() else { return glib::Propagation::Proceed };
             if key == gdk::Key::Escape {
-                parent.remove_controller(&ctl2);
                 v.finish_recording(None);
                 return glib::Propagation::Stop;
             }
@@ -424,20 +471,22 @@ impl SettingsView {
             if mods.is_empty() && !is_fn {
                 *v.hotkey_message.borrow_mut() =
                     Some((l("需要包含至少一个修饰键（Ctrl、Alt、Shift、Super）", "Include at least one modifier key (Ctrl, Alt, Shift, Super)"), true));
-                parent.remove_controller(&ctl2);
                 v.finish_recording(None);
                 return glib::Propagation::Stop;
             }
             let accel = gtk::accelerator_name(key.to_lower(), mods).to_string();
-            parent.remove_controller(&ctl2);
             v.finish_recording(Some(accel));
             glib::Propagation::Stop
         });
+        *self.recording_controller.borrow_mut() = Some(ctl.clone());
         self.parent.add_controller(ctl);
     }
 
     fn finish_recording(self: &Rc<Self>, accel: Option<String>) {
         self.recording.set(false);
+        if let Some(controller) = self.recording_controller.borrow_mut().take() {
+            self.parent.remove_controller(&controller);
+        }
         match accel {
             Some(a) => self.apply_hotkey(&a),
             None => {
@@ -448,19 +497,32 @@ impl SettingsView {
     }
 
     fn apply_hotkey(self: &Rc<Self>, accel: &str) {
+        let change = self.hotkey_change.get() + 1;
+        self.hotkey_change.set(change);
         let label = hotkey::accel_label(accel);
-        let old = self.app.settings.hotkey();
-        if self.app.hotkey.try_register(accel) {
-            self.app.settings.set_string("hotKey", Some(accel));
-            *self.hotkey_message.borrow_mut() = Some((t!("已设置为 {label}", "Set to {label}"), false));
-        } else {
-            *self.hotkey_message.borrow_mut() =
-                Some((t!("{label} 已被其他程序占用，请换一个组合", "{label} is in use by another app. Choose another shortcut"), true));
-            self.app.hotkey.try_register(&old);
-        }
-        self.app.hotkey.resume();
-        self.fill_hotkey();
-        self.app.changed();
+        let accel = accel.to_owned();
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = this.app.hotkey.try_register(&accel).await;
+            if this.hotkey_change.get() != change {
+                return;
+            }
+            match result {
+                Ok(()) => {
+                    this.app.settings.set_string("hotKey", Some(&accel));
+                    *this.hotkey_message.borrow_mut() = Some((t!("已设置为 {label}", "Set to {label}"), false));
+                }
+                Err(reason) => {
+                    *this.hotkey_message.borrow_mut() = Some((
+                        t!("无法设置 {label}：{reason}。保留原来的快捷键设置。", "Couldn't set {label}: {reason}. The previous shortcut setting is kept."),
+                        true,
+                    ));
+                }
+            }
+            this.app.hotkey.resume();
+            this.fill_hotkey();
+            this.app.changed();
+        });
     }
 
     fn fill_excluded(self: &Rc<Self>) {

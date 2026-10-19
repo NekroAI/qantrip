@@ -12,8 +12,8 @@ use serde_json::{Map, Value};
 use crate::i18n;
 use crate::paths;
 
-/// 默认唤起快捷键 Ctrl+Q（docs/decisions.md D37，与 macOS / Windows 一致）
-pub const DEFAULT_HOTKEY: &str = "<Control>q";
+/// Linux 默认唤起快捷键 Ctrl+Shift+Q（docs/decisions.md D41）；保留已保存的 hotKey。
+pub const DEFAULT_HOTKEY: &str = "<Control><Shift>q";
 pub const DEFAULT_SYNC_SERVER: &str = "https://qantrip.nekro.ai";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -211,6 +211,24 @@ impl Settings {
             LanguageChoice::Zh => Locale::Zh,
             LanguageChoice::En => Locale::En,
             LanguageChoice::Auto => self.ui_locale(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotkey_default_preserves_saved_combinations() {
+        for (json, expected) in [
+            (r#"{}"#, DEFAULT_HOTKEY),
+            (r#"{"hotKey":""}"#, DEFAULT_HOTKEY),
+            (r#"{"hotKey":"<Control>q"}"#, "<Control>q"),
+            (r#"{"hotKey":"<Alt>space"}"#, "<Alt>space"),
+        ] {
+            let settings = Settings { path: PathBuf::new(), map: RefCell::new(serde_json::from_str(json).unwrap()), listeners: RefCell::new(Vec::new()) };
+            assert_eq!(settings.hotkey(), expected);
         }
     }
 }

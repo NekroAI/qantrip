@@ -28,7 +28,7 @@ jobs:
       - name: 构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libfontconfig-dev
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libfontconfig-dev dbus-daemon
       - name: Rust 工具链
         run: rustup toolchain install stable --profile minimal --component clippy
       - name: Linux 外壳测试

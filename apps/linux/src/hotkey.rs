@@ -1,69 +1,72 @@
-//! 全局唤起快捷键（docs/decisions.md D37）。
-//!
-//! - Wayland：xdg-desktop-portal GlobalShortcuts（GNOME 48+、KDE Plasma）。首次绑定时系统弹出确认对话框，
-//!   之后由系统记住；修改快捷键在系统设置中进行（门户 v2 可以直接打开配置界面）。
-//! - X11：XGrabKey（不需要任何权限），设置中可以录制新的组合键。
-//! - 都不可用时：引导用户在系统设置中添加自定义快捷键，命令为 `qantrip toggle`（单实例经 D-Bus 唤起）。
+//! Linux 快捷键协调器。后端候选、已验证能力、运行状态和失败原因分别建模。
+//! 所有 GTK 回调在 GLib 主线程执行；Portal 资源由可取消的异步任务持有。
+
+mod model;
+mod portal;
+mod x11_backend;
+
+pub use model::{Capabilities, Capability, Failure, Mode, Phase, Press, ShortcutId, Source, State, select_backend};
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use futures_util::StreamExt;
 use gtk::gdk;
-use gtk::glib;
 use gtk::glib::translate::IntoGlib;
 
-use crate::i18n::l;
-use crate::x11::X11;
+use crate::x11::{Modifiers, X11};
+use model::{EventGate, Lifecycle};
 
-/// 一次唤起
-#[derive(Clone, Debug)]
-pub struct Press {
-    pub source: &'static str,
-    /// X11 事件时间戳（激活面板时使用），其他来源为 0
-    pub timestamp: u32,
-    /// Wayland 激活令牌（门户在 Activated 信号中提供时）
-    pub token: Option<String>,
+pub const SHORTCUT_ID: &str = ShortcutId::TogglePanel.as_str();
+
+pub fn manual_command() -> String {
+    format!("{} toggle", gtk::glib::shell_quote(crate::autostart::exec_path()).to_string_lossy())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Mode {
-    Portal,
-    X11,
-    /// 系统自定义快捷键 → `qantrip toggle`
-    Manual,
+fn niri_binding(executable: &str) -> String {
+    // KDL 引号字符串；spawn 直接传递参数，不经过 shell。
+    let executable = executable.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+    format!("binds {{\n    Ctrl+Shift+Q repeat=false {{ spawn \"{executable}\" \"toggle\"; }}\n}}")
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum State {
-    /// 正在向系统注册（门户对话框可能正在等待用户确认）
-    Pending,
-    /// 已注册；`trigger` 为系统显示的组合键
-    Active { trigger: String },
-    /// 注册失败（被占用、用户拒绝等）
-    Failed { reason: String },
-    /// 本桌面不支持应用注册全局快捷键，需要用户在系统中绑定 `qantrip toggle`
-    Manual,
+pub fn niri_binding_hint() -> (String, String) {
+    let config = niri_binding(&crate::autostart::exec_path());
+    let hint = crate::t!(
+        "在 niri 配置文件（通常为 ~/.config/niri/config.kdl）中添加以下配置；已有 Ctrl+Shift+Q 绑定时请替换它或改用其他组合。保存后按快捷键验证。移动应用后需更新路径。\n{config}",
+        "Add this to your niri configuration (usually ~/.config/niri/config.kdl). Replace any existing Ctrl+Shift+Q binding or choose another combination. Save and press the shortcut to verify. Update the path if you move the app.\n{config}"
+    );
+    (config, hint)
 }
 
-pub const SHORTCUT_ID: &str = "toggle-panel";
-
-pub struct HotKey {
-    mode: Cell<Mode>,
-    state: RefCell<State>,
-    accel: RefCell<String>,
-    x11: Option<Arc<X11>>,
-    paused: Cell<bool>,
-    suspended: Cell<bool>,
-    portal: RefCell<Option<Rc<PortalBinding>>>,
-    on_press: RefCell<Vec<Rc<dyn Fn(&Press)>>>,
-    on_state: RefCell<Vec<Rc<dyn Fn()>>>,
-}
-
-struct PortalBinding {
-    proxy: ashpd::desktop::global_shortcuts::GlobalShortcuts,
-    session: ashpd::desktop::Session<ashpd::desktop::global_shortcuts::GlobalShortcuts>,
+pub fn compositor_binding_hint(session: &crate::session::Session) -> Option<(String, String)> {
+    if session.is_niri() {
+        return Some(niri_binding_hint());
+    }
+    let desktop = session.desktop_name.split(':').find(|name| name.eq_ignore_ascii_case("sway") || name.eq_ignore_ascii_case("hyprland"))?;
+    let command = manual_command();
+    let (config, location) = if desktop.eq_ignore_ascii_case("sway") {
+        // Sway expands config variables even before invoking the shell. For paths
+        // containing config metacharacters, point the user to a simple launcher.
+        if crate::autostart::exec_path().chars().any(|c| c.is_control() || "$#;,\\\"'".contains(c)) {
+            return Some((
+                command.clone(),
+                crate::i18n::l(
+                    "应用路径含 Sway 配置特殊字符。请将此命令放入固定路径的启动脚本，再用 bindsym --no-repeat Ctrl+Shift+q exec 绑定脚本；详见安装文档。",
+                    "The app path contains Sway configuration metacharacters. Put this command in a launcher script at a simple path, then bind the script with bindsym --no-repeat Ctrl+Shift+q exec; see the installation guide.",
+                ),
+            ));
+        }
+        (format!("bindsym --no-repeat Ctrl+Shift+q exec {command}"), "~/.config/sway/config")
+    } else {
+        // Lua string containing a shell-quoted command (two distinct escaping layers).
+        let lua = command.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+        (format!("hl.bind(\"CTRL + SHIFT + Q\", hl.dsp.exec_cmd(\"{lua}\"), {{ repeating = false }})"), "~/.config/hypr/hyprland.lua (0.55+)")
+    };
+    let hint = crate::t!(
+        "在 {location} 中添加以下配置，并移除重复绑定。移动 AppImage 后需更新路径。长按重复已关闭；旧版 Hyprland 的配置见安装文档。\n{config}",
+        "Add this to {location} and remove duplicate bindings. Update the path after moving the AppImage. Key repeat is disabled; see the installation guide for older Hyprland syntax.\n{config}"
+    );
+    Some((config, hint))
 }
 
 /// GTK 加速键字符串 → (keysym, X 修饰键掩码)
@@ -114,54 +117,81 @@ pub fn portal_trigger(accel: &str) -> Option<String> {
     Some(parts.join("+"))
 }
 
-fn x_mods(mods: gdk::ModifierType) -> u16 {
-    let mut m = 0u16;
-    if mods.contains(gdk::ModifierType::SHIFT_MASK) {
-        m |= 1;
-    }
-    if mods.contains(gdk::ModifierType::CONTROL_MASK) {
-        m |= 4;
-    }
-    if mods.contains(gdk::ModifierType::ALT_MASK) {
-        m |= 8;
-    }
-    if mods.contains(gdk::ModifierType::SUPER_MASK) {
-        m |= 64;
-    }
-    m
+/// 后端边界保持为 enum：三个后端共享同一个生命周期和订阅入口。
+enum Backend {
+    X11 { connection: Arc<X11>, worker: x11_backend::Worker },
+    Portal(RefCell<Option<portal::Task>>),
+    Manual,
+}
+
+pub struct HotKey {
+    backend: Backend,
+    state: RefCell<State>,
+    capability: Cell<Capability>,
+    accel: RefCell<String>,
+    paused: Cell<bool>,
+    suspended: Cell<bool>,
+    lifecycle: RefCell<Lifecycle>,
+    gate: RefCell<EventGate>,
+    x11_operation: Cell<u64>,
+    on_press: RefCell<Vec<Rc<dyn Fn(&Press)>>>,
+    on_state: RefCell<Vec<Rc<dyn Fn()>>>,
 }
 
 impl HotKey {
-    pub fn new(mode: Mode, accel: String, x11: Option<Arc<X11>>) -> Rc<HotKey> {
-        Rc::new(HotKey {
-            mode: Cell::new(mode),
-            state: RefCell::new(if mode == Mode::Manual { State::Manual } else { State::Pending }),
+    pub fn new(mode: Mode, accel: String, x11: Option<Arc<X11>>) -> Rc<Self> {
+        let backend = match mode {
+            Mode::X11 => x11
+                .and_then(|connection| x11_backend::Worker::new(connection.clone()).map(|worker| Backend::X11 { connection, worker }))
+                .unwrap_or(Backend::Manual),
+            Mode::Portal => Backend::Portal(RefCell::new(None)),
+            Mode::Manual => Backend::Manual,
+        };
+        Rc::new(Self {
+            state: RefCell::new(if matches!(backend, Backend::Manual) { State::Manual } else { State::Pending }),
+            capability: Cell::new(Capability::Unknown),
+            backend,
             accel: RefCell::new(accel),
-            x11,
             paused: Cell::new(false),
             suspended: Cell::new(false),
-            portal: RefCell::new(None),
+            lifecycle: RefCell::new(Lifecycle::default()),
+            gate: RefCell::new(EventGate::default()),
+            x11_operation: Cell::new(0),
             on_press: RefCell::new(Vec::new()),
             on_state: RefCell::new(Vec::new()),
         })
     }
 
     pub fn mode(&self) -> Mode {
-        self.mode.get()
+        match self.backend {
+            Backend::X11 { .. } => Mode::X11,
+            Backend::Portal(_) => Mode::Portal,
+            Backend::Manual => Mode::Manual,
+        }
     }
 
     pub fn state(&self) -> State {
         self.state.borrow().clone()
     }
 
+    pub fn capability(&self) -> Capability {
+        self.capability.get()
+    }
+
+    pub fn capabilities(&self) -> Capabilities {
+        match self.capability() {
+            Capability::Verified(c) => c,
+            _ => Capabilities::MANUAL,
+        }
+    }
+
     pub fn accel(&self) -> String {
         self.accel.borrow().clone()
     }
 
-    /// 当前快捷键的显示文字（门户模式下为系统报告的组合键）
     pub fn display(&self) -> String {
-        match &*self.state.borrow() {
-            State::Active { trigger } if !trigger.is_empty() && self.mode.get() == Mode::Portal => trigger.clone(),
+        match self.state() {
+            State::Active { trigger } | State::Paused { trigger } if !trigger.is_empty() && self.mode() == Mode::Portal => trigger,
             _ => accel_label(&self.accel.borrow()),
         }
     }
@@ -174,169 +204,167 @@ impl HotKey {
         self.on_state.borrow_mut().push(Rc::new(f));
     }
 
-    fn set_state(&self, s: State) {
-        *self.state.borrow_mut() = s;
-        let list: Vec<_> = self.on_state.borrow().clone();
-        for f in list {
-            f();
-        }
-    }
-
-    /// 由各来源调用（X11 事件、门户信号、`qantrip toggle`）
-    pub fn press(&self, p: Press) {
-        if self.suspended.get() && p.source != "command" {
+    fn set_state(&self, state: State) {
+        if self.state() == state {
             return;
         }
-        let list: Vec<_> = self.on_press.borrow().clone();
-        for f in list {
-            f(&p);
+        *self.state.borrow_mut() = state;
+        let callbacks = self.on_state.borrow().clone();
+        for callback in callbacks {
+            callback();
         }
     }
 
-    // MARK: 注册
+    fn registered(&self, trigger: String) {
+        self.set_state(if self.paused.get() || self.suspended.get() { State::Paused { trigger } } else { State::Active { trigger } });
+    }
+
+    /// 订阅者会收到释放，但只有 Pressed / Invoke 执行面板动作。
+    pub fn press(&self, event: Press) {
+        if self.state() == State::Closed {
+            return;
+        }
+        if event.source.physical() && !self.state().registered() {
+            return;
+        }
+        if !self.gate.borrow_mut().accept(&event, self.suspended.get()) {
+            return;
+        }
+        let callbacks = self.on_press.borrow().clone();
+        for callback in callbacks {
+            callback(&event);
+        }
+    }
 
     pub fn start(self: &Rc<Self>) {
-        match self.mode.get() {
-            Mode::X11 => {
-                let accel = self.accel();
-                // 启动时前台已是排除的应用：先检查能否注册，再保持暂停
-                if self.register_x11(&accel)
-                    && self.paused.get()
-                    && let Some(x) = &self.x11
-                {
-                    x.ungrab();
-                }
-            }
-            Mode::Portal => {
-                let this = self.clone();
-                glib::spawn_future_local(async move { this.bind_portal().await });
-            }
-            Mode::Manual => self.set_state(State::Manual),
-        }
+        self.begin(false);
     }
 
-    /// X11：注册指定组合键，成功时返回 true（不修改设置）
-    pub fn register_x11(&self, accel: &str) -> bool {
-        let Some(x) = &self.x11 else { return false };
-        let Some((key, mods)) = parse_accel(accel) else {
-            self.set_state(State::Failed { reason: l("无法识别的快捷键", "Unrecognized shortcut") });
-            return false;
-        };
-        if x.grab(key.into_glib(), x_mods(mods)) {
-            *self.accel.borrow_mut() = accel.to_string();
-            self.set_state(State::Active { trigger: accel_label(accel) });
-            true
-        } else {
-            self.set_state(State::Failed { reason: l("已被其他程序占用", "In use by another app") });
-            false
-        }
-    }
-
-    /// 只检查能否注册（录制时使用）：成功则保持注册
-    pub fn try_register(&self, accel: &str) -> bool {
-        if self.mode.get() != Mode::X11 {
-            return false;
-        }
-        self.register_x11(accel)
-    }
-
-    async fn bind_portal(self: Rc<Self>) {
-        use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
-        self.set_state(State::Pending);
-        let result: Result<(PortalBinding, String), String> = async {
-            let proxy = GlobalShortcuts::new().await.map_err(|e| e.to_string())?;
-            let session = proxy.create_session(Default::default()).await.map_err(|e| e.to_string())?;
-            let accel = self.accel();
-            let trigger = portal_trigger(&accel);
-            let shortcut = NewShortcut::new(SHORTCUT_ID, l("打开 Qantrip 面板", "Open the Qantrip panel")).preferred_trigger(trigger.as_deref());
-            let response = proxy
-                .bind_shortcuts(&session, &[shortcut], None, Default::default())
-                .await
-                .map_err(|e| e.to_string())?
-                .response()
-                .map_err(|e| e.to_string())?;
-            let desc = response.shortcuts().iter().find(|s| s.id() == SHORTCUT_ID).map(|s| s.trigger_description().to_string()).unwrap_or_default();
-            Ok((PortalBinding { proxy, session }, desc))
-        }
-        .await;
-        match result {
-            Ok((binding, desc)) => {
-                crate::log::event("hotkey_portal", serde_json::json!({"trigger": desc, "version": binding.proxy.version()}));
-                let desc = normalize_trigger(&desc);
-                let stream = binding.proxy.receive_activated().await;
-                *self.portal.borrow_mut() = Some(Rc::new(binding));
-                self.set_state(State::Active { trigger: desc });
-                if let Ok(mut stream) = stream {
-                    let weak = Rc::downgrade(&self);
-                    glib::spawn_future_local(async move {
-                        while let Some(ev) = stream.next().await {
-                            let Some(this) = weak.upgrade() else { return };
-                            if ev.shortcut_id() != SHORTCUT_ID {
-                                continue;
-                            }
-                            let token = ev.options().get("activation_token").and_then(|v| <&str>::try_from(v).ok().map(str::to_string));
-                            this.press(Press { source: "portal", timestamp: 0, token });
-                        }
-                    });
-                }
-            }
-            Err(e) => {
-                crate::log::event("hotkey_portal_failed", serde_json::json!({"error": e}));
-                let cancelled = e.to_lowercase().contains("cancel");
-                self.set_state(State::Failed {
-                    reason: if cancelled {
-                        l("没有在系统对话框中确认", "Not confirmed in the system dialog")
-                    } else {
-                        l("系统没有接受快捷键注册", "The system didn't accept the shortcut")
-                    },
-                });
-            }
-        }
-    }
-
-    /// 门户模式：重新请求绑定（用户之前取消了对话框时）
-    pub fn retry(self: &Rc<Self>) {
-        if self.mode.get() == Mode::Portal {
-            let old = self.portal.borrow_mut().take();
-            let this = self.clone();
-            glib::spawn_future_local(async move {
-                if let Some(b) = old {
-                    let _ = b.session.close().await;
-                }
-                this.bind_portal().await
-            });
-        } else {
-            self.start();
-        }
-    }
-
-    /// 门户 v2：打开系统的快捷键配置界面。不支持时返回 false。
-    pub fn configure(self: &Rc<Self>) -> bool {
-        let Some(b) = self.portal.borrow().clone() else { return false };
-        if b.proxy.version() < 2 {
-            return false;
-        }
-        glib::spawn_future_local(async move {
-            let _ = b.proxy.configure_shortcuts(&b.session, None, Default::default()).await;
-        });
-        true
-    }
-
-    /// 排除的应用（D35）：X11 下暂时注销，按键原样交给应用。门户模式下无法让按键穿透，由调用方忽略唤起。
-    pub fn set_paused(&self, paused: bool) {
-        if self.paused.get() == paused {
+    fn begin(self: &Rc<Self>, retry: bool) {
+        // 正在等待授权时 Retry 不启动第二个授权请求。
+        if retry && matches!(self.state(), State::Pending | State::AwaitingPermission) {
             return;
         }
-        self.paused.set(paused);
-        if self.mode.get() == Mode::X11 && !self.suspended.get() {
-            if paused {
-                if let Some(x) = &self.x11 {
-                    x.ungrab();
-                }
-            } else {
-                let accel = self.accel();
-                self.register_x11(&accel);
+        let Some(generation) = self.lifecycle.borrow_mut().begin(retry) else { return };
+        *self.gate.borrow_mut() = EventGate::default();
+        match &self.backend {
+            Backend::X11 { .. } => self.schedule_x11(),
+            Backend::Portal(task) => {
+                let previous = task.borrow_mut().take();
+                self.capability.set(Capability::Unknown);
+                self.set_state(State::Pending);
+                *task.borrow_mut() = Some(portal::Task::start(Rc::downgrade(self), generation, self.accel(), previous));
             }
+            Backend::Manual => {
+                self.capability.set(Capability::Unavailable);
+                self.set_state(State::Manual);
+            }
+        }
+    }
+
+    pub fn retry(self: &Rc<Self>) {
+        self.begin(true);
+    }
+
+    fn next_x11_operation(&self) -> u64 {
+        let revision = self.x11_operation.get() + 1;
+        self.x11_operation.set(revision);
+        revision
+    }
+
+    fn schedule_x11(self: &Rc<Self>) {
+        let revision = self.next_x11_operation();
+        self.set_state(State::Pending);
+        let this = self.clone();
+        gtk::glib::spawn_future_local(async move {
+            let _ = this.register_x11(&this.accel(), revision).await;
+        });
+    }
+
+    async fn register_x11(&self, accel: &str, revision: u64) -> Result<(), Failure> {
+        let Backend::X11 { connection, worker } = &self.backend else { return Err(Failure::Unsupported) };
+        if revision != self.x11_operation.get() || self.state() == State::Closed {
+            return Err(Failure::Superseded);
+        }
+        // Parsing GDK accelerators stays on the main thread; X requests do not.
+        let keep = !self.paused.get() && !self.suspended.get();
+        let mut outcome = if let Some((key, mods)) = parse_accel(accel) {
+            worker
+                .register(
+                    key.into_glib(),
+                    Modifiers {
+                        control: mods.contains(gdk::ModifierType::CONTROL_MASK),
+                        shift: mods.contains(gdk::ModifierType::SHIFT_MASK),
+                        alt: mods.contains(gdk::ModifierType::ALT_MASK),
+                        super_key: mods.contains(gdk::ModifierType::SUPER_MASK),
+                    },
+                    keep,
+                )
+                .await
+        } else {
+            self.capability.set(Capability::Unknown);
+            self.set_state(State::Failed { reason: Failure::InvalidShortcut });
+            return Err(Failure::InvalidShortcut);
+        };
+        if revision != self.x11_operation.get() || self.state() == State::Closed {
+            return Err(Failure::Superseded);
+        }
+        if outcome.result.is_ok() && keep && !connection.is_grabbed() {
+            outcome.result = Err(Failure::MappingChanged);
+        }
+        *self.gate.borrow_mut() = EventGate::default();
+        match outcome.result {
+            Ok(()) => {
+                *self.accel.borrow_mut() = accel.to_string();
+                self.capability.set(Capability::Verified(Capabilities::X11));
+                self.registered(accel_label(accel));
+            }
+            Err(reason) => {
+                if outcome.grabbed && connection.is_grabbed() {
+                    self.capability.set(Capability::Verified(Capabilities::X11));
+                    self.registered(accel_label(&self.accel()));
+                } else {
+                    self.capability.set(Capability::Unknown);
+                    self.set_state(State::Failed { reason });
+                }
+            }
+        }
+        outcome.result
+    }
+
+    pub async fn try_register(&self, accel: &str) -> Result<(), Failure> {
+        if self.state() == State::Closed {
+            return Err(Failure::Disconnected);
+        }
+        if parse_accel(accel).is_none() {
+            return Err(Failure::InvalidShortcut);
+        }
+        // End recording before committing: no release/regrab conflict window.
+        let was_recording = self.suspended.replace(false);
+        let old = self.accel();
+        let revision = self.next_x11_operation();
+        self.set_state(State::Pending);
+        let result = self.register_x11(accel, revision).await;
+        if result.is_err() && was_recording && revision == self.x11_operation.get() && self.state() != State::Closed {
+            let _ = self.register_x11(&old, revision).await;
+        }
+        result
+    }
+
+    pub fn configure(&self) -> bool {
+        if !self.capabilities().configure {
+            return false;
+        }
+        match &self.backend {
+            Backend::Portal(task) => task.borrow().as_ref().is_some_and(portal::Task::configure),
+            _ => false,
+        }
+    }
+
+    /// X11 抓取解除后按键回到前台应用；Portal 仅由应用层过滤唤起。
+    pub fn set_paused(self: &Rc<Self>, paused: bool) {
+        if self.paused.replace(paused) != paused {
+            self.update_pause();
         }
     }
 
@@ -345,21 +373,138 @@ impl HotKey {
         self.paused.get()
     }
 
-    /// 录制新快捷键期间暂停（X11）
-    pub fn suspend(&self) {
-        self.suspended.set(true);
-        if self.mode.get() == Mode::X11
-            && let Some(x) = &self.x11
-        {
-            x.ungrab();
+    pub fn suspend(self: &Rc<Self>) {
+        if !self.suspended.replace(true) {
+            self.update_pause();
         }
     }
 
-    pub fn resume(&self) {
-        self.suspended.set(false);
-        if self.mode.get() == Mode::X11 && !self.paused.get() {
-            let accel = self.accel();
-            self.register_x11(&accel);
+    pub fn resume(self: &Rc<Self>) {
+        if self.suspended.replace(false) {
+            self.update_pause();
         }
+    }
+
+    fn update_pause(self: &Rc<Self>) {
+        if self.state() == State::Closed {
+            return;
+        }
+        match &self.backend {
+            Backend::X11 { worker, .. } => {
+                *self.gate.borrow_mut() = EventGate::default();
+                if self.paused.get() || self.suspended.get() {
+                    self.next_x11_operation();
+                    worker.ungrab();
+                    self.set_state(State::Paused { trigger: self.display() });
+                } else {
+                    self.schedule_x11();
+                }
+            }
+            Backend::Portal(_) if self.state().registered() => self.registered(self.display()),
+            _ => {}
+        }
+    }
+
+    pub fn x11_event(&self, generation: u64, phase: Phase, timestamp: u32) {
+        if let Backend::X11 { connection: x, .. } = &self.backend
+            && x.accepts(generation)
+        {
+            self.press(Press { id: ShortcutId::TogglePanel, source: Source::X11, phase, timestamp, token: None });
+        }
+    }
+
+    pub fn x11_status(&self, generation: u64, result: Result<(), Failure>) {
+        if matches!(self.state(), State::Closed | State::Pending) {
+            return;
+        }
+        if let Backend::X11 { connection: x, .. } = &self.backend
+            && x.accepts(generation)
+        {
+            *self.gate.borrow_mut() = EventGate::default();
+            match result {
+                Ok(()) => self.registered(accel_label(&self.accel())),
+                Err(reason) => {
+                    self.capability.set(Capability::Unknown);
+                    self.set_state(State::Failed { reason });
+                }
+            }
+        }
+    }
+
+    pub fn stop(&self) {
+        self.lifecycle.borrow_mut().close();
+        self.next_x11_operation();
+        *self.gate.borrow_mut() = EventGate::default();
+        self.capability.set(Capability::Unavailable);
+        match &self.backend {
+            Backend::X11 { worker, .. } => worker.stop(),
+            Backend::Portal(task) => {
+                if let Some(task) = task.borrow().as_ref() {
+                    task.cancel();
+                }
+            }
+            Backend::Manual => {}
+        }
+        self.set_state(State::Closed);
+    }
+
+    pub async fn shutdown(&self) {
+        self.stop();
+        let task = match &self.backend {
+            Backend::Portal(task) => task.borrow_mut().take(),
+            _ => None,
+        };
+        if let Some(task) = task {
+            task.finish().await;
+        }
+        if let Backend::X11 { worker, .. } = &self.backend {
+            // A stalled remote X server cannot hold application exit indefinitely.
+            let finish = worker.finish();
+            futures_util::pin_mut!(finish);
+            let _ = futures_util::future::select(finish, Box::pin(gtk::glib::timeout_future(std::time::Duration::from_secs(2)))).await;
+        }
+    }
+
+    fn portal_update(&self, generation: u64, capability: Capability, state: State) {
+        if self.lifecycle.borrow().accepts(generation) {
+            self.capability.set(capability);
+            if let State::Active { trigger } = state {
+                self.registered(trigger);
+            } else {
+                *self.gate.borrow_mut() = EventGate::default();
+                self.set_state(state);
+            }
+        }
+    }
+
+    fn portal_event(&self, generation: u64, event: Press) {
+        if self.lifecycle.borrow().accepts(generation) {
+            self.press(event);
+        }
+    }
+}
+
+impl Drop for HotKey {
+    fn drop(&mut self) {
+        match &self.backend {
+            Backend::X11 { worker, .. } => worker.stop(),
+            Backend::Portal(task) => {
+                if let Some(task) = task.borrow().as_ref() {
+                    task.cancel();
+                }
+            }
+            Backend::Manual => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn niri_binding_quotes_paths_and_disables_repeat() {
+        assert_eq!(
+            super::niri_binding("/tmp/My \"Qantrip\"\\app.AppImage"),
+            "binds {\n    Ctrl+Shift+Q repeat=false { spawn \"/tmp/My \\\"Qantrip\\\"\\\\app.AppImage\" \"toggle\"; }\n}"
+        );
     }
 }

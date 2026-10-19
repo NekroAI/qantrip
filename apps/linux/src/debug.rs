@@ -49,7 +49,7 @@ pub fn handle(app: &Rc<App>, args: &[String], cmd: &gio::ApplicationCommandLine)
     let arg = args.get(1).cloned().unwrap_or_default();
     let panel = app.panel();
     match op {
-        "toggle" => panel.toggle(&Press { source: "debug", timestamp: 0, token: None }),
+        "toggle" => panel.toggle(&Press::invoke(crate::hotkey::Source::Debug)),
         "type" => panel.debug_type(&arg, args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0)),
         "key" => panel.debug_key(&arg),
         "param" => panel.debug_param(&arg, args.get(2).map(String::as_str).unwrap_or("")),
@@ -113,12 +113,22 @@ pub fn handle(app: &Rc<App>, args: &[String], cmd: &gio::ApplicationCommandLine)
                 "session": app.session.label(),
                 "hotkey_mode": format!("{:?}", app.hotkey.mode()),
                 "hotkey_state": format!("{:?}", app.hotkey.state()),
+                "hotkey_capability": format!("{:?}", app.hotkey.capability()),
                 "hotkey_paused": app.hotkey.paused(),
                 "autopaste": format!("{:?}", app.autopaste.method()),
                 "autopaste_portal": format!("{:?}", app.autopaste.portal_state()),
                 "foreground": app.foreground.current().map(|a| a.id),
                 "foreground_source": format!("{:?}", app.foreground.source()),
                 "panel_visible": panel.is_visible(),
+                "panel_window": {
+                    "width": panel.window().width(),
+                    "height": panel.window().height(),
+                    "maximized": panel.window().is_maximized(),
+                    "resizable": panel.window().is_resizable(),
+                    "decorated": panel.window().is_decorated(),
+                    "native_frame": panel.window().has_css_class("qantrip-native-frame"),
+                    "active": panel.window().is_active(),
+                },
                 "query": panel.model.borrow().query.clone(),
                 "tray": app.has_tray(),
                 "sync_signed_in": app.sync.signed_in(),

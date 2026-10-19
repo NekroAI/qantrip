@@ -1,7 +1,7 @@
 //! 命令面板（PRD 3.2）：唤起、搜索、参数化、预览与插入。
 //!
 //! 窗口形态（docs/decisions.md D37）：
-//! - Wayland：应用不能指定窗口位置，面板窗口最大化且透明，卡片位于屏幕上方约 1/3 处；点击卡片外部关闭。
+//! - Wayland：固定尺寸窗口，使用 GTK 客户端装饰管理阴影和窗口边界，由合成器决定位置。
 //! - X11：普通无边框窗口，置顶、不进任务栏，放到鼠标所在屏幕的上方约 1/3 处。
 //!
 //! 失去焦点时关闭（与 Spotlight 一致）。
@@ -115,6 +115,14 @@ impl Panel {
         let window = gtk::Window::builder().decorated(false).resizable(false).title("Qantrip").build();
         window.add_css_class("qantrip-panel");
         window.set_hide_on_close(true);
+        if app.session.is_wayland() {
+            // 自定义空标题栏启用 GTK CSD：阴影会被标记为窗口边界之外，而不是应用内容的透明外边距。
+            window.set_decorated(true);
+            window.add_css_class("qantrip-native-frame");
+            let titlebar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            titlebar.add_css_class("qantrip-titlebar");
+            window.set_titlebar(Some(&titlebar));
+        }
 
         // 顶栏：魔杖 + 命令行 + 插入目标 + 快捷入口
         let field = CommandField::new();
@@ -277,34 +285,11 @@ impl Panel {
         panel
     }
 
-    /// Wayland：全屏透明窗口中居上放置卡片；X11：窗口即卡片（含阴影边距）
+    /// Wayland 的阴影由 GTK CSD 管理；X11 保留原有的手工阴影边距。
     fn layout_window(self: &Rc<Self>) {
-        if self.app.session.is_wayland() {
-            let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            root.set_hexpand(true);
-            root.set_vexpand(true);
-            self.card.set_halign(gtk::Align::Center);
-            self.card.set_valign(gtk::Align::Start);
-            root.append(&self.card);
-            // 点击卡片以外的区域关闭
-            let click = gtk::GestureClick::new();
-            let weak = Rc::downgrade(self);
-            click.connect_pressed(move |g, _, x, y| {
-                let Some(p) = weak.upgrade() else { return };
-                if let Some(b) = p.card.compute_bounds(&g.widget().unwrap())
-                    && !b.contains_point(&gtk::graphene::Point::new(x as f32, y as f32))
-                {
-                    p.hide();
-                }
-            });
-            root.add_controller(click);
-            // KWin 不会最大化不可调整大小的窗口
-            self.window.set_resizable(true);
-            self.window.set_child(Some(&root));
-        } else {
-            self.window.set_default_size(CARD_W + SHADOW * 2, CARD_H + SHADOW * 2);
-            self.window.set_child(Some(&self.card));
-        }
+        let margin = if self.app.session.is_wayland() { 0 } else { SHADOW };
+        self.window.set_default_size(CARD_W + margin * 2, CARD_H + margin * 2);
+        self.window.set_child(Some(&self.card));
     }
 
     fn update_placeholder(&self) {
@@ -363,9 +348,6 @@ impl Panel {
             self.window.set_startup_id(token);
         }
         if app.session.is_wayland() {
-            // 全屏窗口在 GNOME 中会被铺上黑色背景，最大化的透明窗口则不会
-            self.position_wayland();
-            self.window.maximize();
             self.window.present();
         } else {
             WidgetExt::realize(&self.window);
@@ -398,14 +380,6 @@ impl Panel {
                 }),
             );
         });
-    }
-
-    fn position_wayland(&self) {
-        // 卡片中心位于屏幕高度约 32% 处（与 macOS 相同）
-        let h =
-            self.window.upcast_ref::<gtk::Widget>().display().monitors().item(0).and_downcast::<gdk::Monitor>().map(|m| m.geometry().height()).unwrap_or(1080);
-        let top = ((h as f64) * 0.32 - (CARD_H as f64) / 2.0 - SHADOW as f64).max(0.0) as i32;
-        self.card.set_margin_top(top);
     }
 
     fn position_x11(&self, time: u32) {
@@ -1155,7 +1129,7 @@ impl Panel {
     #[cfg(all(feature = "debug-hooks", debug_assertions))]
     pub fn debug_type(self: &Rc<Self>, text: &str, down: usize) {
         if !self.visible.get() {
-            self.show(&Press { source: "debug", timestamp: 0, token: None });
+            self.show(&Press::invoke(crate::hotkey::Source::Debug));
         }
         if !text.is_empty() {
             self.field.set_text(text, None);

@@ -1,7 +1,7 @@
 //! 应用：单实例（GApplication，D-Bus 名称 ai.nekro.qantrip）、命令行、各组件的组装与协作。
 //! `qantrip toggle` 等命令由新进程经 D-Bus 转交给已运行的实例后立即退出。
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use qantrip_core::Engine;
 
 use crate::autopaste::AutoPaste;
 use crate::foreground::{AppRef, Foreground, Source};
-use crate::hotkey::{self, HotKey, Press};
+use crate::hotkey::{self, HotKey, Phase, Press, Source as HotkeySource};
 use crate::i18n::{self, l};
 use crate::ime::Ime;
 use crate::insert::Inserter;
@@ -46,6 +46,7 @@ pub struct App {
     reload_source: RefCell<Option<glib::SourceId>>,
     listeners: RefCell<Vec<Rc<dyn Fn()>>>,
     _hold: RefCell<Option<gio::ApplicationHoldGuard>>,
+    quitting: Cell<bool>,
 }
 
 thread_local! {
@@ -64,6 +65,18 @@ pub fn try_app() -> Option<Rc<App>> {
 pub fn run() -> glib::ExitCode {
     let gapp = adw::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
     gapp.connect_startup(|gapp| {
+        // GApplication can otherwise fall back to a non-unique local instance.
+        if gapp.dbus_connection().is_none() {
+            eprintln!(
+                "{}",
+                l(
+                    "无法连接桌面会话总线，未启动界面。请在当前桌面会话中运行 Qantrip。",
+                    "No desktop session bus; the GUI was not started. Run Qantrip inside your desktop session."
+                )
+            );
+            gapp.quit();
+            return;
+        }
         let app = App::new(gapp.clone());
         APP.with(|a| {
             let _ = a.set(app.clone());
@@ -71,11 +84,18 @@ pub fn run() -> glib::ExitCode {
         app.start();
     });
     gapp.connect_command_line(|_, cmd| {
+        let Some(app) = try_app() else {
+            return glib::ExitCode::FAILURE;
+        };
         let args: Vec<String> = cmd.arguments().iter().skip(1).map(|a| a.to_string_lossy().to_string()).collect();
-        let code = app().handle_command_line(&args, cmd);
+        let code = app.handle_command_line(&args, cmd);
         glib::ExitCode::from(code)
     });
-    gapp.connect_activate(|_| app().show_settings(None));
+    gapp.connect_activate(|_| {
+        if let Some(app) = try_app() {
+            app.show_settings(None);
+        }
+    });
     gapp.connect_shutdown(|_| {
         if let Some(a) = try_app() {
             a.shutdown();
@@ -100,13 +120,10 @@ impl App {
         if x11.is_some() {
             foreground.set_source(Source::X11);
         }
-        let mode = if session.is_x11() && x11.is_some() {
-            hotkey::Mode::X11
-        } else if session.is_wayland() && matches!(session.desktop, Desktop::Gnome | Desktop::Kde | Desktop::Other | Desktop::Wlroots) {
-            hotkey::Mode::Portal
-        } else {
-            hotkey::Mode::Manual
-        };
+        let wayland_session = session.is_wayland()
+            || x11.as_ref().is_some_and(|x| x.is_xwayland())
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s.eq_ignore_ascii_case("wayland"));
+        let mode = hotkey::select_backend(wayland_session, session.is_x11() && x11.is_some());
         let hotkey = HotKey::new(mode, settings.hotkey(), x11.clone());
         let autopaste = AutoPaste::new(x11.clone(), session.is_wayland(), session.desktop == Desktop::Wlroots, session.desktop == Desktop::Kde);
         let inserter = Inserter::new(settings.clone(), autopaste.clone(), x11.clone(), session.is_wayland());
@@ -135,6 +152,7 @@ impl App {
             reload_source: RefCell::new(None),
             listeners: RefCell::new(Vec::new()),
             _hold: RefCell::new(None),
+            quitting: Cell::new(false),
         });
 
         // X11 事件
@@ -143,7 +161,8 @@ impl App {
             while let Ok(ev) = xrx.recv().await {
                 let Some(app) = weak.upgrade() else { return };
                 match ev {
-                    XEvent::HotKey(time) => app.hotkey.press(Press { source: "hotkey", timestamp: time, token: None }),
+                    XEvent::HotKey { generation, phase, timestamp } => app.hotkey.x11_event(generation, phase, timestamp),
+                    XEvent::Status { generation, result } => app.hotkey.x11_status(generation, result),
                     XEvent::Active(info) => app.foreground.update(info.map(|w| AppRef {
                         name: crate::foreground::pretty_name(&w.class, &w.title),
                         id: w.class,
@@ -193,7 +212,10 @@ impl App {
             }
         });
 
-        // 门户：先登记应用 ID（非沙盒应用），再注册快捷键与检查自动粘贴
+        // AppImage 的 .desktop 必须在门户请求之前就绪。
+        crate::autostart::integrate_appimage();
+        self.hotkey.start();
+        // 自动粘贴继续使用 ashpd 的共享连接；快捷键后端独立管理自己的门户连接。
         let this = self.clone();
         glib::spawn_future_local(async move {
             if this.session.is_wayland()
@@ -202,7 +224,6 @@ impl App {
                 let r = ashpd::register_host_app(id).await;
                 crate::log::event("portal_register", serde_json::json!({"ok": r.is_ok()}));
             }
-            this.hotkey.start();
             this.autopaste.probe();
         });
 
@@ -253,7 +274,6 @@ impl App {
         self.watch_templates();
         *self.tray.borrow_mut() = crate::tray::Tray::start(self.clone());
         crate::autostart::refresh_if_enabled();
-        crate::autostart::integrate_appimage();
 
         crate::log::event(
             "launch",
@@ -279,17 +299,20 @@ impl App {
     }
 
     fn on_hotkey(self: &Rc<Self>, p: &Press) {
-        if let Some(o) = self.onboarding.borrow().clone() {
-            o.hotkey_pressed();
+        if p.phase == Phase::Released {
+            return;
         }
         // Wayland 下无法让按键穿透：前台是排除的应用时不打开面板（X11 下快捷键已暂停，到不了这里）
-        if p.source != "command"
+        if p.source.physical()
             && !self.panel().is_visible()
             && let Some(a) = self.foreground.external()
             && self.settings.is_excluded(Some(&a.id))
         {
             crate::log::event("hotkey_excluded", serde_json::json!({"app": a.id}));
             return;
+        }
+        if let Some(o) = self.onboarding.borrow().clone() {
+            o.hotkey_pressed(p.source);
         }
         self.panel().toggle(p);
     }
@@ -422,11 +445,19 @@ impl App {
         self.tray.try_borrow().map(|t| t.is_some()).unwrap_or(false)
     }
 
-    pub fn quit(&self) {
-        self.gapp.quit();
+    pub fn quit(self: &Rc<Self>) {
+        if self.quitting.replace(true) {
+            return;
+        }
+        let app = self.clone();
+        glib::spawn_future_local(async move {
+            app.hotkey.shutdown().await;
+            app.gapp.quit();
+        });
     }
 
     fn shutdown(&self) {
+        self.hotkey.stop();
         if let Some(conn) = self.gapp.dbus_connection() {
             self.foreground.stop(Some(&conn));
         }
@@ -434,7 +465,7 @@ impl App {
             t.stop();
         }
         if let Some(x) = &self.x11 {
-            x.ungrab();
+            x.shutdown();
         }
     }
 
@@ -443,6 +474,13 @@ impl App {
     fn handle_command_line(self: &Rc<Self>, args: &[String], cmd: &gio::ApplicationCommandLine) -> u8 {
         let first = args.first().map(String::as_str).unwrap_or("");
         let remote = cmd.is_remote();
+        // GTK forwards this platform data through GApplication, including from
+        // compositor-launched secondary processes. Never log activation tokens.
+        let mut invocation = Press::invoke(HotkeySource::Command);
+        invocation.token = cmd.platform_data().and_then(|data| {
+            let data = glib::VariantDict::new(Some(&data));
+            data.lookup::<String>("activation-token").ok().flatten().or_else(|| data.lookup::<String>("desktop-startup-id").ok().flatten())
+        });
         match first {
             "" | "--background" | "--gapplication-service" => {
                 if !self.settings.onboarding_done() {
@@ -454,12 +492,12 @@ impl App {
                 0
             }
             "toggle" => {
-                self.hotkey.press(Press { source: "command", timestamp: 0, token: None });
+                self.hotkey.press(invocation);
                 0
             }
             "show" | "panel" => {
                 if !self.panel().is_visible() {
-                    self.panel().show(&Press { source: "command", timestamp: 0, token: None });
+                    self.panel().show(&invocation);
                 }
                 0
             }

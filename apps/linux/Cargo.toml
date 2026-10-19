@@ -32,7 +32,7 @@ ksni = { version = "0.3", default-features = false, features = ["async-io", "blo
 # 同步密钥：Secret Service（GNOME 密钥环、KWallet），不可用时回退到 0600 文件
 secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
 # X11：全局快捷键（XGrabKey）、前台窗口、模拟粘贴（XTest）
-x11rb = { version = "0.14", features = ["xtest"] }
+x11rb = { version = "0.14", features = ["xtest", "xkb"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -40,6 +40,10 @@ ureq = "3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 async-channel = "2"
 data-encoding = "2"
+
+[dev-dependencies]
+# Fake desktop Portal service on an isolated bus (same zbus as ashpd).
+zbus = { version = "5", default-features = false, features = ["async-io"] }
 
 [profile.release]
 lto = true
