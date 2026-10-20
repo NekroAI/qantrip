@@ -38,7 +38,7 @@ export function DownloadButton() {
   return (
     <div className="dl" ref={box}>
       <div className="dl-split">
-        <a className="btn primary dl-main" href={primary.url!} download>
+        <a className="btn primary dl-main" href={primary.url!}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
             <path d="M8 2v8m0 0 3-3M8 10 5 7M3 13h10" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -59,7 +59,7 @@ export function DownloadButton() {
         <div className="dl-menu" role="menu">
           {CLIENTS.filter((c) => c.featured || c.id === id).map((c) =>
             c.url ? (
-              <a key={c.id} role="menuitem" href={c.url} download className={c.id === id ? 'cur' : undefined}>
+              <a key={c.id} role="menuitem" href={c.url} className={c.id === id ? 'cur' : undefined}>
                 <b>{c.name[locale]}</b>
                 <span>{c.detail[locale]}</span>
               </a>

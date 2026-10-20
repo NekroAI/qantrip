@@ -36,8 +36,10 @@ export const downloadFile = async (env: Env, name: string): Promise<Response> =>
   })
 }
 
-// 客户端的新版本提示：代为读取 GitHub 最新正式版本并缓存，国内网络访问 api.github.com 经常失败。
+// 客户端的新版本提示与 /dl/ 跳转：代为读取 GitHub 最新正式版本并缓存，国内网络访问 api.github.com 经常失败。
 // 缓存 10 分钟（新版本发布后很快可见）；GitHub 不可用时退回最近一次成功的结果（保留 7 天）。
+// 缓存按 Cloudflare 机房各自独立，没有缓存的机房必须现查：先用网页的 /releases/latest 跳转取版本号——
+// api.github.com 对未登录请求按出口 IP 每小时限 60 次，Workers 的出口 IP 由大量用户共用，经常被限流。
 export interface PublicRelease {
   version: string
   tag: string
@@ -46,6 +48,30 @@ export interface PublicRelease {
 }
 
 const GITHUB_LATEST = 'https://api.github.com/repos/NekroAI/qantrip/releases/latest'
+/** GitHub 网页上的最新正式版本（302 跳到 /releases/tag/<标签>），也用作 /dl/ 的最后退路 */
+export const RELEASES_LATEST_PAGE = 'https://github.com/NekroAI/qantrip/releases/latest'
+const REPO_RELEASES = 'https://github.com/NekroAI/qantrip/releases'
+
+/** 从 /releases/latest 的跳转地址中取出版本标签（只接受 vX.Y.Z 形式） */
+export const tagFromLatestLocation = (location: string | null): string | null => {
+  const m = location?.match(/\/NekroAI\/qantrip\/releases\/tag\/(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/)
+  return m?.[1] ?? null
+}
+
+const fromWebRedirect = async (): Promise<PublicRelease> => {
+  const res = await fetch(RELEASES_LATEST_PAGE, { redirect: 'manual', headers: { 'user-agent': 'nekro-qantrip' } })
+  const tag = tagFromLatestLocation(res.headers.get('location'))
+  if (!tag) throw new Error(`github web ${res.status}`)
+  return { version: tag.replace(/^v/, ''), tag, url: `${REPO_RELEASES}/tag/${tag}`, published_at: '' }
+}
+
+const fromApi = async (): Promise<PublicRelease> => {
+  const res = await fetch(GITHUB_LATEST, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'nekro-qantrip' } })
+  if (!res.ok) throw new Error(`github ${res.status}`)
+  const j = (await res.json()) as { tag_name?: string; html_url?: string; published_at?: string; draft?: boolean; prerelease?: boolean }
+  if (!j.tag_name || !j.html_url || j.draft || j.prerelease) throw new Error('no release')
+  return { version: j.tag_name.replace(/^v/, ''), tag: j.tag_name, url: j.html_url, published_at: j.published_at ?? '' }
+}
 const FRESH_KEY = 'https://qantrip.internal/release/latest'
 const STALE_KEY = 'https://qantrip.internal/release/latest-stale'
 
@@ -57,11 +83,7 @@ export const publicLatestRelease = async (ctx: { waitUntil(p: Promise<unknown>):
   const fresh = await cache.match(FRESH_KEY)
   if (fresh) return (await fresh.json()) as PublicRelease
   try {
-    const res = await fetch(GITHUB_LATEST, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'nekro-qantrip' } })
-    if (!res.ok) throw new Error(`github ${res.status}`)
-    const j = (await res.json()) as { tag_name?: string; html_url?: string; published_at?: string; draft?: boolean; prerelease?: boolean }
-    if (!j.tag_name || !j.html_url || j.draft || j.prerelease) throw new Error('no release')
-    const body: PublicRelease = { version: j.tag_name.replace(/^v/, ''), tag: j.tag_name, url: j.html_url, published_at: j.published_at ?? '' }
+    const body = await fromWebRedirect().catch(fromApi)
     ctx.waitUntil(Promise.all([cache.put(FRESH_KEY, cached(body, 600)), cache.put(STALE_KEY, cached(body, 7 * 86400))]))
     return body
   } catch {

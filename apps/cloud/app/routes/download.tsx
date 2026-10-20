@@ -100,7 +100,7 @@ export default function Download({ loaderData }: Route.ComponentProps) {
           </span>
           {!detected.url && <span className="muted">{t.notAvailable(detected.name[locale])}</span>}
         </div>
-        <a className="btn primary" href={best.url!} download>
+        <a className="btn primary" href={best.url!}>
           {t.download}
         </a>
       </div>
@@ -115,7 +115,7 @@ export default function Download({ loaderData }: Route.ComponentProps) {
                 <span className="muted">{c.detail[locale]}</span>
               </span>
               {c.url ? (
-                <a className="btn small" href={c.url} download>
+                <a className="btn small" href={c.url}>
                   {assetName(c.id, version)}
                 </a>
               ) : (

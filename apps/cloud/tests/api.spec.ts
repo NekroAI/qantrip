@@ -1,10 +1,10 @@
 import { env } from 'cloudflare:test'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { api } from '../server/api.js'
 import { approveDesktop, parseDesktopAuthorize, type UserRow } from '../server/auth.js'
 import { dailyCleanup, TOMBSTONE_TTL } from '../server/cleanup.js'
 import { b64u, sha256 } from '../server/http.js'
-import { releaseAssetUrl } from '../server/releases.js'
+import { RELEASES_LATEST_PAGE, releaseAssetUrl, tagFromLatestLocation } from '../server/releases.js'
 
 const ctx = { waitUntil: () => undefined, passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext
 const call = (path: string, init?: RequestInit) => api.request(path, init, env, ctx)
@@ -445,5 +445,39 @@ describe('downloads', () => {
     expect(releaseAssetUrl(r, 'linux-deb-arm64')).toBe('https://github.com/NekroAI/qantrip/releases/download/v0.4.1/Qantrip-0.4.1-Linux-arm64.deb')
     expect((await call('/dl/macos-x86_64')).status).toBe(404)
     expect((await call('/dl/toString')).status).toBe(404)
+  })
+
+  it('reads the latest tag from the web redirect', () => {
+    expect(tagFromLatestLocation('https://github.com/NekroAI/qantrip/releases/tag/v0.5.1')).toBe('v0.5.1')
+    expect(tagFromLatestLocation('https://github.com/NekroAI/qantrip/releases/tag/v1.0.0-rc.1')).toBe('v1.0.0-rc.1')
+    expect(tagFromLatestLocation('https://github.com/NekroAI/qantrip/releases')).toBeNull()
+    expect(tagFromLatestLocation('https://evil.example/NekroAI/qantrip/releases/tag/v1.0.0/x')).toBeNull()
+    expect(tagFromLatestLocation(null)).toBeNull()
+  })
+
+  it('/dl falls back to the releases page instead of an error body when GitHub is unreachable', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+    try {
+      const res = await call('/dl/windows-x64')
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe(RELEASES_LATEST_PAGE)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('/dl uses the web redirect when the API is rate-limited', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input instanceof Request ? input.url : input)
+      if (url === RELEASES_LATEST_PAGE) return new Response(null, { status: 302, headers: { location: 'https://github.com/NekroAI/qantrip/releases/tag/v9.8.7' } })
+      return new Response('rate limited', { status: 403 })
+    })
+    try {
+      const res = await call('/dl/windows-x64')
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('https://github.com/NekroAI/qantrip/releases/download/v9.8.7/Qantrip-9.8.7-Windows-x64-Setup.exe')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

@@ -6,7 +6,7 @@ import {
 import { HttpError, safeReturnPath } from './http.js'
 import { HARD, policyOf } from './limits.js'
 import { isClientId } from '../app/lib/assets.js'
-import { downloadFile, latestRelease, publicLatestRelease, releaseAssetUrl } from './releases.js'
+import { downloadFile, latestRelease, publicLatestRelease, RELEASES_LATEST_PAGE, releaseAssetUrl } from './releases.js'
 import {
   activeJoins, appendRoster, cancelJoin, changes, createJoin, createVault, envelopesFor, getJoin, isJoinStep,
   ownedVault, pendingJoins, postJoinStep, pushRecords, putEnvelope, raiseMinEpoch, rosterSince, vaultOf, type VaultRow,
@@ -46,7 +46,9 @@ api.get('/download/:file', (c) => downloadFile(c.env, c.req.param('file')))
 api.get('/dl/:id', async (c) => {
   const id = c.req.param('id')
   if (!isClientId(id)) throw new HttpError(404, 'not_found', '没有这个平台的安装包')
-  const r = await publicLatestRelease(c.executionCtx)
+  // 查不到最新版本时跳到 GitHub 的发布页，不返回错误内容（下载按钮点下去不能得到一个 JSON 文件）
+  const r = await publicLatestRelease(c.executionCtx).catch(() => null)
+  if (!r) return new Response(null, { status: 302, headers: { location: RELEASES_LATEST_PAGE, 'cache-control': 'no-store' } })
   return new Response(null, { status: 302, headers: { location: releaseAssetUrl(r, id), 'cache-control': 'public, max-age=600' } })
 })
 
