@@ -16,6 +16,10 @@ final class CommandField: NSTextField, NSTextFieldDelegate, NSLayoutManagerDeleg
     /// 改为和灰字补全一样画在字段编辑器内、与光标同一基线
     private var placeholder = ""
 
+    /// 文字相对基线下移的距离：Monaspace 的上沿紧贴大写字母、下沿很深，光标按上下沿绘制时文字显得偏上；
+    /// 下移后大写字母在光标的高度范围内居中（只移动字形，光标与行高不变）
+    static let glyphShift: CGFloat = -1.5
+
     private func updatePlaceholder() {
         placeholder = L("施放一个戏法…  如 r security 重点检查认证", "Cast a spell…  e.g. r security focus on auth")
         updateGhost()
@@ -108,7 +112,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate, NSLayoutManagerDeleg
         guard let editor, let storage = editor.textStorage, !editor.hasMarkedText() else { return }
         fixLineMetrics(editor)
         let full = NSRange(location: 0, length: storage.length)
-        let base: [NSAttributedString.Key: Any] = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor]
+        let base: [NSAttributedString.Key: Any] = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor, .baselineOffset: Self.glyphShift]
         storage.beginEditing()
         storage.setAttributes(base, range: full)
         for t in a.tokens {
@@ -158,7 +162,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate, NSLayoutManagerDeleg
         if ghost.superview !== editor { editor.addSubview(ghost) }
         fixLineMetrics(editor)
         if empty, (editor.typingAttributes[.font] as? NSFont) != Theme.commandFont {
-            editor.typingAttributes = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor]
+            editor.typingAttributes = [.font: Theme.commandFont, .foregroundColor: NSColor.labelColor, .baselineOffset: Self.glyphShift]
         }
         lm.ensureLayout(for: tc)
         let used = lm.usedRect(for: tc)
@@ -180,7 +184,7 @@ final class CommandField: NSTextField, NSTextFieldDelegate, NSLayoutManagerDeleg
             baselineInView = line.minY + lm.defaultBaselineOffset(for: font)
             xInContainer = line.minX + tc.lineFragmentPadding
         }
-        let baseline = baselineInView + editor.textContainerOrigin.y
+        let baseline = baselineInView + editor.textContainerOrigin.y - Self.glyphShift
         let x = xInContainer + editor.textContainerOrigin.x
         let width = ceil(ghost.text.size().width) + 2
         let top = baseline - ceil(font.ascender) - 2

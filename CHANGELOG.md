@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+- macOS: text in the input line is vertically centered on the cursor instead of sitting slightly high.
+
 ## [0.5.1] — 2026-10-19
 
 ### Changed
