@@ -33,6 +33,18 @@ fn kind_label(k: ParamKind) -> String {
     }
 }
 
+/// 类型选择器里的名称：带一个用法示例
+fn kind_picker_label(k: ParamKind) -> String {
+    match k {
+        ParamKind::Bool => l("开关（--strict）", "Switch (--strict)"),
+        ParamKind::Enum => l("单选（--env=test）", "Single choice (--env=test)"),
+        ParamKind::Multi => l("多选（--focus=a,b）", "Multiple choice (--focus=a,b)"),
+        ParamKind::String => l("文本（--topic=…）", "Text (--topic=…)"),
+        ParamKind::Number => l("数字（--count=3）", "Number (--count=3)"),
+        ParamKind::Text => l("多行文本", "Multiline text"),
+    }
+}
+
 fn split_list(s: &str) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
@@ -154,8 +166,12 @@ impl Editor {
             source_btn,
         });
         e.try_entry.set_placeholder_text(Some(&{
-            let n = e.check.borrow().name.clone().unwrap_or_else(|| "r".into());
-            t!("输入命令试用，如 {n} --strict", "Try a command, e.g. {n} --strict")
+            // 试用示例：用当前模板实际有的参数
+            let n = match e.doc.borrow().as_ref() {
+                Some(d) => qantrip_core::doc::guide(d, crate::i18n::ui_locale()).try_example,
+                None => e.check.borrow().name.clone().unwrap_or_else(|| "r".into()),
+            };
+            t!("输入命令试用，如 {n}", "Try a command, e.g. {n}")
         }));
 
         // 只读提示条（内置 / 已删除）
@@ -518,8 +534,8 @@ impl Editor {
         let body = adw::PreferencesGroup::builder()
             .title(l("正文", "Body"))
             .description(l(
-                "MiniJinja 语法：{{ 参数名 }}（参数名中的 - 写作 _）、{% if strict %}…{% endif %}、{% for x in focus %}…{% endfor %}；附加要求为 extra；{% include \"_extra\" %} 引用公共片段。",
-                "MiniJinja syntax: {{ param_name }} (use _ in place of - in names), {% if strict %}…{% endif %}, {% for x in focus %}…{% endfor %}. Extra instructions are available as extra; {% include \"_extra\" %} pulls in a shared snippet.",
+                "正文就是插入出去的提示词。点下面的写法，会插到光标处：按参数输出不同的文字，或填入参数的值；… 换成你要的文字。",
+                "The body is the prompt that gets inserted. Click a form below to insert it at the cursor: different text per parameter, or the parameter's value; replace … with your text.",
             ))
             .build();
         let tv = gtk::TextView::builder()
@@ -537,6 +553,31 @@ impl Editor {
         let frame = gtk::Frame::new(None);
         frame.set_child(Some(&tv));
         body.add(&frame);
+        // 按当前参数可以插入的写法（插到光标处，并选中其中第一个 …）
+        if !ro {
+            let flow = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).column_spacing(6).row_spacing(6).margin_top(8).build();
+            for s in qantrip_core::doc::guide(&d, crate::i18n::ui_locale()).snippets {
+                let b = gtk::Button::with_label(&s.label);
+                b.add_css_class("pill-small");
+                b.set_tooltip_text(Some(&s.code));
+                let tv = tv.clone();
+                b.connect_clicked(move |_| {
+                    let buf = tv.buffer();
+                    buf.delete_selection(true, true);
+                    let mark = buf.get_insert();
+                    let start = buf.iter_at_mark(&mark).offset();
+                    buf.insert_at_cursor(&s.code);
+                    if let Some(i) = s.code.chars().position(|c| c == '…') {
+                        let a = buf.iter_at_offset(start + i as i32);
+                        let b2 = buf.iter_at_offset(start + i as i32 + 1);
+                        buf.select_range(&a, &b2);
+                    }
+                    tv.grab_focus();
+                });
+                flow.insert(&b, -1);
+            }
+            body.add(&flow);
+        }
         let weak = Rc::downgrade(self);
         tv.buffer().connect_changed(move |b| {
             if let Some(e) = weak.upgrade() {
@@ -610,7 +651,7 @@ impl Editor {
         add_row(&row, ro, &name);
 
         // 类型
-        let labels: Vec<String> = KINDS.iter().map(|k| kind_label(*k)).collect();
+        let labels: Vec<String> = KINDS.iter().map(|k| kind_picker_label(*k)).collect();
         let model = gtk::StringList::new(&labels.iter().map(String::as_str).collect::<Vec<_>>());
         let kind =
             adw::ComboRow::builder().title(l("类型", "Type")).model(&model).selected(KINDS.iter().position(|k| *k == p.kind).unwrap_or(0) as u32).build();

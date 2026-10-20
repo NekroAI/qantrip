@@ -203,8 +203,8 @@ pub fn new_doc(name: &str, loc: Locale) -> TemplateDoc {
         category: String::new(),
         params: vec![],
         body: match loc {
-            Locale::Zh => "在这里编写 Prompt。可以使用参数，例如 {% if strict %}严格模式{% endif %}。\n{% include \"_extra\" %}\n",
-            Locale::En => "Write your prompt here. You can use parameters, e.g. {% if strict %}strict mode{% endif %}.\n{% include \"_extra\" %}\n",
+            Locale::Zh => "在这里写提示词。需要参数时，先在上面的「参数」里添加，再点正文下方的写法插入到这里。\n{% include \"_extra\" %}\n",
+            Locale::En => "Write your prompt here. For parameters, add them under Parameters above, then click a form below the text to insert it here.\n{% include \"_extra\" %}\n",
         }
         .into(),
     }
@@ -251,4 +251,83 @@ mod tests {
         let (_, name, problems) = Library::with_override(None, "no frontmatter");
         assert!(name.is_none() && !problems.is_empty());
     }
+}
+
+// MARK: - 编辑器引导
+
+/// 编辑器正文下方"插入"的一种写法
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TemplateSnippet {
+    /// 这种写法做什么，如"加上 --strict 时才出现的文字"
+    pub label: String,
+    /// 插入正文的模板代码
+    pub code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TemplateGuide {
+    /// 试用框的示例输入（用到模板实际有的参数）
+    pub try_example: String,
+    pub snippets: Vec<TemplateSnippet>,
+}
+
+/// 按模板当前的参数生成编辑器引导：可插入的写法与试用示例。
+pub fn guide(d: &TemplateDoc, loc: Locale) -> TemplateGuide {
+    let mut snippets = Vec::new();
+    let mut push = |label: String, code: String| snippets.push(TemplateSnippet { label, code });
+    for p in &d.params {
+        let n = &p.name;
+        let var = n.replace('-', "_");
+        let first = p.choices.first().map(|c| c.value.clone()).unwrap_or_else(|| "a".into());
+        match p.kind {
+            ParamKind::Bool => {
+                push(crate::tr!(loc, "加上 --{n} 时才出现的文字", "Text that appears only with --{n}"), format!("{{% if {var} %}}…{{% endif %}}"));
+                push(crate::tr!(loc, "加上 --{n} 与不加时各用一段文字", "One text with --{n}, another without"), format!("{{% if {var} %}}…{{% else %}}…{{% endif %}}"));
+            }
+            ParamKind::Enum => {
+                let mut code = String::new();
+                for (i, c) in p.choices.iter().take(6).enumerate() {
+                    let tag = if i == 0 { "if" } else { "elif" };
+                    code.push_str(&format!("{{% {tag} {var} == \"{}\" %}}…", c.value));
+                }
+                if code.is_empty() {
+                    code = format!("{{% if {var} == \"a\" %}}…");
+                }
+                code.push_str("{% endif %}");
+                push(crate::tr!(loc, "按 --{n} 的取值输出不同的文字", "Different text for each value of --{n}"), code);
+                push(crate::tr!(loc, "填入 --{n} 的取值", "Insert the value of --{n}"), format!("{{{{ {var} }}}}"));
+            }
+            ParamKind::Multi => {
+                push(crate::tr!(loc, "选了 {first} 时才出现的文字", "Text that appears when {first} is chosen"), format!("{{% if \"{first}\" in {var} %}}…{{% endif %}}"));
+                push(crate::tr!(loc, "列出 --{n} 选中的取值", "List the chosen values of --{n}"), format!("{{{{ {var} | join(\"、\") }}}}"));
+            }
+            ParamKind::String | ParamKind::Number | ParamKind::Text => {
+                push(crate::tr!(loc, "填入 --{n} 的内容", "Insert what --{n} says"), format!("{{{{ {var} }}}}"));
+                push(crate::tr!(loc, "写了 --{n} 时才出现的一段", "A passage that appears only when --{n} is given"), format!("{{% if {var} %}}…{{{{ {var} }}}}…{{% endif %}}"));
+            }
+        }
+    }
+    push(
+        crate::tr!(loc, "命令后面多写的文字（附加要求）接在这里", "Extra text typed after the command goes here"),
+        "{% include \"_extra\" %}".into(),
+    );
+    let name = if d.name.is_empty() { "my-template".to_string() } else { d.name.clone() };
+    let try_example = match d.params.first() {
+        None => name,
+        Some(p) => {
+            let n = &p.name;
+            let first = p.choices.first().map(|c| c.value.clone());
+            match (p.kind, first) {
+                (ParamKind::Bool, _) => format!("{name} --{n}"),
+                (ParamKind::Enum | ParamKind::Multi, Some(v)) if p.positional => format!("{name} {v}"),
+                (ParamKind::Enum | ParamKind::Multi, Some(v)) => format!("{name} --{n}={v}"),
+                (ParamKind::Number, _) => format!("{name} --{n}=3"),
+                _ => {
+                    let sample = crate::tr!(loc, "示例", "example");
+                    format!("{name} --{n}={sample}")
+                }
+            }
+        }
+    };
+    TemplateGuide { try_example, snippets }
 }

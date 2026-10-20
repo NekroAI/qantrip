@@ -49,6 +49,8 @@ internal sealed class PanelWindow : Window
     private readonly TextBlock listEmpty = new();
     private readonly StackPanel card = new();
     private readonly TextBlock statusText = new();
+    /// 底栏空闲时的新版本提示（点击下载，× 忽略这个版本）
+    private readonly StackPanel updateNotice = new() { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     private readonly StackPanel keys = new() { Orientation = Orientation.Horizontal, Spacing = 14 };
     private readonly List<Border> dividers = new();
     private readonly List<FrameworkElement> rowElements = new();
@@ -271,6 +273,7 @@ internal sealed class PanelWindow : Window
         statusText.TextTrimming = TextTrimming.CharacterEllipsis;
         statusText.VerticalAlignment = VerticalAlignment.Center;
         footer.Children.Add(statusText);
+        footer.Children.Add(updateNotice);
         Grid.SetColumn(keys, 1);
         footer.Children.Add(keys);
         Grid.SetRow(footer, 4);
@@ -929,10 +932,33 @@ internal sealed class PanelWindow : Window
             statusText.Text = c;
             statusText.FontFamily = Theme.Mono;
             statusText.Foreground = Theme.B(theme.Tertiary);
+            BuildUpdateNotice();
             return;
         }
         else statusText.Text = "";
         statusText.FontFamily = Theme.Ui;
+        BuildUpdateNotice();
+    }
+
+    /// 新版本提示：底栏没有其他内容时显示（错误、确认提示优先）
+    private void BuildUpdateNotice()
+    {
+        updateNotice.Children.Clear();
+        var r = UpdateChecker.Shared.Visible;
+        if (r is null || statusText.Text.Length > 0)
+        {
+            updateNotice.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var get = new HyperlinkButton { Content = Loc.T($"新版本 {r.Version} 可用 · 下载", $"Version {r.Version} is available · Download"), FontSize = 12, Padding = new Thickness(4, 2, 4, 2) };
+        AutomationProperties.SetAutomationId(get, "panel_update");
+        get.Click += (_, _) => UpdateChecker.OpenReleasePage(r);
+        var skip = new Button { Content = "×", FontSize = 11, Padding = new Thickness(6, 0, 6, 0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0) };
+        ToolTipService.SetToolTip(skip, Loc.T("不再提示这个版本", "Don't remind me about this version"));
+        skip.Click += (_, _) => { Settings.UpdateSkippedVersion = r.Version; BuildUpdateNotice(); };
+        updateNotice.Children.Add(get);
+        updateNotice.Children.Add(skip);
+        updateNotice.Visibility = Visibility.Visible;
     }
 
     private void BuildKeys()

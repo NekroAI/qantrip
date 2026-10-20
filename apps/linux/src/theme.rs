@@ -160,6 +160,8 @@ box.chip.set { background-color: alpha(@qt_accent, 0.16); border-color: alpha(@q
 .tag.dim { background-color: alpha(currentColor, 0.12); }
 .param-name { font-family: Monaspace Neon Var, Monaspace Neon, monospace; color: @qt_option; }
 .big-code { font-family: Monaspace Neon Var, Monaspace Neon, monospace; font-size: 32px; font-weight: 600; letter-spacing: 4px; }
+.update-notice { color: @qt_accent; padding: 0 6px; min-height: 0; font-size: 12px; }
+.pill-small { font-size: 11px; padding: 2px 10px; border-radius: 999px; min-height: 0; }
 .code-choice { font-size: 18px; font-weight: 600; letter-spacing: 2px; padding: 6px 14px; }
 .phrase-grid { padding: 12px; border-radius: 8px; background-color: alpha(currentColor, 0.06); }
 .phrase-index { font-size: 11px; color: alpha(currentColor, 0.5); }

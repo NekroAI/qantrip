@@ -291,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if op.hasPrefix("desc:") { m.editor?.updateDoc { $0.description = String(op.dropFirst(5)) } }
             if op.hasPrefix("try:") { m.editor?.tryInput = String(op.dropFirst(4)) }
             if op.hasPrefix("select-param:"), let i = Int(op.dropFirst(13)) { m.editor?.selectedParam = i }
+            if op.hasPrefix("update:") { MainActor.assumeIsolated { UpdateChecker.shared.debugPretend(String(op.dropFirst(7))) } }
             // 按删除前的旧顺序（先删、后收起编辑面板）删除参数，检查编辑面板对失效序号的保护
             if op.hasPrefix("remove-param:"), let i = Int(op.dropFirst(13)) {
                 m.editor?.updateDoc { d in if d.params.indices.contains(i) { d.params.remove(at: i) } }

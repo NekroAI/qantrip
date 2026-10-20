@@ -78,16 +78,20 @@ impl Cmd {
 
     fn summary(self, loc: Locale) -> String {
         match self {
-            Cmd::New => tr!(loc, "新建模板，正文可用 {{参数}} 和 {{参数:a|b}}", "New template; use {{param}} and {{param:a|b}} in the text"),
-            Cmd::Edit => tr!(loc, "在模板库中编辑", "Edit in the template library"),
-            Cmd::Dup => tr!(loc, "复制一个模板（可改写内置模板）", "Copy a template (e.g. to change a built-in one)"),
-            Cmd::Alias => tr!(loc, "给模板添加别名", "Add an alias to a template"),
-            Cmd::Rm => tr!(loc, "删除模板（内置模板可以恢复）", "Delete a template (built-in ones can be restored)"),
-            Cmd::Restore => tr!(loc, "恢复内置模板（撤销删除或修改）", "Restore a built-in template (undo delete or changes)"),
-            Cmd::Sync => tr!(loc, "立即同步", "Sync now"),
+            Cmd::New => tr!(
+                loc,
+                "新建模板。正文里 {{名}} 是填空，{{名:a=文字|b=文字}} 按选项输出不同文字，{{名?文字}} 是开关；不写正文就用剪贴板里的文字",
+                "Create a template. In the text, {{name}} is a blank, {{name:a=text|b=text}} outputs text by option, {{name?text}} is a switch; with no text, the clipboard is used"
+            ),
+            Cmd::Edit => tr!(loc, "在模板库中打开一个模板，编辑参数和正文", "Open a template in the library to edit its parameters and text"),
+            Cmd::Dup => tr!(loc, "复制一个模板并起新名字；内置模板要先复制才能修改", "Copy a template under a new name; copy a built-in one to change it"),
+            Cmd::Alias => tr!(loc, "给自己的模板加一个简写，如给 review 加 r，之后输入 r 就等于 review", "Give one of your templates a short name, e.g. r for review"),
+            Cmd::Rm => tr!(loc, "删除模板（回车两次确认）；删除的内置模板可以用 /restore 恢复", "Delete a template (press Enter twice); deleted built-in ones come back with /restore"),
+            Cmd::Restore => tr!(loc, "恢复被删除或改过的内置模板", "Bring back a built-in template you deleted or changed"),
+            Cmd::Sync => tr!(loc, "立即同步模板", "Sync templates now"),
             Cmd::Settings => tr!(loc, "打开设置", "Open settings"),
-            Cmd::Library => tr!(loc, "打开模板库", "Open the template library"),
-            Cmd::Lang => tr!(loc, "切换内置模板的语言", "Switch the built-in templates' language"),
+            Cmd::Library => tr!(loc, "打开模板库；带名称时直接打开那个模板", "Open the template library; with a name, open that template"),
+            Cmd::Lang => tr!(loc, "切换内置模板的语言（auto 跟随界面语言）", "Switch the built-in templates' language (auto follows the interface)"),
         }
     }
 }
@@ -156,118 +160,85 @@ fn u16(input: &str, byte: usize) -> u32 {
 /// 把带占位符的正文变成模板：`{名}` → 文本参数，`{名:a|b}` → 单选参数（第一个为默认，首个单选为位置参数）。
 /// 其余文字原样保留；含 MiniJinja 语法字符的片段用 raw 块包住，避免被当作模板语法。
 pub fn build_template(name: &str, body: &str, loc: Locale) -> Result<TemplateDoc, String> {
-    let source_body = body;
+    use crate::placeholder::{self as ph, Placeholder};
     let mut params: Vec<ParamDoc> = Vec::new();
+    let mut seen: Vec<Placeholder> = Vec::new();
     let mut out = String::new();
-    let mut literal = String::new();
-    let flush = |literal: &mut String, out: &mut String| {
-        if literal.contains("{{") || literal.contains("{%") || literal.contains("{#") {
-            out.push_str("{% raw %}");
-            out.push_str(literal);
-            out.push_str("{% endraw %}");
-        } else {
-            out.push_str(literal);
-        }
-        literal.clear();
-    };
-    let bytes = body.as_bytes();
-    let mut i = 0;
-    while i < body.len() {
-        let c = body[i..].chars().next().unwrap();
-        if c == '{'
-            && bytes.get(i + 1) != Some(&b'{')
-            && (i == 0 || bytes[i - 1] != b'{')
-            && let Some(close) = body[i + 1..].find('}')
-            && let Some((pname, choices)) = parse_placeholder(&body[i + 1..i + 1 + close])
-        {
-            if !template::valid_name(pname) || pname.starts_with("no-") {
-                return Err(tr!(loc, "参数名 `{pname}` 只能用英文字母、数字、- 和 _，并以字母开头", "Parameter name `{pname}` may only use letters, digits, - and _, and must start with a letter"));
+    let mut pos = 0;
+    for (s, e, p) in ph::scan(body, loc) {
+        let p = p?;
+        out.push_str(&ph::literal(&body[pos..s]));
+        let pname = p.name().to_string();
+        match seen.iter().find(|q| q.name() == pname) {
+            Some(q) if !ph::compatible(q, &p) => {
+                return Err(tr!(loc, "参数 `{pname}` 的写法前后不一致", "Parameter `{pname}` is written differently in two places"));
             }
-            let kind = if choices.is_empty() { ParamKind::String } else { ParamKind::Enum };
-            match params.iter().find(|p| p.name == pname) {
-                Some(p) if p.kind != kind || (!choices.is_empty() && p.choices.iter().map(|c| c.value.as_str()).ne(choices.iter().copied())) => {
-                    return Err(tr!(loc, "参数 `{pname}` 的写法前后不一致", "Parameter `{pname}` is written differently in two places"));
-                }
-                Some(_) => {}
-                None => {
-                    let positional = kind == ParamKind::Enum && !params.iter().any(|p| p.positional);
-                    params.push(ParamDoc {
-                        name: pname.to_string(),
-                        kind,
-                        description: String::new(),
-                        choices: choices.iter().map(|v| Choice { value: v.to_string(), label: v.to_string(), aliases: vec![] }).collect(),
-                        default_value: choices.first().map(|v| v.to_string()),
-                        positional,
-                        short: None,
-                        required: false,
-                        requires: vec![],
-                        conflicts: vec![],
-                        min: None,
-                        max: None,
-                    });
-                }
-            }
-            flush(&mut literal, &mut out);
-            out.push_str(&format!("{{{{ {} }}}}", pname.replace('-', "_")));
-            i += close + 2;
-            continue;
-        }
-        literal.push(c);
-        i += c.len_utf8();
-    }
-    flush(&mut literal, &mut out);
-    let mut body = out.trim_end().to_string();
-    body.push_str("\n{% include \"_extra\" %}\n");
-    let first_line = literal_description(&placeholder_names(source_body));
-    Ok(TemplateDoc { name: name.to_string(), aliases: vec![], description: first_line, category: String::new(), params, body })
-}
-
-/// `{名}` 或 `{名:a|b|c}`；不是占位符时返回 None（原样保留）。
-fn parse_placeholder(inner: &str) -> Option<(&str, Vec<&str>)> {
-    let (name, rest) = match inner.split_once(':') {
-        Some((n, r)) => (n.trim(), Some(r)),
-        None => (inner.trim(), None),
-    };
-    if name.is_empty() || name.contains(char::is_whitespace) || !name.chars().next()?.is_ascii_alphabetic() {
-        return None;
-    }
-    let choices: Vec<&str> = match rest {
-        None => vec![],
-        Some(r) => {
-            let list: Vec<&str> = r.split('|').map(str::trim).filter(|s| !s.is_empty()).collect();
-            if list.is_empty() {
-                return None;
-            }
-            let mut uniq = list.clone();
-            uniq.dedup();
-            if uniq.len() != list.len() {
-                return None;
-            }
-            list
-        }
-    };
-    Some((name, choices))
-}
-
-/// 描述用：`{名:a|b}` 显示为 `{名}`
-fn placeholder_names(body: &str) -> String {
-    let mut out = String::new();
-    let mut rest = body;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        match after.find('}').and_then(|close| parse_placeholder(&after[..close]).map(|(n, _)| (close, n))) {
-            Some((close, n)) => {
-                out.push_str(&format!("{{{n}}}"));
-                rest = &after[close + 1..];
-            }
+            Some(_) => {}
             None => {
-                out.push('{');
-                rest = after;
+                let (kind, choices, default_value, description) = match &p {
+                    Placeholder::Fill { .. } => (ParamKind::String, vec![], None, String::new()),
+                    Placeholder::Flag { on, .. } => (ParamKind::Bool, vec![], None, short_label(on)),
+                    Placeholder::Choice { options, unset, .. } => {
+                        let unset_label = unset.as_deref().map(short_label);
+                        (
+                            ParamKind::Enum,
+                            options.iter().map(|(k, t)| Choice { value: k.clone(), label: short_label(t), aliases: vec![] }).collect(),
+                            if unset.is_some() { None } else { options.first().map(|(k, _)| k.clone()) },
+                            unset_label.map(|u| tr!(loc, "不写时：{u}", "Left out: {u}")).unwrap_or_default(),
+                        )
+                    }
+                };
+                let positional = kind == ParamKind::Enum && !params.iter().any(|q| q.positional);
+                params.push(ParamDoc {
+                    name: pname.clone(),
+                    kind,
+                    description,
+                    choices,
+                    default_value,
+                    positional,
+                    short: None,
+                    required: false,
+                    requires: vec![],
+                    conflicts: vec![],
+                    min: None,
+                    max: None,
+                });
+                seen.push(p.clone());
             }
         }
+        out.push_str(&ph::render(&p, body[e..].starts_with('\n')));
+        pos = e;
     }
-    out.push_str(rest);
+    out.push_str(&ph::literal(&body[pos..]));
+    let mut body_out = out.trim_end().to_string();
+    body_out.push_str("\n{% include \"_extra\" %}\n");
+    let first_line = literal_description(&placeholder_names(body, loc));
+    Ok(TemplateDoc { name: name.to_string(), aliases: vec![], description: first_line, category: String::new(), params, body: body_out })
+}
+
+/// 选项、开关的说明文字：最多 24 个字符
+fn short_label(text: &str) -> String {
+    let t = text.trim();
+    let mut s: String = t.chars().take(24).collect();
+    if t.chars().count() > 24 {
+        s.push('…');
+    }
+    s
+}
+
+/// 描述用：占位符显示为 `{名}`
+fn placeholder_names(body: &str, loc: Locale) -> String {
+    let mut out = String::new();
+    let mut pos = 0;
+    for (s, e, p) in crate::placeholder::scan(body, loc) {
+        out.push_str(&body[pos..s]);
+        match p {
+            Ok(p) => out.push_str(&format!("{{{}}}", p.name())),
+            Err(_) => out.push_str(&body[s..e]),
+        }
+        pos = e;
+    }
+    out.push_str(&body[pos..]);
     out
 }
 
@@ -419,7 +390,15 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             let all = COMMANDS.iter().map(|(_, n)| format!("/{n}")).collect::<Vec<_>>().join(" ");
             ctx.error(tr!(loc, "未知指令 {w}，可用：{all}", "Unknown command {w}. Available: {all}"), first.start, first.end, !ends_ws);
         }
-        a.hint = tr!(loc, "指令模式", "Command mode");
+        let typed = first.text;
+        a.hint = match (typed.chars().count() <= 1, a.candidates.first()) {
+            (true, _) => tr!(loc, "输入指令名，如 /new 新建模板；右侧是全部指令和说明", "Type a command, e.g. /new to create a template; all commands are listed on the right"),
+            (false, Some(c)) => {
+                let (k, n) = (a.candidates.len(), &c.title);
+                tr!(loc, "有 {k} 个指令以 {typed} 开头：继续输入，或按 Tab 补全为 {n}", "{k} commands start with {typed}: keep typing, or press Tab for {n}")
+            }
+            (false, None) => tr!(loc, "右侧是全部可用的指令", "All commands are listed on the right"),
+        };
         return finish(ctx, a, None);
     };
     ctx.token(TokenKind::Command, first.start, first.end);
@@ -429,7 +408,11 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
     // 还没输入参数时提示下一步（左栏为空时显示，右栏显示在用法之前）
     let pick = tr!(loc, "输入或选择模板名", "Type or pick a template name");
     let step = match cmd {
-        Cmd::New => tr!(loc, "输入新模板的名称（英文字母开头）；不写正文时使用剪贴板内容", "Type a name for the new template (starting with a letter); without text, the clipboard is used"),
+        Cmd::New => tr!(
+            loc,
+            "输入新模板的名称（英文字母开头，如 push），空格后写提示词正文；正文里可以用 {{…}} 加参数",
+            "Type a name for the new template (starting with a letter, e.g. push), then a space and the prompt; use {{…}} in it for parameters"
+        ),
         Cmd::Edit | Cmd::Dup | Cmd::Alias | Cmd::Rm => pick,
         _ => String::new(),
     };
@@ -467,13 +450,15 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
 
     let plan = match cmd {
         Cmd::New => {
+            use crate::placeholder as ph;
             let Some(name_w) = arg(1) else {
                 a.hint = step;
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::Positional, name_w.start, name_w.end);
             let name = name_w.text;
-            let at_cursor = ws.len() == 2 && !ends_ws;
+            let typing_name = ws.len() == 2 && !ends_ws;
+            let at_cursor = typing_name;
             if !template::valid_name(name) {
                 ctx.error(tr!(loc, "模板名只能用英文字母、数字、- 和 _，并以字母开头", "Template names may only use letters, digits, - and _, and must start with a letter"), name_w.start, name_w.end, at_cursor);
                 return finish(ctx, a, None);
@@ -488,26 +473,47 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 ctx.error(tr!(loc, "`{name}` 已是其他模板的别名", "`{name}` is already another template's alias"), name_w.start, name_w.end, at_cursor);
                 return finish(ctx, a, None);
             }
-            let typed_body = input[name_w.end..].trim();
-            let from_clipboard = typed_body.is_empty();
-            let body = if from_clipboard { clipboard.map(str::trim).unwrap_or("") } else { typed_body };
-            if !from_clipboard {
-                let body_start = input.len() - input[name_w.end..].trim_start().len();
-                ctx.token(TokenKind::Extra, body_start, input.trim_end().len());
-                // 占位符高亮
-                let mut i = body_start;
-                while let Some(open) = input[i..].find('{') {
-                    let s = i + open;
-                    let Some(close) = input[s..].find('}') else { break };
-                    if parse_placeholder(&input[s + 1..s + close]).is_some() {
-                        ctx.token(TokenKind::OptionName, s, s + close + 1);
+            let body_start = input.len() - input[name_w.end..].trim_start().len();
+            let raw_body = &input[body_start..];
+            let from_clipboard = raw_body.trim().is_empty();
+            let clip = clipboard.map(str::trim).filter(|c| !c.is_empty());
+            // 还没写完的占位符（`{` 之后没有 `}`）：提示下一步，暂不创建
+            let open = if from_clipboard { None } else { ph::open_at_end(raw_body) };
+            if from_clipboard {
+                a.hint = if typing_name {
+                    match clip {
+                        Some(_) => tr!(loc, "模板名 {name}。空格后写提示词正文；不写正文就用剪贴板里的文字", "Template name {name}. After a space, type the prompt; leave it empty to use the clipboard"),
+                        None => tr!(loc, "模板名 {name}。空格后写提示词正文", "Template name {name}. After a space, type the prompt"),
                     }
-                    i = s + close + 1;
+                } else {
+                    tr!(loc, "写提示词正文。需要参数时用 {{…}}：左侧是三种写法的示例，按 Tab 插入第一个", "Type the prompt. For parameters use {{…}}; the list shows three forms, Tab inserts the first")
+                };
+            } else {
+                ctx.token(TokenKind::Extra, body_start, input.trim_end().len());
+                for (s0, e0, p) in ph::scan(raw_body, loc) {
+                    let (s0, e0) = (body_start + s0, body_start + e0);
+                    match p {
+                        Ok(_) => ctx.token(TokenKind::OptionName, s0, e0),
+                        Err(m) => ctx.error(m, s0, e0, false),
+                    }
                 }
             }
+            if let Some(o) = open {
+                ctx.token(TokenKind::OptionName, body_start + o, input.len());
+                let (hint, err) = ph::hint_inside(&raw_body[o + 1..], loc);
+                match err {
+                    Some(e) => ctx.error(e, body_start + o, input.len(), true),
+                    None => a.hint = hint,
+                }
+            } else if !typing_name {
+                new_snippets(&mut a, input, loc);
+            }
+            let body = match (from_clipboard, open) {
+                (true, _) => clip.unwrap_or(""),
+                (false, Some(o)) => raw_body[..o].trim(),
+                (false, None) => raw_body.trim(),
+            };
             if body.is_empty() {
-                ctx.error(tr!(loc, "在名称后输入正文，或先复制要保存的文字", "Type the text after the name, or copy the text you want to save first"), name_w.start, name_w.end, false);
-                a.hint = tr!(loc, "正文为空", "No text yet");
                 return finish(ctx, a, None);
             }
             match build_template(name, body, loc).map(|d| doc::serialize_doc(&d)) {
@@ -523,12 +529,17 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                     Ok(t) => {
                         a.template = Some(template_info(&t));
                         a.params = param_states(&t, &BTreeMap::new(), loc);
-                        a.preview = Some(plain_preview(&source));
-                        a.hint = if from_clipboard {
-                            tr!(loc, "↩ 用剪贴板内容创建 {name}", "↩ create {name} from the clipboard")
-                        } else {
-                            tr!(loc, "↩ 创建 {name}", "↩ create {name}")
-                        };
+                        a.preview = Some(plain_preview(&new_examples(&t, lib, loc)));
+                        if open.is_some() {
+                            return finish(ctx, a, None);
+                        }
+                        if !from_clipboard || !typing_name {
+                            a.hint = if from_clipboard {
+                                tr!(loc, "↩ 用剪贴板内容创建 {name}", "↩ create {name} from the clipboard")
+                            } else {
+                                tr!(loc, "↩ 创建 {name}", "↩ create {name}")
+                            };
+                        }
                         // 没有用户目录（官网演示）时只预览
                         user_dir.map(|dir| Plan::Write {
                             path: dir.join(format!("{name}.md")),
@@ -550,7 +561,7 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             match find_template(lib, w.text) {
                 None => {
                     let n = w.text;
-                    ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                    missing_template(&mut ctx, &mut a, n, w.start, w.end, ws.len() == 2 && !ends_ws, loc);
                     None
                 }
                 Some(t) => {
@@ -571,12 +582,13 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             ctx.token(TokenKind::Positional, w.start, w.end);
             let Some(src) = find_template(lib, w.text) else {
                 let n = w.text;
-                ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                missing_template(&mut ctx, &mut a, n, w.start, w.end, ws.len() == 2 && !ends_ws, loc);
                 return finish(ctx, a, None);
             };
             a.template = Some(template_info(src));
             let Some(nw) = arg(2) else {
-                a.hint = tr!(loc, "输入新名称", "Type a new name");
+                let from = &src.name;
+                a.hint = tr!(loc, "输入新模板的名称（英文字母开头），会复制 {from} 的参数和正文", "Type the new template's name (starting with a letter); it copies {from}'s parameters and text");
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::OptionValue, nw.start, nw.end);
@@ -593,8 +605,12 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 d.name = new.to_string();
                 d.aliases.clear();
                 let source = doc::serialize_doc(&d);
-                a.preview = Some(plain_preview(&source));
                 let from = src.name.clone();
+                a.preview = Some(plain_preview(&tr!(
+                    loc,
+                    "按回车新建 {new}：参数和正文与 {from} 相同（不复制别名），随后在模板库中打开，可以接着修改。\n\n使用时输入 {new}，和 {from} 的用法一样。",
+                    "Enter creates {new} with the same parameters and text as {from} (aliases aren't copied) and opens it in the library for editing.\n\nUse it by typing {new}, just like {from}."
+                )));
                 a.hint = tr!(loc, "↩ 复制 {from} 为 {new}", "↩ copy {from} as {new}");
                 user_dir.map(|dir| Plan::Write {
                     path: dir.join(format!("{new}.md")),
@@ -607,13 +623,17 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         Cmd::Alias => {
             suggest_templates(&mut a, 1, true);
             let Some(w) = arg(1) else {
-                a.hint = step;
+                a.hint = if lib.templates.iter().any(|t| !t.builtin) {
+                    tr!(loc, "选择要加简写的模板（只能是你自己的模板）", "Choose one of your templates to give a short name")
+                } else {
+                    tr!(loc, "别名只能加在你自己的模板上。还没有自己的模板：先用 /new 新建，或用 /dup 复制一个内置模板", "Short names only go on your own templates. You have none yet: create one with /new, or copy a built-in one with /dup")
+                };
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::Positional, w.start, w.end);
             let Some(t) = find_template(lib, w.text) else {
                 let n = w.text;
-                ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                missing_template(&mut ctx, &mut a, n, w.start, w.end, ws.len() == 2 && !ends_ws, loc);
                 return finish(ctx, a, None);
             };
             a.template = Some(template_info(t));
@@ -623,7 +643,8 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 return finish(ctx, a, None);
             }
             let Some(aw) = arg(2) else {
-                a.hint = tr!(loc, "输入别名", "Type an alias");
+                let n = &t.name;
+                a.hint = tr!(loc, "输入简写（如 r），之后输入它就等于输入 {n}", "Type a short name (e.g. r); typing it then means {n}");
                 return finish(ctx, a, None);
             };
             ctx.token(TokenKind::OptionValue, aw.start, aw.end);
@@ -639,8 +660,12 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                 let mut d = doc::from_template(t);
                 d.aliases.push(alias.to_string());
                 let source = doc::serialize_doc(&d);
-                a.preview = Some(plain_preview(&source));
                 let n = t.name.clone();
+                a.preview = Some(plain_preview(&tr!(
+                    loc,
+                    "按回车后，输入 {alias} 就等于输入 {n}，参数照常，例如 {alias} --参数=值。",
+                    "After Enter, typing {alias} means {n}; parameters work the same, e.g. {alias} --option=value."
+                )));
                 a.hint = tr!(loc, "↩ 给 {n} 添加别名 {alias}", "↩ add alias {alias} to {n}");
                 Some(Plan::Write { path: path.clone(), source, message: tr!(loc, "{n} 的别名：{alias}", "{n} now also answers to {alias}"), open: None })
             } else {
@@ -657,7 +682,7 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
             match find_template(lib, w.text) {
                 None => {
                     let n = w.text;
-                    ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                    missing_template(&mut ctx, &mut a, n, w.start, w.end, ws.len() == 2 && !ends_ws, loc);
                     None
                 }
                 Some(t) => {
@@ -765,7 +790,7 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
                     match find_template(lib, w.text) {
                         None => {
                             let n = w.text;
-                            ctx.error(tr!(loc, "没有模板 `{n}`", "No template `{n}`"), w.start, w.end, ws.len() == 2 && !ends_ws);
+                            missing_template(&mut ctx, &mut a, n, w.start, w.end, ws.len() == 2 && !ends_ws, loc);
                             None
                         }
                         Some(t) => {
@@ -830,6 +855,98 @@ fn parse(lib: &Library, user_dir: Option<&Path>, input: &str, clipboard: Option<
         }
     };
     finish(ctx, a, plan)
+}
+
+/// 模板名还没打完时（光标在名称上）不报错：有同前缀的模板时提示 Tab 补全
+#[allow(clippy::too_many_arguments)]
+fn missing_template(ctx: &mut Ctx, a: &mut Analysis, typed: &str, start: usize, end: usize, typing: bool, loc: Locale) {
+    if typing && let Some(c) = a.candidates.first() {
+        let (k, n) = (a.candidates.len(), c.title.clone());
+        a.hint = if k == 1 {
+            tr!(loc, "按 Tab 补全为 {n}", "Press Tab for {n}")
+        } else {
+            tr!(loc, "有 {k} 个模板以 {typed} 开头：继续输入，或按 ↑↓ 选择、Tab 补全", "{k} templates start with {typed}: keep typing, or pick with ↑↓ and press Tab")
+        };
+        return;
+    }
+    ctx.error(tr!(loc, "没有模板 `{typed}`；新建用 /new {typed} 正文", "No template `{typed}`; create it with /new {typed} text"), start, end, typing);
+}
+
+/// `/new` 正文中可以用的三种参数写法：作为候选列出，Tab 在末尾插入示例
+fn new_snippets(a: &mut Analysis, input: &str, loc: Locale) {
+    // (列表中显示的写法, 说明, Tab 插入的完整示例)
+    let examples = [
+        (tr!(loc, "{{topic}}", "{{topic}}"), tr!(loc, "填空：--topic=文字", "Blank: --topic=text"), tr!(loc, "{{topic}}", "{{topic}}")),
+        (
+            tr!(loc, "{{env:test=…|prod=…|=…}}", "{{env:test=…|prod=…|=…}}"),
+            tr!(loc, "选项：按 --env 输出不同文字", "Options: text per --env"),
+            tr!(loc, "{{env:test=上线到测试环境|prod=上线到正式环境|=推送到仓库}}", "{{env:test=deploy to staging|prod=deploy to production|=push to the repository}}"),
+        ),
+        (
+            tr!(loc, "{{strict?…|…}}", "{{strict?…|…}}"),
+            tr!(loc, "开关：加上 --strict 时", "Switch: with --strict"),
+            tr!(loc, "{{strict?逐行严格检查|只看重要问题}}", "{{strict?check every line|only major issues}}"),
+        ),
+    ];
+    let at = u16(input, input.len());
+    for (shown, about, code) in examples {
+        let sep = if input.ends_with(char::is_whitespace) || input.ends_with(['，', '。', '、', '（']) { "" } else { " " };
+        a.candidates.push(Candidate {
+            kind: CandidateKind::Choice,
+            key: shown.clone(),
+            title: shown,
+            subtitle: about.clone(),
+            detail: about,
+            edit: Edit { start: at, end: at, text: format!("{sep}{code}") },
+            tier: None,
+            active: false,
+            section: tr!(loc, "参数写法（Tab 插入）", "Parameter forms (Tab inserts)"),
+        });
+    }
+}
+
+/// `/new` 的效果预览：不带参数、每个选项、每个开关各渲染一次
+fn new_examples(t: &Template, lib: &Library, loc: Locale) -> String {
+    let plib = Library::preview(t.clone(), lib.locale, lib.template_locale);
+    let usage = crate::usage::Usage::load(None);
+    let n = &t.name;
+    let mut inputs: Vec<(String, Option<String>)> = vec![(n.clone(), None)];
+    for p in &t.params {
+        let pn = &p.name;
+        match p.kind {
+            ParamKind::Enum | ParamKind::Multi => {
+                for c in p.choices.iter().take(4) {
+                    let v = &c.value;
+                    if p.positional {
+                        inputs.push((format!("{n} {v}"), Some(format!("--{pn}={v}"))));
+                    } else {
+                        inputs.push((format!("{n} --{pn}={v}"), None));
+                    }
+                }
+            }
+            ParamKind::Bool => inputs.push((format!("{n} --{pn}"), None)),
+            _ => {
+                let sample = tr!(loc, "示例", "example");
+                inputs.push((format!("{n} --{pn}={sample}"), None));
+            }
+        }
+    }
+    let mut out = tr!(loc, "创建后可以这样用：\n", "Once created, use it like this:\n");
+    for (input, same) in inputs.into_iter().take(10) {
+        let Some(text) = crate::grammar::render_final(&plib, &usage, &input, Some(n)) else { continue };
+        out.push('\n');
+        out.push_str(&input);
+        if let Some(s) = same {
+            out.push_str(&tr!(loc, "（即 {n} {s}）", " (same as {n} {s})"));
+        }
+        out.push('\n');
+        for line in text.trim_end().lines() {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn finish(ctx: Ctx, mut a: Analysis, plan: Option<Plan>) -> Outcome {
@@ -931,6 +1048,47 @@ mod tests {
         N.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// `/new` 的选项与开关写法：生成的模板按参数输出不同文字，换行保留
+    #[test]
+    fn new_with_options_and_switches() {
+        let d = build_template("push", "帮我{env:test=上线到测试环境|prod=上线到正式环境|=推送到仓库}。\n{strict?先跑完整测试|}\n结束", Locale::Zh).unwrap();
+        let source = doc::serialize_doc(&d);
+        let lib = Library::with_override(None, &source).0;
+        let usage = crate::usage::Usage::load(None);
+        let r = |i: &str| crate::grammar::render_final(&lib, &usage, i, None).unwrap();
+        assert_eq!(r("push"), "帮我推送到仓库。\n\n结束");
+        assert_eq!(r("push test"), "帮我上线到测试环境。\n\n结束");
+        assert_eq!(r("push --env=prod --strict"), "帮我上线到正式环境。\n先跑完整测试\n结束");
+        assert_eq!(d.params[0].default_value, None);
+        assert_eq!(d.params[0].choices[0].label, "上线到测试环境");
+        // 旧写法不变：取值原样填入，第一个为默认
+        let d = build_template("tr", "翻译成{lang:英文|日文}", Locale::Zh).unwrap();
+        assert_eq!(d.params[0].default_value.as_deref(), Some("英文"));
+        assert!(d.body.contains("{{ lang }}"));
+        // 写法有误时报错
+        assert!(build_template("x", "{env:测试=a}", Locale::Zh).is_err());
+        assert!(build_template("x", "{env:a|b} {env?c}", Locale::Zh).is_err());
+    }
+
+    /// `/new` 输入过程中：正文阶段列出三种写法；写到一半的占位符给出下一步；效果预览列出各种用法
+    #[test]
+    fn new_guides_while_typing() {
+        let lib = Library::load(None);
+        let a = analyze(&lib, None, "/new push ", None);
+        assert_eq!(a.candidates.len(), 3);
+        let a = analyze(&lib, None, "/new push 帮我{env:test=", None);
+        assert!(a.hint.contains("--env=test"), "{}", a.hint);
+        assert_eq!(a.enter, EnterAction::Blocked, "占位符没写完时不创建");
+        let a = analyze(&lib, None, "/new push 帮我{env:测试=", None);
+        assert!(a.diagnostics.iter().any(|d| d.message.contains("测试")));
+        let a = analyze(&lib, None, "/new push 帮我{env:test=上线到测试环境|=推送到仓库}", None);
+        let p = a.preview.unwrap().text;
+        assert!(p.contains("push test") && p.contains("帮我上线到测试环境") && p.contains("帮我推送到仓库"), "{p}");
+        // 模板名没打完时不报错，提示 Tab 补全
+        let a = analyze(&lib, None, "/edit rev", None);
+        assert!(a.diagnostics.is_empty() && a.hint.contains("Tab"), "{}", a.hint);
+    }
+
     /// 指令确定、还没有参数时：左栏为空，提示下一步；右栏显示这一步、用法与说明
     #[test]
     fn command_without_args_explains_next_step() {
@@ -945,7 +1103,7 @@ mod tests {
         assert!(p.starts_with(&a.hint) && p.contains("/new 名称 [正文]") && p.contains("新建模板"), "{p}");
         let a = analyze(&lib, None, "/dup review ", None);
         assert!(a.template.is_some());
-        assert!(a.hint.contains("新名称"), "{}", a.hint);
+        assert!(a.hint.contains("新模板的名称"), "{}", a.hint);
     }
 
     #[test]

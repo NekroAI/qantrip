@@ -38,10 +38,17 @@ final class UpdateChecker {
         set { d.set(newValue, forKey: "autoCheckUpdates") }
     }
 
-    var skippedVersion: String? {
-        get { d.string(forKey: "skippedUpdateVersion") }
-        set { d.set(newValue, forKey: "skippedUpdateVersion") }
+    /// 用户选择不再提醒的版本（存为属性以便界面随之刷新）
+    var skippedVersion: String? = UserDefaults.standard.string(forKey: "skippedUpdateVersion") {
+        didSet { d.set(skippedVersion, forKey: "skippedUpdateVersion") }
     }
+
+    #if QANTRIP_DEBUG_HOOKS
+    /// 调试：假装有新版本（检查面板上的提示）
+    func debugPretend(_ version: String) {
+        available = Release(version: version, url: URL(string: "https://github.com/NekroAI/qantrip/releases")!)
+    }
+    #endif
 
     /// 需要提醒的新版本（未被跳过）
     var pending: Release? {

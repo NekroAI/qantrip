@@ -264,6 +264,25 @@ struct LauncherView: View {
         } else if let c = model.analysis.canonical, model.analysis.locked {
             Text(c).font(.qMono(11)).foregroundStyle(.tertiary).lineLimit(1)
                 .truncationMode(.middle)
+        } else if let r = UpdateChecker.shared.pending {
+            // 新版本提示：底栏空闲时显示（错误、确认提示优先）。点击下载，× 忽略这个版本
+            HStack(spacing: 6) {
+                Button {
+                    UpdateChecker.shared.openDownload()
+                } label: {
+                    Label(L("新版本 \(r.version) 可用 · 下载", "Version \(r.version) is available · Download"), systemImage: "arrow.down.circle.fill")
+                        .foregroundStyle(Color.qAccent)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    UpdateChecker.shared.skippedVersion = r.version
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help(L("不再提示这个版本", "Don't remind me about this version"))
+            }
+            .lineLimit(1)
         }
     }
 }

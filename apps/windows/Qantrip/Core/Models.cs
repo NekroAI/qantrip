@@ -204,6 +204,21 @@ public sealed class ParamDoc
     public double? Max { get; set; }
 }
 
+/// 模板编辑器的引导（core doc.rs TemplateGuide）
+public sealed class TemplateGuide
+{
+    public string TryExample { get; set; } = "";
+    public List<TemplateSnippet> Snippets { get; set; } = new();
+}
+
+public sealed class TemplateSnippet
+{
+    /// 这种写法做什么
+    public string Label { get; set; } = "";
+    /// 插入正文的模板代码
+    public string Code { get; set; } = "";
+}
+
 /// 模板的结构化表示（图形化编辑器，core doc.rs TemplateDoc）。
 public sealed class TemplateDoc
 {

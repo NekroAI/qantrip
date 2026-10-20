@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- `/new` understands options and switches: `/new push Please {env:test=deploy to staging|prod=deploy to production|=push to the repository}` makes `push`, `push test` and `push --env=prod` produce different text, and `{strict?check every line|only major issues}` adds a switch. The old `{name}` and `{name:a|b}` forms work as before.
+- While you type `/new`, every keystroke shows what to type next: the three parameter forms (Tab inserts an example), what comes next inside an unfinished `{…`, and a preview of what each usage will produce.
+- A new version shows up at the bottom left of the panel, with a link to download it; × hides it for that version.
+
+### Changed
+- Help for every command is clearer: a partly typed template name suggests Tab instead of an error, `/` and ambiguous prefixes say what to do next, and `/dup` and `/alias` explain what Enter will do.
+- Template editor: parameter types show an example (e.g. "Single choice (--env=test)"), the body offers one-click forms for the current parameters, and Try suggests a command that uses them.
+
 ### Fixed
 - macOS: deleting a parameter (or a choice) in the template editor no longer crashes the app.
 

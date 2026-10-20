@@ -6,6 +6,8 @@ struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
     var editable = true
     var fontSize: CGFloat = 13
+    /// 创建文本视图后调用（需要在光标处插入内容的地方用）
+    var onMake: ((NSTextView) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -26,6 +28,7 @@ struct CodeEditor: NSViewRepresentable {
         tv.delegate = context.coordinator
         tv.string = text
         context.coordinator.highlight(tv)
+        onMake?(tv)
         return scroll
     }
 

@@ -280,8 +280,25 @@ final class EditorModel {
     var selectedParam: Int?
     private(set) var saveError: String?
     @ObservationIgnored private weak var library: LibraryModel?
+    /// 表单模式下正文的编辑器（插入写法用）
+    @ObservationIgnored weak var bodyView: NSTextView?
 
     enum Mode: String { case form, source }
+
+    /// 在正文编辑器的光标处插入一段模板代码（没有焦点时接在末尾），并选中其中第一个 … 方便直接改写
+    func insertIntoBody(_ code: String) {
+        guard let tv = bodyView else {
+            updateDoc { $0.body += ($0.body.hasSuffix("\n") || $0.body.isEmpty ? "" : "\n") + code }
+            return
+        }
+        tv.window?.makeFirstResponder(tv)
+        let at = tv.selectedRange()
+        tv.insertText(code, replacementRange: at)
+        let dots = (code as NSString).range(of: "…")
+        if dots.location != NSNotFound {
+            tv.setSelectedRange(NSRange(location: at.location + dots.location, length: dots.length))
+        }
+    }
 
     var readOnly: Bool { entry.builtin }
 
@@ -573,12 +590,15 @@ private struct FormEditor: View {
                 }
                 ParamsSection(editor: editor)
                 Section {
-                    CodeEditor(text: bind({ $0.body }, { $0.body = $1 }), editable: !editor.readOnly)
+                    CodeEditor(text: bind({ $0.body }, { $0.body = $1 }), editable: !editor.readOnly, onMake: { editor.bodyView = $0 })
                         .frame(minHeight: 220)
+                    if !editor.readOnly, let d = editor.doc {
+                        SnippetBar(guide: templateGuide(doc: d, locale: AppSettings.shared.uiLocale)) { editor.insertIntoBody($0) }
+                    }
                 } header: {
                     Text(L("正文", "Body"))
                 } footer: {
-                    Text(L("MiniJinja 语法：{{ 参数名 }}（参数名中的 - 写作 _）、{% if strict %}…{% endif %}、{% for x in focus %}…{% endfor %}；附加要求为 extra；{% include \"_extra\" %} 引用公共片段。", "MiniJinja syntax: {{ param_name }} (use _ in place of - in names), {% if strict %}…{% endif %}, {% for x in focus %}…{% endfor %}. Extra instructions are available as extra; {% include \"_extra\" %} pulls in a shared snippet."))
+                    Text(L("正文就是插入出去的提示词。点上面的写法，会插到光标处：按参数输出不同的文字，或填入参数的值；… 换成你要的文字。", "The body is the prompt that gets inserted. Click a form above to insert it at the cursor: different text per parameter, or the parameter's value; replace … with your text."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -644,6 +664,40 @@ private struct ParamsSection: View {
     }
 }
 
+/// 类型选择器里的名称：带一个用法示例
+private func kindPickerLabel(_ k: ParamKind) -> String {
+    switch k {
+    case .bool: return L("开关（--strict）", "Switch (--strict)")
+    case .enum: return L("单选（--env=test）", "Single choice (--env=test)")
+    case .multi: return L("多选（--focus=a,b）", "Multiple choice (--focus=a,b)")
+    case .string: return L("文本（--topic=…）", "Text (--topic=…)")
+    case .number: return L("数字（--count=3）", "Number (--count=3)")
+    case .text: return L("多行文本", "Multiline text")
+    }
+}
+
+/// 正文下方：按当前参数可以插入的写法
+private struct SnippetBar: View {
+    let guide: TemplateGuide
+    let insert: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L("插入写法", "Insert")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            FlowLayout(spacing: 6) {
+                ForEach(guide.snippets, id: \.code) { s in
+                    Button { insert(s.code) } label: {
+                        Text(s.label).font(.system(size: 11)).padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.qAccent.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(s.code)
+                }
+            }
+        }
+    }
+}
+
 private func kindLabel(_ k: ParamKind) -> String {
     switch k {
     case .bool: return L("开关", "Switch")
@@ -703,9 +757,9 @@ private struct ParamInspector: View {
                     if k != .enum && k != .multi { p.positional = false; p.choices = [] }
                     if k != .number { p.min = nil; p.max = nil }
                 })) {
-                    ForEach([ParamKind.bool, .enum, .multi, .string, .number, .text], id: \.self) { Text(kindLabel($0)).tag($0) }
+                    ForEach([ParamKind.bool, .enum, .multi, .string, .number, .text], id: \.self) { Text(kindPickerLabel($0)).tag($0) }
                 }
-                .frame(width: 160)
+                .frame(width: 250)
             }
             TextField(L("说明", "Description"), text: bind({ $0.description }, { $0.description = $1 }))
             HStack(spacing: 16) {
@@ -822,6 +876,12 @@ private struct ChoicesEditor: View {
 private struct TryPanel: View {
     @Bindable var editor: EditorModel
 
+    /// 试用示例：用当前模板实际有的参数
+    private var tryExample: String {
+        guard let d = editor.doc else { return editor.check.name ?? "r" }
+        return templateGuide(doc: d, locale: AppSettings.shared.uiLocale).tryExample
+    }
+
     var body: some View {
         // 滚动视图会自动避开窗口工具栏（普通视图会落到工具栏的模糊区域下）
         ScrollView { content.padding(14) }
@@ -831,7 +891,7 @@ private struct TryPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(L("试用", "Try it")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(.uppercase)
-                TextField("", text: $editor.tryInput, prompt: Text(L("输入命令试用，如 \(editor.check.name ?? "r") --strict", "Try a command, e.g. \(editor.check.name ?? "r") --strict")))
+                TextField("", text: $editor.tryInput, prompt: Text(L("输入命令试用，如 \(tryExample)", "Try a command, e.g. \(tryExample)")))
                     .font(.qMono(13)).textFieldStyle(.plain)
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))

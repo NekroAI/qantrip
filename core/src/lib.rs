@@ -7,6 +7,7 @@ pub mod doc;
 pub mod grammar;
 pub mod i18n;
 pub mod library;
+pub mod placeholder;
 /// 端到端加密同步（wasm 构建不包含）
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sync;
@@ -36,6 +37,12 @@ pub fn parse_template_doc(source: String) -> Result<TemplateDoc, DocError> {
 #[uniffi::export]
 pub fn serialize_template_doc(doc: TemplateDoc) -> String {
     doc::serialize_doc(&doc)
+}
+
+/// 模板编辑器的引导：按当前参数生成可插入的写法与试用示例
+#[uniffi::export]
+pub fn template_guide(doc: TemplateDoc, locale: Locale) -> doc::TemplateGuide {
+    doc::guide(&doc, locale)
 }
 
 #[uniffi::export]

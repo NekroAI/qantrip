@@ -719,6 +719,28 @@ impl Panel {
             if let Some(l) = self.status.last_child().and_downcast::<gtk::Label>() {
                 l.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             }
+        } else if let Some(r) = self.app.updates.pending() {
+            // 新版本提示：底栏空闲时显示（错误、确认提示优先）。点击下载，× 忽略这个版本
+            let v = r.version.clone();
+            let get = gtk::Button::with_label(&t!("新版本 {v} 可用 · 下载", "Version {v} is available · Download"));
+            get.add_css_class("flat");
+            get.add_css_class("update-notice");
+            let app = self.app.clone();
+            get.connect_clicked(move |_| app.updates.open_download());
+            let skip = gtk::Button::from_icon_name("window-close-symbolic");
+            skip.add_css_class("flat");
+            skip.add_css_class("dim-label");
+            skip.set_tooltip_text(Some(&l("不再提示这个版本", "Don't remind me about this version")));
+            let weak = Rc::downgrade(self);
+            let app = self.app.clone();
+            skip.connect_clicked(move |_| {
+                app.updates.skip(&v);
+                if let Some(p) = weak.upgrade() {
+                    p.refresh(false);
+                }
+            });
+            self.status.append(&get);
+            self.status.append(&skip);
         }
         while let Some(c) = self.footer_keys.first_child() {
             self.footer_keys.remove(&c);

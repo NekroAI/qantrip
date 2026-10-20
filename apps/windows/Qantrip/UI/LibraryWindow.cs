@@ -792,8 +792,30 @@ internal sealed class LibraryWindow : Window
         bodyBox.MinHeight = 260;
         bodyBox.TextChanged += (_, _) => { if (!ro) ed.UpdateDoc(d => d.Body = EditorModel.Normalize(bodyBox.Text)); };
         page.Children.Add(bodyBox);
-        page.Children.Add(Caption(Loc.T("MiniJinja 语法：{{ 参数名 }}（参数名中的 - 写作 _）、{% if strict %}…{% endif %}、{% for x in focus %}…{% endfor %}；附加要求为 extra；{% include \"_extra\" %} 引用公共片段。",
-            "MiniJinja syntax: {{ param_name }} (use _ in place of - in names), {% if strict %}…{% endif %}, {% for x in focus %}…{% endfor %}. Extra instructions are available as extra; {% include \"_extra\" %} pulls in a shared snippet.")));
+        if (!ro)
+        {
+            // 按当前参数可以插入的写法：插到光标处，并选中其中第一个 …
+            var flow = new WrapPanel { Spacing = 6 };
+            foreach (var sn in Engine.Guide(doc, Loc.En ? "en" : "zh").Snippets)
+            {
+                var b = new Button { Content = sn.Label, FontSize = 12, Padding = new Thickness(10, 3, 10, 3) };
+                ToolTipService.SetToolTip(b, sn.Code);
+                var code = sn.Code;
+                b.Click += (_, _) =>
+                {
+                    var at = bodyBox.SelectionStart;
+                    bodyBox.SelectedText = code;
+                    var dots = code.IndexOf('…');
+                    bodyBox.Focus(FocusState.Programmatic);
+                    if (dots >= 0) bodyBox.Select(at + dots, 1); else bodyBox.Select(at + code.Length, 0);
+                };
+                flow.Children.Add(b);
+            }
+            page.Children.Add(Caption(Loc.T("插入写法", "Insert")));
+            page.Children.Add(flow);
+        }
+        page.Children.Add(Caption(Loc.T("正文就是插入出去的提示词。点上面的写法，会插到光标处：按参数输出不同的文字，或填入参数的值；… 换成你要的文字。",
+            "The body is the prompt that gets inserted. Click a form above to insert it at the cursor: different text per parameter, or the parameter's value; replace … with your text.")));
         return page;
     }
 
@@ -804,6 +826,18 @@ internal sealed class LibraryWindow : Window
         "multi" => Loc.T("多选", "Multiple choice"),
         "string" => Loc.T("文本", "Text"),
         "number" => Loc.T("数字", "Number"),
+        "text" => Loc.T("多行文本", "Multiline text"),
+        _ => k,
+    };
+
+    /// 类型选择器里的名称：带一个用法示例
+    private static string KindPickerLabel(string k) => k switch
+    {
+        "bool" => Loc.T("开关（--strict）", "Switch (--strict)"),
+        "enum" => Loc.T("单选（--env=test）", "Single choice (--env=test)"),
+        "multi" => Loc.T("多选（--focus=a,b）", "Multiple choice (--focus=a,b)"),
+        "string" => Loc.T("文本（--topic=…）", "Text (--topic=…)"),
+        "number" => Loc.T("数字（--count=3）", "Number (--count=3)"),
         "text" => Loc.T("多行文本", "Multiline text"),
         _ => k,
     };
@@ -866,10 +900,10 @@ internal sealed class LibraryWindow : Window
 
         var row1 = new Grid { ColumnSpacing = 12 };
         row1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        row1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
         row1.Children.Add(Field($"lib_p{index}_name", Loc.T("参数名", "Name"), p.Name, ro, v => Update(x => x.Name = v.Trim()), mono: true));
         var kind = new ComboBox { Header = Loc.T("类型", "Type"), HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = !ro };
-        foreach (var k in Kinds) kind.Items.Add(KindLabel(k));
+        foreach (var k in Kinds) kind.Items.Add(KindPickerLabel(k));
         kind.SelectedIndex = Math.Max(0, Array.IndexOf(Kinds, p.Kind));
         AutomationProperties.SetAutomationId(kind, $"lib_p{index}_kind");
         kind.SelectionChanged += (_, _) =>
@@ -1107,8 +1141,9 @@ internal sealed class LibraryWindow : Window
     {
         tryResults.Children.Clear();
         if (editor is not { } ed) return;
-        var name = ed.Check.Name ?? "r";
-        tryInput.PlaceholderText = Loc.T($"输入命令试用，如 {name} --strict 附加要求", $"Type a command, e.g. {name} --strict extra instructions");
+        // 试用示例：用当前模板实际有的参数
+        var example = ed.Doc is { } d ? Engine.Guide(d, Loc.En ? "en" : "zh").TryExample : ed.Check.Name ?? "r";
+        tryInput.PlaceholderText = Loc.T($"输入命令试用，如 {example} 附加要求", $"Type a command, e.g. {example} extra instructions");
         var theme = new Theme(Application.Current.RequestedTheme == ApplicationTheme.Dark);
         if (ed.Check.Problems.Count > 0)
         {

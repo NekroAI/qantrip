@@ -79,6 +79,13 @@ impl Library {
         build(list, problems, deleted, ui, templates)
     }
 
+    /// 只含一个模板（以及内置的局部模板）的模板库：`/new` 的效果预览用，不读磁盘。
+    pub fn preview(t: Template, ui: Locale, tpl: Locale) -> Library {
+        let mut list: Vec<Template> = builtins(tpl).iter().filter_map(|s| template::parse_in(s, true, ui).ok()).filter(|b| b.is_partial()).collect();
+        list.push(t);
+        build(list, vec![], vec![], ui, tpl)
+    }
+
     /// 编辑器预览：在当前模板库上用 `source` 覆盖（或新增）一个模板。
     /// 返回模板库和 `source` 自身的问题（格式、语法错误）。
     pub fn with_override(user_dir: Option<&Path>, source: &str) -> (Library, Option<String>, Vec<String>) {

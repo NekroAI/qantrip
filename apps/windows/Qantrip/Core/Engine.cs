@@ -120,6 +120,13 @@ public sealed class Engine : IDisposable
     public static string SerializeDoc(TemplateDoc doc) =>
         Take(Native.qt_serialize_doc(U8(JsonSerializer.Serialize(doc, Json)))) ?? throw new InvalidOperationException("qt_serialize_doc failed");
 
+    /// 模板编辑器的引导：按当前参数可插入的写法与试用示例。
+    public static TemplateGuide Guide(TemplateDoc doc, string locale)
+    {
+        var json = Take(Native.qt_template_guide(U8(JsonSerializer.Serialize(doc, Json)), U8(locale)));
+        return (json is null ? null : JsonSerializer.Deserialize<TemplateGuide>(json, Json)) ?? new TemplateGuide { TryExample = doc.Name };
+    }
+
     /// 新模板的初始文档。
     public static TemplateDoc NewDoc(string name, string locale)
     {
@@ -169,5 +176,6 @@ public sealed class Engine : IDisposable
         [DllImport(Dll)] public static extern IntPtr qt_parse_doc(byte[]? source);
         [DllImport(Dll)] public static extern IntPtr qt_serialize_doc(byte[]? doc);
         [DllImport(Dll)] public static extern IntPtr qt_new_doc(byte[]? name, byte[]? locale);
+        [DllImport(Dll)] public static extern IntPtr qt_template_guide(byte[]? doc, byte[]? locale);
     }
 }

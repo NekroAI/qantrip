@@ -361,6 +361,19 @@ pub extern "C" fn qt_serialize_doc(doc: *const c_char) -> *mut c_char {
     .map_or(std::ptr::null_mut(), |s| out(Some(s)))
 }
 
+/// 模板编辑器的引导：按文档（JSON）当前的参数生成可插入的写法与试用示例。
+/// 返回 `{"try_example":"…","snippets":[{"label":"…","code":"…"}]}`；JSON 无效时返回空指针。
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_template_guide(doc: *const c_char, locale: *const c_char) -> *mut c_char {
+    guard(None, || {
+        let d: DocJson = serde_json::from_str(&str_or_empty(doc)).ok()?;
+        let g = qantrip_core::template_guide(d.into(), Locale::from_code(&str_or_empty(locale)));
+        let snippets: Vec<_> = g.snippets.iter().map(|s| serde_json::json!({ "label": s.label, "code": s.code })).collect();
+        Some(serde_json::json!({ "try_example": g.try_example, "snippets": snippets }).to_string())
+    })
+    .map_or(std::ptr::null_mut(), |s| out(Some(s)))
+}
+
 /// 新模板的初始文档（JSON）。`locale`：`zh` / `en`。
 #[unsafe(no_mangle)]
 pub extern "C" fn qt_new_doc(name: *const c_char, locale: *const c_char) -> *mut c_char {
@@ -507,7 +520,12 @@ mod tests {
         // 新模板
         let n = parse(qt_new_doc(s("my-template").as_ptr(), s("zh").as_ptr()));
         assert_eq!(n["name"], "my-template");
-        assert!(n["body"].as_str().unwrap().contains("在这里编写"));
+        assert!(n["body"].as_str().unwrap().contains("在这里写提示词"));
+        // 编辑器引导：按参数给出写法与试用示例
+        let doc = parse(qt_parse_doc(s("---\nname: push\nparams:\n  env:\n    type: enum\n    choices: [test, prod]\n---\nx").as_ptr()))["doc"].to_string();
+        let g = parse(qt_template_guide(s(&doc).as_ptr(), s("zh").as_ptr()));
+        assert_eq!(g["try_example"], "push --env=test");
+        assert!(g["snippets"].as_array().unwrap().iter().any(|x| x["code"].as_str().unwrap().contains("env == \"prod\"")));
         qt_engine_free(e);
         let _ = std::fs::remove_dir_all(&dir);
     }
