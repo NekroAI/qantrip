@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-20
+
 ### Added
 - `/new` understands options and switches: `/new push Please {env:test=deploy to staging|prod=deploy to production|=push to the repository}` makes `push`, `push test` and `push --env=prod` produce different text, and `{strict?check every line|only major issues}` adds a switch. The old `{name}` and `{name:a|b}` forms work as before.
 - While you type `/new`, every keystroke shows what to type next: the three parameter forms (Tab inserts an example), what comes next inside an unfinished `{…`, and a preview of what each usage will produce.
