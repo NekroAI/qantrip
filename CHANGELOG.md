@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+- macOS: deleting a parameter (or a choice) in the template editor no longer crashes the app.
+
 ## [0.5.2] — 2026-10-20
 
 ### Fixed

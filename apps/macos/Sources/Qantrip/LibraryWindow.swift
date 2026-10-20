@@ -638,8 +638,9 @@ private struct ParamsSection: View {
     }
 
     private func remove(_ i: Int) {
-        editor.updateDoc { d in d.params.remove(at: i) }
+        // 先收起编辑面板，再删除（面板中的绑定按序号读写）
         editor.selectedParam = nil
+        editor.updateDoc { d in if d.params.indices.contains(i) { d.params.remove(at: i) } }
     }
 }
 
@@ -677,10 +678,18 @@ private struct ParamInspector: View {
     @Bindable var editor: EditorModel
     let index: Int
 
-    private var p: ParamDoc { editor.doc!.params[index] }
+    /// 参数删除后 SwiftUI 在移除本视图之前仍可能再读一次绑定：序号失效时读到删除前的值、写入被忽略
+    @State private var last: ParamDoc?
+
+    private var p: ParamDoc { editor.doc?.params[safe: index] ?? last ?? emptyParam }
 
     private func bind<T>(_ get: @escaping (ParamDoc) -> T, _ set: @escaping (inout ParamDoc, T) -> Void) -> Binding<T> {
-        Binding(get: { get(editor.doc!.params[index]) }, set: { v in editor.updateDoc { set(&$0.params[index], v) } })
+        Binding(get: { get(p) }, set: { v in
+            editor.updateDoc { d in
+                guard d.params.indices.contains(index) else { return }
+                set(&d.params[index], v)
+            }
+        })
     }
 
     var body: some View {
@@ -722,6 +731,8 @@ private struct ParamInspector: View {
         }
         .padding(10)
         .background(Color.qAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .onAppear { last = editor.doc?.params[safe: index] }
+        .onChange(of: editor.doc?.params[safe: index]) { _, v in if let v { last = v } }
     }
 
     @ViewBuilder private var defaultEditor: some View {
@@ -764,11 +775,15 @@ private struct ChoicesEditor: View {
     @Bindable var editor: EditorModel
     let index: Int
 
-    private var choices: [Choice] { editor.doc!.params[index].choices }
+    private var choices: [Choice] { editor.doc?.params[safe: index]?.choices ?? [] }
 
+    /// 删除候选值或参数后旧的绑定可能还会被读一次：序号失效时返回空值、忽略写入
     private func bind(_ i: Int, _ kp: WritableKeyPath<Choice, String>) -> Binding<String> {
-        Binding(get: { editor.doc!.params[index].choices[i][keyPath: kp] },
-                set: { v in editor.updateDoc { $0.params[index].choices[i][keyPath: kp] = v } })
+        Binding(get: { choices[safe: i]?[keyPath: kp] ?? "" },
+                set: { v in editor.updateDoc { d in
+                    guard d.params.indices.contains(index), d.params[index].choices.indices.contains(i) else { return }
+                    d.params[index].choices[i][keyPath: kp] = v
+                } })
     }
 
     var body: some View {
@@ -779,13 +794,20 @@ private struct ChoicesEditor: View {
                     TextField(L("值", "Value"), text: bind(i, \.value)).font(.qMono(12)).frame(width: 140)
                     TextField(L("显示名", "Label"), text: bind(i, \.label)).frame(width: 120)
                     TextField(L("别名（逗号分隔）", "Aliases (comma-separated)"), text: Binding(
-                        get: { editor.doc!.params[index].choices[i].aliases.joined(separator: ", ") },
-                        set: { v in editor.updateDoc { $0.params[index].choices[i].aliases = v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } } }))
-                    Button { editor.updateDoc { $0.params[index].choices.remove(at: i) } } label: { Image(systemName: "minus.circle") }
+                        get: { choices[safe: i]?.aliases.joined(separator: ", ") ?? "" },
+                        set: { v in editor.updateDoc { d in
+                            guard d.params.indices.contains(index), d.params[index].choices.indices.contains(i) else { return }
+                            d.params[index].choices[i].aliases = v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                        } }))
+                    Button { editor.updateDoc { d in
+                        guard d.params.indices.contains(index), d.params[index].choices.indices.contains(i) else { return }
+                        d.params[index].choices.remove(at: i)
+                    } } label: { Image(systemName: "minus.circle") }
                         .buttonStyle(.borderless)
                 }
             }
             Button { editor.updateDoc { d in
+                guard d.params.indices.contains(index) else { return }
                 var n = "option", k = 2
                 while d.params[index].choices.contains(where: { $0.value == n }) { n = "option\(k)"; k += 1 }
                 d.params[index].choices.append(Choice(value: n, label: n, aliases: []))
@@ -860,4 +882,12 @@ private struct TryPanel: View {
             }
         }
     }
+}
+
+private let emptyParam = ParamDoc(name: "", kind: .bool, description: "", choices: [], defaultValue: nil, positional: false,
+                                  short: nil, required: false, requires: [], conflicts: [], min: nil, max: nil)
+
+extension Array {
+    /// 越界时返回 nil
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
