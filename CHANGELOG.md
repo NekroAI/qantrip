@@ -4,8 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-10-20
+
 ### Fixed
 - macOS: text in the input line is vertically centered on the cursor instead of sitting slightly high.
+- Website: download buttons could save a JSON error file instead of the installer when GitHub was rate-limiting the site; they now always lead to the installer or the release page.
 
 ## [0.5.1] — 2026-10-19
 
